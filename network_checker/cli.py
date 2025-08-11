@@ -11,11 +11,11 @@ def cli():
     pass
 
 
-@cli.command()
+@cli.command('run-server')
 @click.option('--host', '-h', default='0.0.0.0', help='Host to bind to')
-@click.option('--port', '-p', default=5000, help='Port to bind to')
+@click.option('--port', '-p', default=9991, help='Port to bind to')
 @click.option('--debug', is_flag=True, help='Enable debug mode')
-def run(host, port, debug):
+def run_server(host, port, debug):
     """Run the Flask web application"""
     app = create_app('development' if debug else 'production')
     app.run(host=host, port=port, debug=debug)
