@@ -1,0 +1,70 @@
+# Version control
+.git
+.gitignore
+
+# Python
+__pycache__/
+*.pyc
+*.pyo
+*.pyd
+.Python
+*.so
+.pytest_cache/
+.coverage
+htmlcov/
+
+# Virtual environments
+venv/
+.venv/
+env/
+
+# IDE
+.vscode/
+.idea/
+*.swp
+*.swo
+
+# OS
+.DS_Store
+Thumbs.db
+
+# Build artifacts
+dist/
+build/
+*.egg-info/
+
+# Documentation
+docs/_build/
+.sphinx/
+
+# Temporary files
+*.tmp
+*.temp
+.tmp/
+
+# Logs
+*.log
+logs/
+
+# Database files (these should be in volumes)
+instances/*.db
+instances/*.sqlite
+*.sqlite3
+*.db-journal
+
+# CSV files (mount as volume instead)
+monitor_app/csv/*.csv
+
+# Tests
+tests/
+.pytest_cache/
+
+# Development files
+CLAUDE.md
+docker/logs/
+
+# GitHub
+.github/
+
+# Poetry
+poetry.lock.backup

@@ -1,0 +1,5 @@
+include README.md
+include LICENSE
+include monitor_app/config/config.py
+recursive-include monitor_app/templates *
+recursive-include monitor_app/static *
