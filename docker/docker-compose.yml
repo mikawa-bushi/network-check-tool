@@ -1,0 +1,78 @@
+version: '3.8'
+
+services:
+  monitor-app:
+    build:
+      context: ..
+      dockerfile: docker/Dockerfile
+    ports:
+      - "9990:9990"
+    environment:
+      - PYTHONUNBUFFERED=1
+    volumes:
+      # Mount CSV data directory
+      - csv_data:/app/monitor_app/csv
+      # Mount database directory for persistence
+      - db_data:/app/monitor_app/instances
+      # Mount logs directory
+      - ./logs:/app/logs
+    healthcheck:
+      test: ["CMD", "curl", "-f", "http://localhost:9990/api/tables"]
+      interval: 30s
+      timeout: 10s
+      retries: 3
+      start_period: 40s
+    restart: unless-stopped
+    networks:
+      - monitor-network
+
+  # Optional: Add database services for production use
+  # Uncomment and configure as needed
+
+  # postgres:
+  #   image: postgres:15-alpine
+  #   environment:
+  #     POSTGRES_DB: monitor_app
+  #     POSTGRES_USER: postgres
+  #     POSTGRES_PASSWORD: password
+  #   volumes:
+  #     - postgres_data:/var/lib/postgresql/data
+  #   ports:
+  #     - "5432:5432"
+  #   networks:
+  #     - monitor-network
+
+  # mysql:
+  #   image: mysql:8.0
+  #   environment:
+  #     MYSQL_DATABASE: monitor_app
+  #     MYSQL_ROOT_PASSWORD: password
+  #   volumes:
+  #     - mysql_data:/var/lib/mysql
+  #   ports:
+  #     - "3306:3306"
+  #   networks:
+  #     - monitor-network
+
+  # nginx:
+  #   image: nginx:alpine
+  #   ports:
+  #     - "80:80"
+  #     - "443:443"
+  #   volumes:
+  #     - ./nginx/nginx.conf:/etc/nginx/nginx.conf
+  #     - ./nginx/ssl:/etc/nginx/ssl
+  #   depends_on:
+  #     - monitor-app
+  #   networks:
+  #     - monitor-network
+
+volumes:
+  csv_data:
+  db_data:
+  # postgres_data:
+  # mysql_data:
+
+networks:
+  monitor-network:
+    driver: bridge

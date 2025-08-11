@@ -1,0 +1,276 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>Network Checker Dashboard</title>
+    <script src="https://cdn.plot.ly/plotly-latest.min.js"></script>
+    <style>
+        body {
+            font-family: -apple-system, BlinkMacSystemFont, 'Segoe UI', Roboto, sans-serif;
+            margin: 0;
+            padding: 20px;
+            background-color: #f5f5f5;
+        }
+        
+        .container {
+            max-width: 1200px;
+            margin: 0 auto;
+        }
+        
+        .header {
+            background: white;
+            padding: 20px;
+            border-radius: 8px;
+            box-shadow: 0 2px 4px rgba(0,0,0,0.1);
+            margin-bottom: 20px;
+        }
+        
+        .controls {
+            display: flex;
+            gap: 15px;
+            margin-bottom: 20px;
+            align-items: center;
+        }
+        
+        select, button {
+            padding: 8px 12px;
+            border: 1px solid #ddd;
+            border-radius: 4px;
+            font-size: 14px;
+        }
+        
+        button {
+            background-color: #007bff;
+            color: white;
+            border: none;
+            cursor: pointer;
+        }
+        
+        button:hover {
+            background-color: #0056b3;
+        }
+        
+        .stats-grid {
+            display: grid;
+            grid-template-columns: repeat(auto-fit, minmax(200px, 1fr));
+            gap: 15px;
+            margin-bottom: 20px;
+        }
+        
+        .stat-card {
+            background: white;
+            padding: 20px;
+            border-radius: 8px;
+            box-shadow: 0 2px 4px rgba(0,0,0,0.1);
+            text-align: center;
+        }
+        
+        .stat-value {
+            font-size: 2em;
+            font-weight: bold;
+            color: #007bff;
+        }
+        
+        .stat-label {
+            color: #666;
+            margin-top: 5px;
+        }
+        
+        .chart-container {
+            background: white;
+            padding: 20px;
+            border-radius: 8px;
+            box-shadow: 0 2px 4px rgba(0,0,0,0.1);
+            margin-bottom: 20px;
+        }
+        
+        .loading {
+            text-align: center;
+            padding: 50px;
+            color: #666;
+        }
+        
+        .error {
+            background-color: #f8d7da;
+            color: #721c24;
+            padding: 15px;
+            border-radius: 4px;
+            margin-bottom: 20px;
+        }
+        
+        .success {
+            background-color: #d4edda;
+            color: #155724;
+            padding: 15px;
+            border-radius: 4px;
+            margin-bottom: 20px;
+        }
+    </style>
+</head>
+<body>
+    <div class="container">
+        <div class="header">
+            <h1>Network Checker Dashboard</h1>
+            <p>Monitor ping responses and packet loss for your network hosts</p>
+        </div>
+        
+        <div class="controls">
+            <label for="hostSelect">Host:</label>
+            <select id="hostSelect">
+                <option value="">Select a host...</option>
+            </select>
+            
+            <label for="timeRange">Time Range:</label>
+            <select id="timeRange">
+                <option value="1">Last 1 hour</option>
+                <option value="6">Last 6 hours</option>
+                <option value="24" selected>Last 24 hours</option>
+                <option value="72">Last 3 days</option>
+                <option value="168">Last week</option>
+            </select>
+            
+            <button onclick="refreshData()">Refresh</button>
+        </div>
+        
+        <div id="statsContainer" class="stats-grid" style="display: none;">
+            <div class="stat-card">
+                <div class="stat-value" id="totalPings">-</div>
+                <div class="stat-label">Total Pings</div>
+            </div>
+            <div class="stat-card">
+                <div class="stat-value" id="successRate">-</div>
+                <div class="stat-label">Success Rate</div>
+            </div>
+            <div class="stat-card">
+                <div class="stat-value" id="avgResponseTime">-</div>
+                <div class="stat-label">Avg Response Time</div>
+            </div>
+            <div class="stat-card">
+                <div class="stat-value" id="packetLossRate">-</div>
+                <div class="stat-label">Packet Loss Rate</div>
+            </div>
+        </div>
+        
+        <div class="chart-container">
+            <div id="chartContainer">
+                <div class="loading">
+                    Select a host to view ping data
+                </div>
+            </div>
+        </div>
+    </div>
+
+    <script>
+        let currentHost = '';
+        let currentTimeRange = 24;
+        
+        // Load hosts on page load
+        loadHosts();
+        
+        // Event listeners
+        document.getElementById('hostSelect').addEventListener('change', function() {
+            currentHost = this.value;
+            if (currentHost) {
+                loadData();
+            } else {
+                document.getElementById('statsContainer').style.display = 'none';
+                document.getElementById('chartContainer').innerHTML = '<div class="loading">Select a host to view ping data</div>';
+            }
+        });
+        
+        document.getElementById('timeRange').addEventListener('change', function() {
+            currentTimeRange = parseInt(this.value);
+            if (currentHost) {
+                loadData();
+            }
+        });
+        
+        function loadHosts() {
+            fetch('/api/hosts')
+                .then(response => response.json())
+                .then(data => {
+                    const select = document.getElementById('hostSelect');
+                    select.innerHTML = '<option value="">Select a host...</option>';
+                    
+                    data.forEach(host => {
+                        const option = document.createElement('option');
+                        option.value = host;
+                        option.textContent = host;
+                        select.appendChild(option);
+                    });
+                })
+                .catch(error => {
+                    console.error('Error loading hosts:', error);
+                    showError('Failed to load hosts');
+                });
+        }
+        
+        function loadData() {
+            if (!currentHost) return;
+            
+            document.getElementById('chartContainer').innerHTML = '<div class="loading">Loading...</div>';
+            
+            // Load statistics
+            fetch(`/api/stats?host=${currentHost}&hours=${currentTimeRange}`)
+                .then(response => response.json())
+                .then(data => {
+                    updateStats(data);
+                })
+                .catch(error => {
+                    console.error('Error loading stats:', error);
+                });
+            
+            // Load chart
+            fetch(`/api/ping_chart?host=${currentHost}&hours=${currentTimeRange}`)
+                .then(response => response.json())
+                .then(data => {
+                    if (data.error) {
+                        document.getElementById('chartContainer').innerHTML = `<div class="error">${data.error}</div>`;
+                    } else {
+                        Plotly.newPlot('chartContainer', data.data, data.layout, {responsive: true});
+                    }
+                })
+                .catch(error => {
+                    console.error('Error loading chart:', error);
+                    document.getElementById('chartContainer').innerHTML = '<div class="error">Failed to load chart data</div>';
+                });
+        }
+        
+        function updateStats(data) {
+            document.getElementById('totalPings').textContent = data.total_pings;
+            document.getElementById('successRate').textContent = `${(100 - data.packet_loss_rate).toFixed(1)}%`;
+            document.getElementById('avgResponseTime').textContent = `${data.avg_response_time.toFixed(1)}ms`;
+            document.getElementById('packetLossRate').textContent = `${data.packet_loss_rate.toFixed(1)}%`;
+            
+            document.getElementById('statsContainer').style.display = 'grid';
+        }
+        
+        function refreshData() {
+            if (currentHost) {
+                loadData();
+            }
+            loadHosts();
+        }
+        
+        function showError(message) {
+            const container = document.querySelector('.container');
+            const errorDiv = document.createElement('div');
+            errorDiv.className = 'error';
+            errorDiv.textContent = message;
+            container.insertBefore(errorDiv, container.firstChild.nextSibling);
+            
+            setTimeout(() => {
+                errorDiv.remove();
+            }, 5000);
+        }
+        
+        // Auto-refresh every 30 seconds if a host is selected
+        setInterval(() => {
+            if (currentHost) {
+                loadData();
+            }
+        }, 30000);
+    </script>
+</body>
+</html>
