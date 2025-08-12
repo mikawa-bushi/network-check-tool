@@ -1,6 +1,6 @@
 [tool.poetry]
 name = "network-check-tool"
-version = "0.0.1"
+version = "0.0.2"
 description = "A network monitoring tool with ping tracking and dashboard visualization"
 authors = ["hardwork9047 <tomatosimple1104@gmail.com>"]
 readme = "README.md"
