@@ -7,7 +7,7 @@ from .ping_service import PingService
 
 
 class SchedulerService:
-    def __init__(self, database_url: str = 'sqlite:///network_checker.db'):
+    def __init__(self, database_url: str = 'sqlite:///network_check_tool.db'):
         jobstores = {
             'default': SQLAlchemyJobStore(url=database_url)
         }
