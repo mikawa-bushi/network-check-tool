@@ -8,13 +8,13 @@ license = "MIT"
 homepage = "https://github.com/hardwork9047/network-checker"
 repository = "https://github.com/hardwork9047/network-checker"
 documentation = "https://github.com/hardwork9047/network-checker"
-packages = [{ include = "network_checker" }]
+packages = [{ include = "network_check_tool" }]
 
 include = [
-    "network_checker/config/config.py",
-    "network_checker/templates/*",
-    "network_checker/static/*",
-    "network_checker/cli.py"
+    "network_check_tool/config/config.py",
+    "network_check_tool/templates/*",
+    "network_check_tool/static/*",
+    "network_check_tool/cli.py"
 ]
 
 [tool.poetry.dependencies]
@@ -30,7 +30,7 @@ plotly = "^5.17.0"
 toml = "^0.10.2"
 
 [tool.poetry.scripts]
-network-checker = "network_checker.cli:cli"
+network-checker = "network_check_tool.cli:cli"
 
 [tool.poetry.group.dev.dependencies]
 pytest = "^8.3.4"

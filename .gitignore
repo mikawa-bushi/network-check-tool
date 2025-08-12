@@ -140,7 +140,7 @@ cython_debug/
 
 # Network Checker specific
 *.db
-network_checker.db
+network_check_tool.db
 instance/
 
 # VS Code
