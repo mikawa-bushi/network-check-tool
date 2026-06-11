@@ -1,6 +1,15 @@
 # Network Check Tool
 
-A comprehensive network monitoring tool that performs periodic ping tests to monitor host availability and response times, with a web-based dashboard for visualization.
+This package ships **two command-line tools**:
+
+- **`netdiag`** — *local-first network & OS trouble isolation.* Runs a layered set
+  of probes and a dependency-graph engine that reports **which layer is broken,
+  why, and what to check next** — offline, without root. ([docs](docs/netdiag.md))
+- **`network-checker`** — *ping monitoring with a web dashboard.* Periodic ping
+  tests across multiple hosts, stored in SQLite and visualized with Plotly.
+
+In short: `network-checker` tells you *that* something is down; `netdiag` tells
+you *why*.
 
 ![Python Version](https://img.shields.io/badge/Python-3.10%2B-blue)
 ![License](https://img.shields.io/badge/License-MIT-yellow)
@@ -22,7 +31,7 @@ If you want to contribute or modify the code:
 
 ```bash
 # Clone the repository
-git clone https://github.com/hardwork9047/network-check-tool.git
+git clone https://github.com/mikawa-bushi/network-check-tool.git
 cd network-check-tool
 
 # Install with Poetry (recommended for development)
@@ -49,6 +58,29 @@ network-checker ping google.com
 network-checker run-server
 ```
 Then open http://localhost:9991 in your browser.
+
+## 🩺 `netdiag` — local-first trouble isolation (new)
+
+The package now also ships **`netdiag`**, a *diagnosis* companion to the
+monitoring tool. Where `network-checker` answers *"is the host reachable?"*,
+`netdiag` answers **"which layer is broken, why, and what do I check next?"** —
+fully offline, without root, on the standard library alone.
+
+```bash
+netdiag check                      # full layered sweep → root cause + next steps
+netdiag watch                      # always-on: alert (file/JSONL) only when the verdict changes
+netdiag explain dns                # learn what a check does + the manual commands
+netdiag snapshot save ok           # later: netdiag snapshot diff ok → "what changed?"
+```
+
+It runs a dependency-ordered set of probes (L1 Wi-Fi → L2 ARP → L3 routing/
+reachability → L4 ports/firewall → L7 DNS/HTTP/TLS, plus host/OS), then a
+dependency-graph engine reports the **lowest failing layer** as the root cause
+and folds everything above it into "consequences". Exit codes (`0` healthy / `1`
+cause found / `2` warnings) make it script- and CI-friendly.
+
+See **[docs/netdiag.md](docs/netdiag.md)** for the full design and command
+reference.
 
 ## 📖 What is Network Check Tool?
 
@@ -234,7 +266,7 @@ network_check_tool/
 
 ```bash
 # Clone the repository
-git clone https://github.com/hardwork9047/network-check-tool.git
+git clone https://github.com/mikawa-bushi/network-check-tool.git
 cd network-check-tool
 
 # Install with Poetry (recommended)
@@ -339,8 +371,8 @@ This project is licensed under the MIT License - see the [LICENSE](LICENSE) file
 ## 🆘 Support
 
 - 📖 [Documentation](docs/)
-- 🐛 [Issue Tracker](https://github.com/hardwork9047/network-check-tool/issues)
-- 💬 [Discussions](https://github.com/hardwork9047/network-check-tool/discussions)
+- 🐛 [Issue Tracker](https://github.com/mikawa-bushi/network-check-tool/issues)
+- 💬 [Discussions](https://github.com/mikawa-bushi/network-check-tool/discussions)
 
 ## 🌟 Why Network Check Tool?
 

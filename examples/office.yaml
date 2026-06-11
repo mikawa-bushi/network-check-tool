@@ -1,0 +1,14 @@
+# Example netdiag scenario. Run with:  netdiag scenario examples/office.yaml
+# Encodes an environment's triage steps so users don't need to know probe names.
+name: 社内ネットワーク診断 (Office network diagnosis)
+description: Gateway, corporate proxy reachability, and internal DNS resolution.
+checks:
+  - probe: gateway
+  - probe: external
+    target: 10.0.0.1
+  - probe: tcp
+    target: proxy.corp.local:8080
+    label: Corporate proxy
+  - probe: dns
+    resolver: 10.0.0.53
+    expect: intranet.corp.local
