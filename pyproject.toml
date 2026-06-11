@@ -1,20 +1,33 @@
 [tool.poetry]
 name = "network-check-tool"
-version = "0.0.2"
-description = "A network monitoring tool with ping tracking and dashboard visualization"
+version = "0.1.0"
+description = "Local-first network & OS trouble isolation (netdiag) plus a ping-monitoring dashboard (network-checker)."
 authors = ["hardwork9047 <155122235+hardwork9047@users.noreply.github.com>"]
 readme = "README.md"
 license = "MIT"
-homepage = "https://github.com/hardwork9047/network-checker"
-repository = "https://github.com/hardwork9047/network-checker"
-documentation = "https://github.com/hardwork9047/network-checker"
-packages = [{ include = "network_check_tool" }]
+homepage = "https://github.com/mikawa-bushi/network-check-tool"
+repository = "https://github.com/mikawa-bushi/network-check-tool"
+documentation = "https://github.com/mikawa-bushi/network-check-tool/blob/main/docs/netdiag.md"
+keywords = ["network", "monitoring", "diagnostics", "troubleshooting", "ping", "netdiag", "cli", "sysadmin"]
+classifiers = [
+    "Development Status :: 4 - Beta",
+    "Environment :: Console",
+    "Intended Audience :: System Administrators",
+    "Intended Audience :: Developers",
+    "Operating System :: POSIX :: Linux",
+    "Operating System :: MacOS",
+    "Topic :: System :: Networking :: Monitoring",
+    "Topic :: System :: Systems Administration",
+]
+packages = [
+    { include = "network_check_tool" },
+    { include = "netdiag" },
+]
 
+# Non-Python data files to ship. The packages above already include all .py
+# modules; only the Flask dashboard template needs listing explicitly.
 include = [
-    "network_check_tool/config/config.py",
     "network_check_tool/templates/*",
-    "network_check_tool/static/*",
-    "network_check_tool/cli.py"
 ]
 
 [tool.poetry.dependencies]
@@ -28,9 +41,16 @@ ping3 = "^4.0.4"
 apscheduler = "^3.10.4"
 plotly = "^5.17.0"
 toml = "^0.10.2"
+# Optional: only needed for `netdiag scenario` with .yaml files (JSON works without it).
+pyyaml = { version = "^6.0", optional = true }
+
+[tool.poetry.extras]
+# netdiag's core is stdlib + click only; this extra just adds YAML scenario support.
+scenario = ["pyyaml"]
 
 [tool.poetry.scripts]
 network-checker = "network_check_tool.cli:cli"
+netdiag = "netdiag.cli:main"
 
 [tool.poetry.group.dev.dependencies]
 pytest = "^8.3.4"
