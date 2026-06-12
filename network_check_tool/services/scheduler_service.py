@@ -1,14 +1,52 @@
 from apscheduler.schedulers.background import BackgroundScheduler
-from apscheduler.jobstores.sqlalchemy import SQLAlchemyJobStore
+from apscheduler.jobstores.memory import MemoryJobStore
 from apscheduler.executors.pool import ThreadPoolExecutor
 from typing import List, Optional
 import logging
 from .ping_service import PingService
 
 
+logger = logging.getLogger(__name__)
+
+
+def _run_ping_job(app, ping_service: "PingService", host: str):
+    """Module-level job target executed by an APScheduler worker thread.
+
+    Two reasons this lives at module scope instead of being a bound method:
+
+    * **No scheduler in the closure.** A bound ``self._ping_job`` drags the whole
+      ``SchedulerService`` (and its ``BackgroundScheduler``) along as ``self``.
+      A persistent jobstore would then try to pickle it and APScheduler raises
+      "Schedulers cannot be serialized". Keeping the target instance-independent
+      means it stays safe even if a persistent store is reintroduced later.
+    * **App context.** Jobs run in a worker thread, and Flask/flask_sqlalchemy
+      contexts are thread-local, so the main thread's ``app.app_context()`` does
+      not reach here. Without an explicit context, ``ping_and_save`` fails with
+      "Working outside of application context". We push one per invocation.
+    """
+    try:
+        if app is not None:
+            with app.app_context():
+                result = ping_service.ping_and_save(host)
+        else:
+            result = ping_service.ping_and_save(host)
+        logger.debug(
+            f"Ping result for {host}: {result.response_time}ms, "
+            f"packet_loss: {result.packet_loss}"
+        )
+    except Exception as e:
+        logger.error(f"Error pinging {host}: {e}")
+
+
 class SchedulerService:
-    def __init__(self, database_url: str = "sqlite:///network_check_tool.db"):
-        jobstores = {"default": SQLAlchemyJobStore(url=database_url)}
+    def __init__(self, app=None):
+        # MemoryJobStore (not SQLAlchemyJobStore): ``start-monitoring`` re-registers
+        # every job on each launch via ``add_ping_job``, so persisting jobs across
+        # runs buys nothing -- and an in-memory store never pickles the job func,
+        # which is what broke bound-method jobs ("Schedulers cannot be serialized").
+        # Dropping the persistent store also removes the old hardcoded
+        # ``sqlite:///network_check_tool.db`` jobstore URL that ignored DATABASE_URL.
+        jobstores = {"default": MemoryJobStore()}
 
         executors = {"default": ThreadPoolExecutor(20)}
 
@@ -18,6 +56,8 @@ class SchedulerService:
             jobstores=jobstores, executors=executors, job_defaults=job_defaults
         )
 
+        # Flask app whose context each job pushes before touching the DB session.
+        self.app = app
         self.ping_service = PingService()
         self.is_running = False
 
@@ -42,11 +82,11 @@ class SchedulerService:
             job_id = f"ping_{host}"
 
         self.scheduler.add_job(
-            func=self._ping_job,
+            func=_run_ping_job,
             trigger="interval",
             seconds=interval,
             id=job_id,
-            args=[host],
+            args=[self.app, self.ping_service, host],
             replace_existing=True,
         )
 
@@ -65,15 +105,6 @@ class SchedulerService:
 
     def list_jobs(self):
         return self.scheduler.get_jobs()
-
-    def _ping_job(self, host: str):
-        try:
-            result = self.ping_service.ping_and_save(host)
-            self.logger.debug(
-                f"Ping result for {host}: {result.response_time}ms, packet_loss: {result.packet_loss}"
-            )
-        except Exception as e:
-            self.logger.error(f"Error pinging {host}: {e}")
 
     def get_job_status(self, job_id: str):
         job = self.scheduler.get_job(job_id)
