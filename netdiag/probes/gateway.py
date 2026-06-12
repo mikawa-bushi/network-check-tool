@@ -66,8 +66,10 @@ class GatewayProbe(Probe):
         ctx.config.setdefault("_gateway", gw)
         if not have("ping"):
             return CheckResult.warn(
-                self.name, f"default gateway {gw} (cannot ping: no ping command)",
-                detail={"gateway": gw}, metrics={"has_gateway": 1.0},
+                self.name,
+                f"default gateway {gw} (cannot ping: no ping command)",
+                detail={"gateway": gw},
+                metrics={"has_gateway": 1.0},
             )
         rtt, loss, text = ping(gw, count=int(ctx.get("count", 4)))
         metrics = {"has_gateway": 1.0, "loss_pct": loss}
@@ -77,16 +79,19 @@ class GatewayProbe(Probe):
             return CheckResult.fail(
                 self.name,
                 f"default gateway {gw} not responding (100% loss) — router/LAN problem",
-                metrics=metrics, detail={"gateway": gw, "output": text},
+                metrics=metrics,
+                detail={"gateway": gw, "output": text},
             )
         if loss > 0:
             return CheckResult.warn(
                 self.name,
                 f"gateway {gw} reachable but {loss:.0f}% loss ({rtt:.1f}ms)",
-                metrics=metrics, detail={"gateway": gw, "output": text},
+                metrics=metrics,
+                detail={"gateway": gw, "output": text},
             )
         return CheckResult.ok(
             self.name,
             f"{gw} reachable ({rtt:.2f}ms)",
-            metrics=metrics, detail={"gateway": gw, "output": text},
+            metrics=metrics,
+            detail={"gateway": gw, "output": text},
         )

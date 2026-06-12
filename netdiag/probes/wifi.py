@@ -43,7 +43,9 @@ class WifiProbe(Probe):
         if not is_linux():
             return CheckResult.skip(self.name, "Wi-Fi inspection only on Linux")
         if not have("iw"):
-            return CheckResult.skip(self.name, "'iw' command not installed (skipping Wi-Fi check)")
+            return CheckResult.skip(
+                self.name, "'iw' command not installed (skipping Wi-Fi check)"
+            )
         ifaces = _wifi_interfaces()
         if not ifaces:
             return CheckResult.skip(self.name, "no Wi-Fi interface present")
@@ -53,8 +55,11 @@ class WifiProbe(Probe):
             res = run(["iw", "dev", iface, "link"])
             text = res.stdout
             if "Not connected" in text or not text.strip():
-                r = CheckResult.warn(self.name, f"{iface}: not associated to any AP",
-                                     metrics={"associated": 0.0})
+                r = CheckResult.warn(
+                    self.name,
+                    f"{iface}: not associated to any AP",
+                    metrics={"associated": 0.0},
+                )
                 worst = r
                 continue
             sig = _SIGNAL_RE.search(text)
@@ -76,8 +81,9 @@ class WifiProbe(Probe):
                 desc += f", {rate.group(1)} Mbit/s"
 
             if signal is not None and signal <= -80:
-                r = CheckResult.warn(self.name, f"{desc} (weak signal)",
-                                     metrics=metrics, detail=detail)
+                r = CheckResult.warn(
+                    self.name, f"{desc} (weak signal)", metrics=metrics, detail=detail
+                )
                 worst = r
             elif worst is None:
                 worst = CheckResult.ok(self.name, desc, metrics=metrics, detail=detail)

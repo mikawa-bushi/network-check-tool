@@ -13,12 +13,18 @@ from typing import Dict, List, Optional
 
 # Human labels + why a change here matters, for the report.
 SOURCE_LABELS = {
-    "routes": ("Routing table (IPv4)", "a changed default route can blackhole all traffic"),
+    "routes": (
+        "Routing table (IPv4)",
+        "a changed default route can blackhole all traffic",
+    ),
     "routes6": ("Routing table (IPv6)", "IPv6 routing change"),
     "addresses": ("Interface addresses", "an IP/interface change"),
     "links": ("Link states", "an interface going up/down"),
     "neighbours": ("ARP/neighbours", "L2 neighbour changes"),
-    "dns_resolvers": ("DNS resolvers (resolv.conf)", "a changed resolver breaks name resolution"),
+    "dns_resolvers": (
+        "DNS resolvers (resolv.conf)",
+        "a changed resolver breaks name resolution",
+    ),
     "hosts": ("/etc/hosts", "a host override change"),
     "nsswitch": ("nsswitch.conf", "name-resolution order change"),
     "sysctl_net": ("Network sysctls", "kernel networking parameter change"),
@@ -76,8 +82,9 @@ def diff_snapshots(baseline: Dict, current: Dict) -> SnapshotDiff:
     for key in keys:
         label, why = SOURCE_LABELS.get(key, (key, ""))
         added, removed = _line_diff(base_src.get(key), cur_src.get(key))
-        diffs.append(SourceDiff(key=key, label=label, why=why,
-                                added=added, removed=removed))
+        diffs.append(
+            SourceDiff(key=key, label=label, why=why, added=added, removed=removed)
+        )
     return SnapshotDiff(
         diffs=diffs,
         baseline_time=baseline.get("captured_at_iso", "?"),

@@ -68,9 +68,16 @@ def test_file_sink_writes_jsonl_and_log(tmp_path):
     jsonl = tmp_path / "alerts.jsonl"
     log = tmp_path / "alerts.log"
     sink = FileAlertSink(jsonl_path=jsonl, log_path=log)
-    t = Transition(event="degraded", from_state="healthy", to_state="degraded",
-                   ts=1_000_000.0, cause="dns", confidence="high",
-                   summary="resolver down", consequences=["http"])
+    t = Transition(
+        event="degraded",
+        from_state="healthy",
+        to_state="degraded",
+        ts=1_000_000.0,
+        cause="dns",
+        confidence="high",
+        summary="resolver down",
+        consequences=["http"],
+    )
     sink.emit(t)
 
     lines = jsonl.read_text().strip().splitlines()

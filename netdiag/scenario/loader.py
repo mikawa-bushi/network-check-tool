@@ -72,7 +72,11 @@ def parse_scenario(raw: Dict[str, Any]) -> Scenario:
             # Translate well-known shorthand to config keys; otherwise pass through.
             mapping = _FIELD_TO_CONFIG.get(field_name, {})
             key = mapping.get(probe, field_name)
-            if probe == "tcp" and field_name == "target" and not isinstance(value, list):
+            if (
+                probe == "tcp"
+                and field_name == "target"
+                and not isinstance(value, list)
+            ):
                 value = [value]
             cfg[key] = value
         checks.append(ScenarioCheck(probe=probe, label=item.get("label"), config=cfg))

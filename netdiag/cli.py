@@ -80,20 +80,37 @@ def cli() -> None:
 @cli.command()
 @click.option("--external-ip", help="Off-LAN IP to test reachability (no DNS).")
 @click.option("--dns-name", help="Hostname to resolve for the DNS check.")
-@click.option("--tcp", multiple=True, metavar="HOST:PORT",
-              help="TCP service(s) to test. Repeatable.")
+@click.option(
+    "--tcp",
+    multiple=True,
+    metavar="HOST:PORT",
+    help="TCP service(s) to test. Repeatable.",
+)
 @click.option("--http-url", help="URL for the HTTP/TLS phase-timing check.")
 @click.option("--count", type=int, default=4, help="Ping count per target.")
 @click.option("--only", help="Comma-separated probe names to run exclusively.")
 @click.option("--skip", help="Comma-separated probe names to skip.")
-@click.option("--format", "fmt", type=click.Choice(["text", "json", "html"]),
-              default="text")
+@click.option(
+    "--format", "fmt", type=click.Choice(["text", "json", "html"]), default="text"
+)
 @click.option("--output", type=click.Path(), help="Write the report to a file.")
 @click.option("--verbose", is_flag=True, help="Show the engine's reasoning steps.")
 @click.option("--save/--no-save", default=False, help="Record metrics to history db.")
 @click.option("--no-color", is_flag=True, help="Disable ANSI colour.")
-def check(external_ip, dns_name, tcp, http_url, count, only, skip, fmt, output,
-          verbose, save, no_color):
+def check(
+    external_ip,
+    dns_name,
+    tcp,
+    http_url,
+    count,
+    only,
+    skip,
+    fmt,
+    output,
+    verbose,
+    save,
+    no_color,
+):
     """Run the full layered diagnosis and report the root cause."""
     cfg = _build_config(external_ip, dns_name, tcp, http_url, count)
     only_list = [s.strip() for s in only.split(",")] if only else None
@@ -135,6 +152,7 @@ def check(external_ip, dns_name, tcp, http_url, count, only, skip, fmt, output,
 def ping(host, count):
     """Ad-hoc ICMP ping of HOST (uses the system ping, no root needed)."""
     from .core import Context
+
     probe = get_probe("icmp")()
     ctx = Context({"target": host, "count": count})
     res = probe.run(ctx)
@@ -196,6 +214,7 @@ def snapshot():
 @click.argument("name", default="default")
 def snapshot_save(name):
     from . import snapshot as snap
+
     path = snap.save(name)
     click.echo(f"snapshot '{name}' saved to {path}")
 
@@ -203,6 +222,7 @@ def snapshot_save(name):
 @snapshot.command("list")
 def snapshot_list():
     from . import snapshot as snap
+
     names = snap.list_snapshots()
     click.echo("\n".join(names) if names else "(no snapshots saved)")
 
@@ -212,16 +232,21 @@ def snapshot_list():
 def snapshot_diff(name):
     """Diff a saved snapshot against the current configuration."""
     from . import snapshot as snap
+
     baseline = snap.load(name)
     if baseline is None:
-        click.echo(f"no snapshot named '{name}' — run 'netdiag snapshot save {name}' "
-                   f"while the network works.", err=True)
+        click.echo(
+            f"no snapshot named '{name}' — run 'netdiag snapshot save {name}' "
+            f"while the network works.",
+            err=True,
+        )
         sys.exit(1)
     current = snap.capture()
     d = snap.diff_snapshots(baseline, current)
     if not d.any_change:
-        click.echo(f"no configuration changes since '{name}' "
-                   f"(saved {d.baseline_time}).")
+        click.echo(
+            f"no configuration changes since '{name}' " f"(saved {d.baseline_time})."
+        )
         return
     click.echo(f"changes since '{name}' (saved {d.baseline_time}):\n")
     for sd in d.changed:
@@ -246,6 +271,7 @@ def peer():
 def peer_serve(host, port):
     """Run the responder on this machine (the 'other end')."""
     from .peer import PeerServer
+
     click.echo(f"peer responder listening on {host}:{port} (UDP+TCP). Ctrl-C to stop.")
     PeerServer(host, port).serve_forever()
 
@@ -258,6 +284,7 @@ def peer_serve(host, port):
 def peer_test(address, port, count, throughput):
     """Measure loss, jitter and throughput against a peer responder at ADDRESS."""
     from .peer import measure_loss_jitter, measure_throughput
+
     rep = measure_loss_jitter(address, port=port, count=count)
     if rep.error:
         click.echo(f"✘ {address}:{port} — {rep.error}", err=True)
@@ -282,6 +309,7 @@ def peer_test(address, port, count, throughput):
 def scenario(path, fmt, verbose):
     """Run a declarative YAML/JSON diagnosis scenario."""
     from .scenario import load_scenario, merged_config
+
     sc = load_scenario(path)
     cfg = dict(DEFAULT_CONFIG)
     cfg.update(merged_config(sc))
@@ -293,8 +321,9 @@ def scenario(path, fmt, verbose):
     if fmt == "json":
         click.echo(report_mod.render_json(diag))
     else:
-        click.echo(report_mod.render_terminal(
-            diag, color=sys.stdout.isatty(), verbose=verbose))
+        click.echo(
+            report_mod.render_terminal(diag, color=sys.stdout.isatty(), verbose=verbose)
+        )
     sys.exit(0 if diag.healthy else 1)
 
 
@@ -306,13 +335,15 @@ def scenario(path, fmt, verbose):
 def monitor(interval, external_ip, only):
     """Continuously run the diagnosis and record metrics to history."""
     from .scheduler import Monitor
+
     only_list = [s.strip() for s in only.split(",")] if only else None
     cfg = dict(DEFAULT_CONFIG, external_ip=external_ip)
 
     def on_tick(diag):
         stamp = time.strftime("%H:%M:%S")
-        verdict = "OK" if diag.healthy else (
-            diag.primary.cause if diag.primary else "WARN")
+        verdict = (
+            "OK" if diag.healthy else (diag.primary.cause if diag.primary else "WARN")
+        )
         click.echo(f"[{stamp}] {verdict}")
 
     mon = Monitor(config=cfg, interval=interval, only=only_list, on_tick=on_tick)
@@ -329,22 +360,53 @@ def monitor(interval, external_ip, only):
 @click.option("--interval", default=30, type=int, help="Seconds between sweeps.")
 @click.option("--external-ip", default="1.1.1.1")
 @click.option("--dns-name", default="example.com")
-@click.option("--light-probes", default=None,
-              help="Comma-separated tier-1 probes (default: interface,gateway,external,dns).")
-@click.option("--alert-file", type=click.Path(),
-              help="JSONL alert file (default: ~/.netdiag/alerts.jsonl).")
-@click.option("--state-file", type=click.Path(),
-              help="Where to write current state JSON (default: ~/.netdiag/state.json).")
-@click.option("--fail-threshold", default=2, type=int,
-              help="Consecutive bad ticks before declaring DEGRADED (flap damping).")
-@click.option("--recover-threshold", default=2, type=int,
-              help="Consecutive good ticks before declaring RECOVERED.")
-@click.option("--escalate/--no-escalate", default=True,
-              help="On degradation, run the full diagnosis once for the root cause.")
+@click.option(
+    "--light-probes",
+    default=None,
+    help="Comma-separated tier-1 probes (default: interface,gateway,external,dns).",
+)
+@click.option(
+    "--alert-file",
+    type=click.Path(),
+    help="JSONL alert file (default: ~/.netdiag/alerts.jsonl).",
+)
+@click.option(
+    "--state-file",
+    type=click.Path(),
+    help="Where to write current state JSON (default: ~/.netdiag/state.json).",
+)
+@click.option(
+    "--fail-threshold",
+    default=2,
+    type=int,
+    help="Consecutive bad ticks before declaring DEGRADED (flap damping).",
+)
+@click.option(
+    "--recover-threshold",
+    default=2,
+    type=int,
+    help="Consecutive good ticks before declaring RECOVERED.",
+)
+@click.option(
+    "--escalate/--no-escalate",
+    default=True,
+    help="On degradation, run the full diagnosis once for the root cause.",
+)
 @click.option("--save/--no-save", default=True, help="Record metrics to history db.")
 @click.option("--once", is_flag=True, help="Run a single tick and exit (for testing).")
-def watch(interval, external_ip, dns_name, light_probes, alert_file, state_file,
-          fail_threshold, recover_threshold, escalate, save, once):
+def watch(
+    interval,
+    external_ip,
+    dns_name,
+    light_probes,
+    alert_file,
+    state_file,
+    fail_threshold,
+    recover_threshold,
+    escalate,
+    save,
+    once,
+):
     """Run continuously; alert (file/JSONL) only when the verdict changes.
 
     A light loop watches reachability and DNS; when degradation is confirmed it
@@ -355,8 +417,11 @@ def watch(interval, external_ip, dns_name, light_probes, alert_file, state_file,
     from .alerting import FileAlertSink
     from .watch import Watcher, LIGHT_PROBES
 
-    probes = ([s.strip() for s in light_probes.split(",")]
-              if light_probes else list(LIGHT_PROBES))
+    probes = (
+        [s.strip() for s in light_probes.split(",")]
+        if light_probes
+        else list(LIGHT_PROBES)
+    )
     cfg = dict(DEFAULT_CONFIG, external_ip=external_ip, dns_name=dns_name)
     sink = FileAlertSink(jsonl_path=Path(alert_file) if alert_file else None)
     default_state = Path.home() / ".netdiag" / "state.json"
@@ -364,18 +429,26 @@ def watch(interval, external_ip, dns_name, light_probes, alert_file, state_file,
 
     def on_tick(diag, transition):
         stamp = time.strftime("%H:%M:%S")
-        verdict = "OK" if diag.healthy else (
-            diag.primary.cause if diag.primary else "WARN")
+        verdict = (
+            "OK" if diag.healthy else (diag.primary.cause if diag.primary else "WARN")
+        )
         marker = ""
         if transition:
             marker = f"  <<< {transition.event.upper()}" + (
-                f" ({transition.cause})" if transition.cause else "")
+                f" ({transition.cause})" if transition.cause else ""
+            )
         click.echo(f"[{stamp}] {verdict}{marker}")
 
     watcher = Watcher(
-        config=cfg, interval=interval, light_probes=probes, escalate=escalate,
-        sink=sink, fail_threshold=fail_threshold,
-        recover_threshold=recover_threshold, save=save, on_tick=on_tick,
+        config=cfg,
+        interval=interval,
+        light_probes=probes,
+        escalate=escalate,
+        sink=sink,
+        fail_threshold=fail_threshold,
+        recover_threshold=recover_threshold,
+        save=save,
+        on_tick=on_tick,
         state_path=state_path,
     )
 
@@ -385,8 +458,10 @@ def watch(interval, external_ip, dns_name, light_probes, alert_file, state_file,
         return
 
     click.echo(f"watching every {interval}s — alerts → {sink.jsonl_path}")
-    click.echo(f"flap damping: {fail_threshold} bad → DEGRADED, "
-               f"{recover_threshold} good → RECOVERED. Ctrl-C to stop.")
+    click.echo(
+        f"flap damping: {fail_threshold} bad → DEGRADED, "
+        f"{recover_threshold} good → RECOVERED. Ctrl-C to stop."
+    )
     try:
         watcher.start(background=False)
     except KeyboardInterrupt:
@@ -406,8 +481,10 @@ def history(probe, metric, target, hours):
     with Storage() as st:
         series = st.series(probe, metric, target=target, since=since)
     if not series:
-        click.echo(f"no history for {probe}/{metric} in the last {hours}h "
-                   f"(run 'netdiag check --save' or 'netdiag monitor' first).")
+        click.echo(
+            f"no history for {probe}/{metric} in the last {hours}h "
+            f"(run 'netdiag check --save' or 'netdiag monitor' first)."
+        )
         return
     values = [v for _, v in series]
     base = compute_baseline(values)
@@ -420,8 +497,10 @@ def history(probe, metric, target, hours):
     if cp:
         when = time.strftime("%Y-%m-%d %H:%M:%S", time.localtime(cp.timestamp))
         direction = "worsened" if cp.worsened else "improved"
-        click.echo(f"  change point: {direction} at {when} "
-                   f"({cp.before_mean:.1f} → {cp.after_mean:.1f})")
+        click.echo(
+            f"  change point: {direction} at {when} "
+            f"({cp.before_mean:.1f} → {cp.after_mean:.1f})"
+        )
     flap = detect_flapping(series)
     if flap:
         click.echo(f"  flapping detected: {flap*100:.0f}% of samples alternate state")
@@ -429,10 +508,16 @@ def history(probe, metric, target, hours):
 
 # --- status (live view of the always-on watcher) ----------------------------
 @cli.command()
-@click.option("--state-file", type=click.Path(),
-              help="State JSON written by 'watch' (default: ~/.netdiag/state.json).")
-@click.option("--alert-file", type=click.Path(),
-              help="Alert JSONL (default: ~/.netdiag/alerts.jsonl).")
+@click.option(
+    "--state-file",
+    type=click.Path(),
+    help="State JSON written by 'watch' (default: ~/.netdiag/state.json).",
+)
+@click.option(
+    "--alert-file",
+    type=click.Path(),
+    help="Alert JSONL (default: ~/.netdiag/alerts.jsonl).",
+)
 @click.option("--limit", default=5, type=int, help="Recent alerts to show.")
 @click.option("--format", "fmt", type=click.Choice(["text", "json"]), default="text")
 def status(state_file, alert_file, limit, fmt):
@@ -472,8 +557,13 @@ def status(state_file, alert_file, limit, fmt):
         pass
 
     if fmt == "json":
-        click.echo(json.dumps({"state": state, "recent_alerts": recent,
-                               "history": counts}, ensure_ascii=False, indent=2))
+        click.echo(
+            json.dumps(
+                {"state": state, "recent_alerts": recent, "history": counts},
+                ensure_ascii=False,
+                indent=2,
+            )
+        )
         return
 
     if state is None:
@@ -485,8 +575,10 @@ def status(state_file, alert_file, limit, fmt):
         if state.get("cause"):
             click.echo(f"  current cause: {state['cause']}")
     if counts:
-        click.echo(f"  history: {counts.get('samples', 0)} raw samples, "
-                   f"{counts.get('rollups', 0)} rollups")
+        click.echo(
+            f"  history: {counts.get('samples', 0)} raw samples, "
+            f"{counts.get('rollups', 0)} rollups"
+        )
     if recent:
         click.echo("\nrecent alerts:")
         for a in recent:
@@ -496,20 +588,32 @@ def status(state_file, alert_file, limit, fmt):
 
 # --- prune (manual retention) -----------------------------------------------
 @cli.command()
-@click.option("--raw-days", default=7, type=float,
-              help="Keep full-resolution samples for this many days.")
-@click.option("--rollup-days", default=90, type=float,
-              help="Keep hourly rollups for this many days.")
+@click.option(
+    "--raw-days",
+    default=7,
+    type=float,
+    help="Keep full-resolution samples for this many days.",
+)
+@click.option(
+    "--rollup-days",
+    default=90,
+    type=float,
+    help="Keep hourly rollups for this many days.",
+)
 def prune(raw_days, rollup_days):
     """Downsample old raw samples to hourly rollups and drop ancient rollups."""
     with Storage() as st:
         before = st.counts()
         result = st.retention(raw_days=raw_days, rollup_days=rollup_days)
         after = st.counts()
-    click.echo(f"collapsed {result['raw_collapsed']} raw rows, "
-               f"dropped {result['rollups_dropped']} old rollups")
-    click.echo(f"  samples: {before['samples']} → {after['samples']}, "
-               f"rollups: {before['rollups']} → {after['rollups']}")
+    click.echo(
+        f"collapsed {result['raw_collapsed']} raw rows, "
+        f"dropped {result['rollups_dropped']} old rollups"
+    )
+    click.echo(
+        f"  samples: {before['samples']} → {after['samples']}, "
+        f"rollups: {before['rollups']} → {after['rollups']}"
+    )
 
 
 # --- service (systemd packaging) --------------------------------------------
@@ -541,10 +645,13 @@ WantedBy={install_target}
 
 def _exec_start(interval, external_ip, dns_name) -> str:
     import shutil
+
     exe = shutil.which("netdiag")
     base = exe if exe else f"{sys.executable} -m netdiag.cli"
-    return (f"{base} watch --interval {interval} --external-ip {external_ip} "
-            f"--dns-name {dns_name}")
+    return (
+        f"{base} watch --interval {interval} --external-ip {external_ip} "
+        f"--dns-name {dns_name}"
+    )
 
 
 @service.command("print")
@@ -569,17 +676,21 @@ def service_install(interval, external_ip, dns_name):
     commands are printed for you to review and run.
     """
     from pathlib import Path
+
     unit_dir = Path.home() / ".config" / "systemd" / "user"
     unit_dir.mkdir(parents=True, exist_ok=True)
     unit_path = unit_dir / "netdiag-watch.service"
-    unit_path.write_text(_unit_text(_exec_start(interval, external_ip, dns_name),
-                                    system=False))
+    unit_path.write_text(
+        _unit_text(_exec_start(interval, external_ip, dns_name), system=False)
+    )
     click.echo(f"wrote {unit_path}\n\nEnable it with:")
     click.echo("  systemctl --user daemon-reload")
     click.echo("  systemctl --user enable --now netdiag-watch")
     click.echo("  # survive logout: sudo loginctl enable-linger $USER")
     click.echo("\nFor a system-wide service instead:")
-    click.echo("  netdiag service print --system | sudo tee /etc/systemd/system/netdiag-watch.service")
+    click.echo(
+        "  netdiag service print --system | sudo tee /etc/systemd/system/netdiag-watch.service"
+    )
 
 
 def main() -> None:

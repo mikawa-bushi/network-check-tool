@@ -64,7 +64,8 @@ class SystemProbe(Probe):
         "look exactly like network faults. This catches the OS-side root cause."
     )
     manual_commands = [
-        "uptime", "cat /proc/meminfo",
+        "uptime",
+        "cat /proc/meminfo",
         "cat /proc/sys/net/netfilter/nf_conntrack_count "
         "/proc/sys/net/netfilter/nf_conntrack_max",
     ]
@@ -105,13 +106,18 @@ class SystemProbe(Probe):
                 )
 
         if issues:
-            return CheckResult.warn(self.name, "; ".join(issues),
-                                    metrics=metrics, detail=detail)
+            return CheckResult.warn(
+                self.name, "; ".join(issues), metrics=metrics, detail=detail
+            )
         return CheckResult.ok(
             self.name,
-            f"load {load:.2f}/{ncpu}cpu, mem {mem:.0f}% free" if load and mem
-            else "host resources nominal",
-            metrics=metrics, detail=detail,
+            (
+                f"load {load:.2f}/{ncpu}cpu, mem {mem:.0f}% free"
+                if load and mem
+                else "host resources nominal"
+            ),
+            metrics=metrics,
+            detail=detail,
         )
 
 
@@ -131,10 +137,12 @@ class ClockProbe(Probe):
             if res.ok:
                 synced = res.stdout.strip() == "yes"
                 if synced:
-                    return CheckResult.ok(self.name, "clock NTP-synchronised",
-                                          metrics={"ntp_synced": 1.0})
+                    return CheckResult.ok(
+                        self.name, "clock NTP-synchronised", metrics={"ntp_synced": 1.0}
+                    )
                 return CheckResult.warn(
-                    self.name, "clock NOT NTP-synchronised (may break TLS/auth)",
+                    self.name,
+                    "clock NOT NTP-synchronised (may break TLS/auth)",
                     metrics={"ntp_synced": 0.0},
                 )
         return CheckResult.skip(self.name, "timedatectl not available")

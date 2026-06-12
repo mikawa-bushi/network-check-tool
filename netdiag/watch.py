@@ -54,8 +54,9 @@ class Watcher:
         self.sink = sink or FileAlertSink()
         self.storage = storage if storage is not None else (Storage() if save else None)
         self.save = save
-        self.sm = StateMachine(fail_threshold=fail_threshold,
-                               recover_threshold=recover_threshold)
+        self.sm = StateMachine(
+            fail_threshold=fail_threshold, recover_threshold=recover_threshold
+        )
         self.on_tick = on_tick
         self.state_path = state_path
         self.retention_raw_days = retention_raw_days
@@ -110,22 +111,28 @@ class Watcher:
             return
         import json
         from pathlib import Path
+
         try:
             Path(self.state_path).write_text(
-                json.dumps(self.sm.snapshot(), ensure_ascii=False, indent=2))
+                json.dumps(self.sm.snapshot(), ensure_ascii=False, indent=2)
+            )
         except OSError:
             pass
 
     # -- loop -----------------------------------------------------------------
     def _maybe_maintain(self) -> None:
         """Periodically downsample old data so a long-running daemon self-bounds disk."""
-        if (self.storage is None or self.retention_raw_days is None
-                or time.time() - self._last_maintenance < self.maintenance_interval):
+        if (
+            self.storage is None
+            or self.retention_raw_days is None
+            or time.time() - self._last_maintenance < self.maintenance_interval
+        ):
             return
         self._last_maintenance = time.time()
         try:
-            self.storage.retention(raw_days=self.retention_raw_days,
-                                   rollup_days=self.retention_rollup_days)
+            self.storage.retention(
+                raw_days=self.retention_raw_days, rollup_days=self.retention_rollup_days
+            )
         except Exception:
             pass
 

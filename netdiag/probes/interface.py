@@ -98,10 +98,11 @@ class InterfaceProbe(Probe):
             )
 
         usable = [
-            f for f in ifaces
-            if f["name"] != "lo" and f["up"] and any(
-                self._is_global_v4(a) for a in f["addrs"]
-            )
+            f
+            for f in ifaces
+            if f["name"] != "lo"
+            and f["up"]
+            and any(self._is_global_v4(a) for a in f["addrs"])
         ]
         if not usable:
             up_but_no_ip = [f["name"] for f in ifaces if f["name"] != "lo" and f["up"]]

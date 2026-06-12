@@ -18,17 +18,17 @@ def test_downsample_collapses_old_keeps_recent(tmp_path):
     now = time.time()
     old = now - 10 * 86400
     for i in range(60):
-        _insert(st, old + i, 10.0 + (i % 5))   # old, within one hour bucket
+        _insert(st, old + i, 10.0 + (i % 5))  # old, within one hour bucket
     for i in range(4):
-        _insert(st, now - i, 12.0)             # recent
+        _insert(st, now - i, 12.0)  # recent
     st.conn.commit()
 
     assert st.counts() == {"samples": 64, "rollups": 0}
     collapsed = st.downsample(older_than_days=7)
     assert collapsed == 60
     c = st.counts()
-    assert c["samples"] == 4        # recent raw kept
-    assert c["rollups"] == 1        # 60 old rows -> one hourly bucket
+    assert c["samples"] == 4  # recent raw kept
+    assert c["rollups"] == 1  # 60 old rows -> one hourly bucket
     # recent raw still readable for baselining
     assert st.values("external", "rtt_ms", target="1.1.1.1") == [12.0, 12.0, 12.0, 12.0]
     st.close()
@@ -55,8 +55,7 @@ def test_rollup_running_average_is_correct(tmp_path):
         _insert(st, bucket_start, v)
     st.conn.commit()
     st.downsample(older_than_days=7)
-    row = st.conn.execute(
-        "SELECT count, avg, min, max FROM rollups").fetchone()
+    row = st.conn.execute("SELECT count, avg, min, max FROM rollups").fetchone()
     assert row["count"] == 3
     assert abs(row["avg"] - 20.0) < 1e-9
     assert row["min"] == 10.0 and row["max"] == 30.0

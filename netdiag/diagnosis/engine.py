@@ -20,9 +20,9 @@ from ..core import CheckResult, Context, Probe, Status, all_probes, get_probe
 
 @dataclass
 class Hypothesis:
-    cause: str            # probe name that is the suspected root
-    confidence: str       # "high" | "medium" | "low"
-    summary: str          # human explanation
+    cause: str  # probe name that is the suspected root
+    confidence: str  # "high" | "medium" | "low"
+    summary: str  # human explanation
     evidence: List[str] = field(default_factory=list)
     consequences: List[str] = field(default_factory=list)  # failures explained by this
 
@@ -83,8 +83,9 @@ class Engine:
         self.config = config or {}
         self.verbose = verbose
 
-    def select(self, only: Optional[List[str]] = None,
-               skip: Optional[List[str]] = None) -> List[str]:
+    def select(
+        self, only: Optional[List[str]] = None, skip: Optional[List[str]] = None
+    ) -> List[str]:
         names = list(all_probes())
         # Opt-in probes, excluded from the default sweep:
         #   icmp       — ad-hoc single-target ping (use `netdiag ping`)
@@ -99,8 +100,9 @@ class Engine:
             names = [n for n in names if n not in set(skip)]
         return names
 
-    def run(self, only: Optional[List[str]] = None,
-            skip: Optional[List[str]] = None) -> Diagnosis:
+    def run(
+        self, only: Optional[List[str]] = None, skip: Optional[List[str]] = None
+    ) -> Diagnosis:
         ctx = Context(dict(self.config))
         names = self.select(only=only, skip=skip)
         order = _topo_order(names)
@@ -117,7 +119,8 @@ class Engine:
             # Gate on dependencies: if a hard dependency FAILED, skip this probe
             # and record it as a consequence rather than re-measuring a symptom.
             failed_deps = [
-                d for d in probe.depends_on
+                d
+                for d in probe.depends_on
                 if d in ctx.results and ctx.results[d].status == Status.FAIL
             ]
             if failed_deps:
@@ -147,12 +150,14 @@ class Engine:
 
         hypotheses = self._diagnose(results, reasoning)
         healthy = not any(r.status == Status.FAIL for r in results) and not hypotheses
-        return Diagnosis(results=results, hypotheses=hypotheses,
-                         healthy=healthy, reasoning=reasoning)
+        return Diagnosis(
+            results=results, hypotheses=hypotheses, healthy=healthy, reasoning=reasoning
+        )
 
     # -- diagnosis logic ------------------------------------------------------
-    def _diagnose(self, results: List[CheckResult],
-                  reasoning: List[str]) -> List[Hypothesis]:
+    def _diagnose(
+        self, results: List[CheckResult], reasoning: List[str]
+    ) -> List[Hypothesis]:
         by_name = {r.name: r for r in results}
         failed = [r for r in results if r.status == Status.FAIL]
         if not failed:
@@ -160,7 +165,8 @@ class Engine:
             warns = [r for r in results if r.status == Status.WARN]
             return [
                 Hypothesis(
-                    cause=w.name, confidence="low",
+                    cause=w.name,
+                    confidence="low",
                     summary=f"{w.title}: {w.summary}",
                     evidence=[w.summary],
                 )
@@ -191,12 +197,17 @@ class Engine:
             explained.update(consequences)
             conf = "high" if len(roots) == 1 else "medium"
             from .rules import explain_failure
+
             summary, evidence = explain_failure(root, by_name)
-            hypotheses.append(Hypothesis(
-                cause=root.name, confidence=conf, summary=summary,
-                evidence=evidence,
-                consequences=[c for c in consequences if c != root.name],
-            ))
+            hypotheses.append(
+                Hypothesis(
+                    cause=root.name,
+                    confidence=conf,
+                    summary=summary,
+                    evidence=evidence,
+                    consequences=[c for c in consequences if c != root.name],
+                )
+            )
             if self.verbose:
                 reasoning.append(
                     f"root cause candidate: {root.name} failed while its "
@@ -221,8 +232,7 @@ class Engine:
         return d(name)
 
     @staticmethod
-    def _downstream_failures(root: str,
-                             by_name: Dict[str, CheckResult]) -> List[str]:
+    def _downstream_failures(root: str, by_name: Dict[str, CheckResult]) -> List[str]:
         """All FAILED/SKIPPED probes that (transitively) depend on *root*."""
         out = [root]
         changed = True

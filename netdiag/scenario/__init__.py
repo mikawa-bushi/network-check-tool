@@ -9,5 +9,9 @@ from .loader import (
 )
 
 __all__ = [
-    "Scenario", "ScenarioCheck", "load_scenario", "parse_scenario", "merged_config",
+    "Scenario",
+    "ScenarioCheck",
+    "load_scenario",
+    "parse_scenario",
+    "merged_config",
 ]

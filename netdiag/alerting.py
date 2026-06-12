@@ -22,7 +22,7 @@ from typing import List, Optional, Protocol
 
 
 class State(str, Enum):
-    UNKNOWN = "unknown"   # before enough observations to commit
+    UNKNOWN = "unknown"  # before enough observations to commit
     HEALTHY = "healthy"
     DEGRADED = "degraded"
 
@@ -31,7 +31,7 @@ class State(str, Enum):
 class Transition:
     """A confirmed state change worth telling someone about."""
 
-    event: str            # "degraded" | "recovered" | "started" | "stopped"
+    event: str  # "degraded" | "recovered" | "started" | "stopped"
     from_state: str
     to_state: str
     ts: float
@@ -68,7 +68,7 @@ class StateMachine:
         self.state = State.UNKNOWN
         self._bad_streak = 0
         self._good_streak = 0
-        self._since = time.time()        # when the current state began
+        self._since = time.time()  # when the current state began
         self._cause: Optional[str] = None
 
     def observe(
@@ -101,10 +101,15 @@ class StateMachine:
                 self._since = ts
                 self._cause = cause
                 return Transition(
-                    event="degraded", from_state=prior.value,
-                    to_state=self.state.value, ts=ts, cause=cause,
-                    confidence=confidence, summary=summary,
-                    evidence=evidence or [], consequences=consequences or [],
+                    event="degraded",
+                    from_state=prior.value,
+                    to_state=self.state.value,
+                    ts=ts,
+                    cause=cause,
+                    confidence=confidence,
+                    summary=summary,
+                    evidence=evidence or [],
+                    consequences=consequences or [],
                     runbook=runbook or [],
                     duration_s=duration if prior != State.UNKNOWN else None,
                 )
@@ -115,8 +120,11 @@ class StateMachine:
                 self._since = ts
                 self._cause = None
                 return Transition(
-                    event="recovered", from_state=State.DEGRADED.value,
-                    to_state=self.state.value, ts=ts, summary=summary,
+                    event="recovered",
+                    from_state=State.DEGRADED.value,
+                    to_state=self.state.value,
+                    ts=ts,
+                    summary=summary,
                     duration_s=duration,
                 )
         return None
@@ -133,12 +141,15 @@ class StateMachine:
         return {
             "state": self.state.value,
             "since": self._since,
-            "since_iso": time.strftime("%Y-%m-%d %H:%M:%S", time.localtime(self._since)),
+            "since_iso": time.strftime(
+                "%Y-%m-%d %H:%M:%S", time.localtime(self._since)
+            ),
             "cause": self._cause,
         }
 
 
 # --- sinks ------------------------------------------------------------------
+
 
 class AlertSink(Protocol):
     def emit(self, transition: Transition) -> None: ...
@@ -154,8 +165,9 @@ class FileAlertSink:
 
     DEFAULT_DIR = Path.home() / ".netdiag"
 
-    def __init__(self, jsonl_path: Optional[Path] = None,
-                 log_path: Optional[Path] = None) -> None:
+    def __init__(
+        self, jsonl_path: Optional[Path] = None, log_path: Optional[Path] = None
+    ) -> None:
         base = self.DEFAULT_DIR
         base.mkdir(parents=True, exist_ok=True)
         self.jsonl_path = Path(jsonl_path) if jsonl_path else base / "alerts.jsonl"
@@ -173,8 +185,10 @@ class FileAlertSink:
     def _format_line(t: Transition) -> str:
         if t.event == "degraded":
             dur = f" (healthy for {t.duration_s:.0f}s)" if t.duration_s else ""
-            head = (f"[{t.iso}] DEGRADED — 原因: {t.cause or '?'} "
-                    f"[{t.confidence or '?'}]{dur}")
+            head = (
+                f"[{t.iso}] DEGRADED — 原因: {t.cause or '?'} "
+                f"[{t.confidence or '?'}]{dur}"
+            )
             if t.summary:
                 head += f" :: {t.summary}"
             if t.consequences:

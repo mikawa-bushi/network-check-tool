@@ -5,8 +5,7 @@ from netdiag.scenario.loader import parse_scenario, merged_config
 
 
 def _snap(routes, dns, ts="t"):
-    return {"captured_at_iso": ts,
-            "sources": {"routes": routes, "dns_resolvers": dns}}
+    return {"captured_at_iso": ts, "sources": {"routes": routes, "dns_resolvers": dns}}
 
 
 def test_snapshot_diff_detects_route_change():

@@ -70,12 +70,16 @@ class TracerouteProbe(Probe):
         if is_windows() and have("tracert"):
             res = run(["tracert", "-d", "-h", str(max_hops), host], timeout=60)
         elif have("traceroute"):
-            res = run(["traceroute", "-n", "-w", "2", "-q", "1", "-m",
-                       str(max_hops), host], timeout=60)
+            res = run(
+                ["traceroute", "-n", "-w", "2", "-q", "1", "-m", str(max_hops), host],
+                timeout=60,
+            )
         elif have("tracepath"):
             res = run(["tracepath", "-n", "-m", str(max_hops), host], timeout=60)
         else:
-            return CheckResult.skip(self.name, "no traceroute/tracepath/tracert command")
+            return CheckResult.skip(
+                self.name, "no traceroute/tracepath/tracert command"
+            )
 
         if not res.found:
             return CheckResult.skip(self.name, "traceroute command not available")
@@ -83,8 +87,9 @@ class TracerouteProbe(Probe):
         hops = _parse_hops(res.stdout or res.stderr)
         detail = {"target": host, "hops": hops, "output": res.stdout}
         if not hops:
-            return CheckResult.skip(self.name, "could not parse traceroute output",
-                                    detail=detail)
+            return CheckResult.skip(
+                self.name, "could not parse traceroute output", detail=detail
+            )
 
         reached = any(h["ip"] == host for h in hops)
         last_ok = None
@@ -98,22 +103,25 @@ class TracerouteProbe(Probe):
             else:
                 break
 
-        metrics = {"hop_count": float(len(hops)),
-                   "reached": 1.0 if reached else 0.0}
+        metrics = {"hop_count": float(len(hops)), "reached": 1.0 if reached else 0.0}
         if reached:
             return CheckResult.ok(
                 self.name,
                 f"reached {host} in {len(hops)} hops",
-                metrics=metrics, detail=detail,
+                metrics=metrics,
+                detail=detail,
             )
         if last_ok:
             return CheckResult.warn(
                 self.name,
                 f"path to {host} stops after hop {last_ok['hop']} "
                 f"({last_ok['ip']}); {trailing_timeouts} trailing timeout(s)",
-                metrics=metrics, detail=detail,
+                metrics=metrics,
+                detail=detail,
             )
         return CheckResult.fail(
-            self.name, f"no hops responded toward {host}",
-            metrics=metrics, detail=detail,
+            self.name,
+            f"no hops responded toward {host}",
+            metrics=metrics,
+            detail=detail,
         )

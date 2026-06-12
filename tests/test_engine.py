@@ -30,8 +30,10 @@ def _make_probe(pname, player, pdeps, status):
         depends_on = pdeps
 
         def check(self, ctx):
-            return CheckResult(name=self.name, status=status,
-                               summary=f"{self.name} -> {status.value}")
+            return CheckResult(
+                name=self.name, status=status, summary=f"{self.name} -> {status.value}"
+            )
+
     _P.__name__ = f"Probe_{pname}"
     return _P
 

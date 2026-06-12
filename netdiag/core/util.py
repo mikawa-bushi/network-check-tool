@@ -39,7 +39,10 @@ def run(args: List[str], timeout: float = 10.0) -> CommandResult:
     """Run *args* without a shell, capturing output and never raising."""
     if not args or shutil.which(args[0]) is None:
         return CommandResult(
-            ok=False, code=127, stdout="", stderr=f"{args[0] if args else '?'}: not found",
+            ok=False,
+            code=127,
+            stdout="",
+            stderr=f"{args[0] if args else '?'}: not found",
             found=False,
         )
     try:
@@ -59,8 +62,12 @@ def run(args: List[str], timeout: float = 10.0) -> CommandResult:
         )
     except subprocess.TimeoutExpired as e:
         return CommandResult(
-            ok=False, code=124, stdout=e.stdout or "", stderr="timed out",
-            found=True, timed_out=True,
+            ok=False,
+            code=124,
+            stdout=e.stdout or "",
+            stderr="timed out",
+            found=True,
+            timed_out=True,
         )
     except OSError as e:  # permission, etc.
         return CommandResult(ok=False, code=126, stdout="", stderr=str(e), found=True)

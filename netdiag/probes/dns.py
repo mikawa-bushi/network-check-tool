@@ -73,17 +73,20 @@ class DnsProbe(Probe):
             return CheckResult.fail(
                 self.name,
                 f"resolution of {name} failed (resolvers: {res_str})",
-                metrics={"resolved": 0.0}, detail=detail,
+                metrics={"resolved": 0.0},
+                detail=detail,
             )
         metrics = {"resolved": 1.0, "resolve_ms": elapsed}
         if elapsed > 1000:
             return CheckResult.warn(
                 self.name,
                 f"{name} → {addrs[0]} but slow ({elapsed:.0f}ms)",
-                metrics=metrics, detail=detail,
+                metrics=metrics,
+                detail=detail,
             )
         return CheckResult.ok(
             self.name,
             f"{name} → {', '.join(addrs[:3])} ({elapsed:.0f}ms)",
-            metrics=metrics, detail=detail,
+            metrics=metrics,
+            detail=detail,
         )

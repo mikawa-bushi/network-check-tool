@@ -61,7 +61,9 @@ class Probe:
             res = self.check(ctx)
         except Exception as e:  # never let one probe kill the run
             res = CheckResult.skip(
-                self.name, f"probe error: {e}", error=str(e),
+                self.name,
+                f"probe error: {e}",
+                error=str(e),
             )
         res.layer = res.layer if res.layer != "?" else self.layer
         res.title = res.title or self.title or self.name
