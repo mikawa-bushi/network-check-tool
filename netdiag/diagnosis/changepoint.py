@@ -54,8 +54,11 @@ def detect_changepoint(
         mag = abs(rm - lm) / overall_sd
         if best is None or mag > best.magnitude:
             best = ChangePoint(
-                index=i, timestamp=pts[i][0],
-                before_mean=lm, after_mean=rm, magnitude=mag,
+                index=i,
+                timestamp=pts[i][0],
+                before_mean=lm,
+                after_mean=rm,
+                magnitude=mag,
             )
     if best and best.magnitude >= threshold:
         return best

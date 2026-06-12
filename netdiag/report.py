@@ -16,8 +16,10 @@ from .diagnosis import Diagnosis, runbook_steps
 
 # ANSI colours; disabled when output isn't a TTY (handled by the caller).
 _COLORS = {
-    Status.OK: "\033[32m", Status.WARN: "\033[33m",
-    Status.FAIL: "\033[31m", Status.SKIP: "\033[90m",
+    Status.OK: "\033[32m",
+    Status.WARN: "\033[33m",
+    Status.FAIL: "\033[31m",
+    Status.SKIP: "\033[90m",
 }
 _RESET = "\033[0m"
 _BOLD = "\033[1m"
@@ -31,13 +33,17 @@ def render_terminal(diag: Diagnosis, color: bool = True, verbose: bool = False) 
     for r in diag.results:
         col = c(_COLORS.get(r.status, ""))
         layer = f"[{r.layer}]".ljust(8)
-        lines.append(f"{col}{r.status.symbol}{c(_RESET)} {layer} "
-                     f"{r.name.ljust(11)} {r.summary}")
+        lines.append(
+            f"{col}{r.status.symbol}{c(_RESET)} {layer} "
+            f"{r.name.ljust(11)} {r.summary}"
+        )
 
     lines.append("")
     if diag.healthy:
-        lines.append(f"{c(_BOLD)}{c(_COLORS[Status.OK])}診断: 異常は見つかりませんでした。"
-                     f" All checks passed.{c(_RESET)}")
+        lines.append(
+            f"{c(_BOLD)}{c(_COLORS[Status.OK])}診断: 異常は見つかりませんでした。"
+            f" All checks passed.{c(_RESET)}"
+        )
         return "\n".join(lines)
 
     if not diag.hypotheses:
@@ -59,8 +65,10 @@ def render_terminal(diag: Diagnosis, color: bool = True, verbose: bool = False) 
             for s in steps:
                 lines.append(f"       - {s}")
         if h.consequences:
-            lines.append(f"     これに連動して失敗した項目 (原因ではなく結果): "
-                         f"{', '.join(h.consequences)}")
+            lines.append(
+                f"     これに連動して失敗した項目 (原因ではなく結果): "
+                f"{', '.join(h.consequences)}"
+            )
     if verbose and diag.reasoning:
         lines.append("")
         lines.append(f"{c(_BOLD)}推論過程:{c(_RESET)}")
@@ -90,12 +98,14 @@ def render_json(diag: Diagnosis) -> str:
                 for h in diag.hypotheses
             ],
         },
-        indent=2, ensure_ascii=False,
+        indent=2,
+        ensure_ascii=False,
     )
 
 
 def render_html(diag: Diagnosis) -> str:
     """Self-contained HTML (inline CSS, no external resources)."""
+
     def esc(s: str) -> str:
         return html.escape(str(s))
 
@@ -115,12 +125,19 @@ def render_html(diag: Diagnosis) -> str:
             f"— {esc(h.summary)} <span class='conf'>[{esc(h.confidence)}]</span></h3>"
             f"<ul class='ev'>{ev}</ul>"
             + (f"<p>Next steps:</p><ul>{steps}</ul>" if steps else "")
-            + (f"<p class='cons'>Consequent failures: "
-               f"{esc(', '.join(h.consequences))}</p>" if h.consequences else "")
+            + (
+                f"<p class='cons'>Consequent failures: "
+                f"{esc(', '.join(h.consequences))}</p>"
+                if h.consequences
+                else ""
+            )
             + "</div>"
         )
-    verdict = ("All checks passed" if diag.healthy
-               else f"{len(diag.hypotheses)} suspected cause(s)")
+    verdict = (
+        "All checks passed"
+        if diag.healthy
+        else f"{len(diag.hypotheses)} suspected cause(s)"
+    )
     return f"""<!doctype html>
 <html lang="en"><head><meta charset="utf-8">
 <title>netdiag report</title>

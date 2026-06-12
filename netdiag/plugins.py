@@ -37,7 +37,9 @@ def load_plugins() -> List[Tuple[str, bool, str]]:
 
     for ep in eps:
         try:
-            target = ep.load() if hasattr(ep, "load") else importlib.import_module(ep.value)
+            target = (
+                ep.load() if hasattr(ep, "load") else importlib.import_module(ep.value)
+            )
             # If the entry point is a module, importing already ran @register.
             if callable(target):
                 target()

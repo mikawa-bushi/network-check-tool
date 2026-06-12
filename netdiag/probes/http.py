@@ -28,7 +28,10 @@ def _timed_get(url: str, timeout: float = 5.0) -> Dict:
         path += "?" + parsed.query
 
     phases: Dict[str, Optional[float]] = {
-        "dns_ms": None, "connect_ms": None, "tls_ms": None, "ttfb_ms": None,
+        "dns_ms": None,
+        "connect_ms": None,
+        "tls_ms": None,
+        "ttfb_ms": None,
     }
     info: Dict = {"url": url, "host": host, "port": port, "scheme": scheme}
 
@@ -64,8 +67,11 @@ def _timed_get(url: str, timeout: float = 5.0) -> Dict:
         t0 = time.perf_counter()
         conn = http.client.HTTPConnection(host, port, timeout=timeout)
         conn.sock = sock
-        conn.request("GET", path, headers={"Host": host, "User-Agent": "netdiag",
-                                           "Connection": "close"})
+        conn.request(
+            "GET",
+            path,
+            headers={"Host": host, "User-Agent": "netdiag", "Connection": "close"},
+        )
         resp = conn.getresponse()
         phases["ttfb_ms"] = round((time.perf_counter() - t0) * 1000, 1)
         info["status_code"] = resp.status
@@ -106,22 +112,32 @@ class HttpProbe(Probe):
 
         if "error" in info:
             return CheckResult.fail(
-                self.name, f"{url}: {info['error']}", metrics=metrics, detail=info,
+                self.name,
+                f"{url}: {info['error']}",
+                metrics=metrics,
+                detail=info,
             )
         code = info.get("status_code", 0)
-        phase_str = " ".join(f"{k.replace('_ms','')}={v}ms"
-                             for k, v in phases.items() if v is not None)
+        phase_str = " ".join(
+            f"{k.replace('_ms','')}={v}ms" for k, v in phases.items() if v is not None
+        )
         if code >= 500:
             return CheckResult.fail(
-                self.name, f"{url}: HTTP {code} (server error) [{phase_str}]",
-                metrics=metrics, detail=info,
+                self.name,
+                f"{url}: HTTP {code} (server error) [{phase_str}]",
+                metrics=metrics,
+                detail=info,
             )
         if code >= 400:
             return CheckResult.warn(
-                self.name, f"{url}: HTTP {code} [{phase_str}]",
-                metrics=metrics, detail=info,
+                self.name,
+                f"{url}: HTTP {code} [{phase_str}]",
+                metrics=metrics,
+                detail=info,
             )
         return CheckResult.ok(
-            self.name, f"{url}: HTTP {code} [{phase_str}]",
-            metrics=metrics, detail=info,
+            self.name,
+            f"{url}: HTTP {code} [{phase_str}]",
+            metrics=metrics,
+            detail=info,
         )

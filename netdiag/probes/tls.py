@@ -57,12 +57,14 @@ class TlsProbe(Probe):
                     cert = ssock.getpeercert()
         except ssl.SSLCertVerificationError as e:
             return CheckResult.fail(
-                self.name, f"{host}:{port} certificate verification failed: {e.verify_message}",
+                self.name,
+                f"{host}:{port} certificate verification failed: {e.verify_message}",
                 detail={"host": host, "error": str(e)},
             )
         except (ssl.SSLError, OSError) as e:
             return CheckResult.fail(
-                self.name, f"{host}:{port} TLS handshake failed: {e}",
+                self.name,
+                f"{host}:{port} TLS handshake failed: {e}",
                 detail={"host": host, "error": str(e)},
             )
 
@@ -75,23 +77,30 @@ class TlsProbe(Probe):
             return CheckResult.fail(
                 self.name,
                 f"{host}: certificate not valid until {not_before:%Y-%m-%d} "
-                f"(local clock wrong?)", detail=detail,
+                f"(local clock wrong?)",
+                detail=detail,
             )
         if not_after:
             days = (not_after - now).total_seconds() / 86400.0
             detail["days_to_expiry"] = round(days, 1)
             if days < 0:
                 return CheckResult.fail(
-                    self.name, f"{host}: certificate EXPIRED {abs(days):.0f} days ago",
-                    metrics={"days_to_expiry": days}, detail=detail,
+                    self.name,
+                    f"{host}: certificate EXPIRED {abs(days):.0f} days ago",
+                    metrics={"days_to_expiry": days},
+                    detail=detail,
                 )
             if days < 14:
                 return CheckResult.warn(
-                    self.name, f"{host}: certificate expires in {days:.0f} days",
-                    metrics={"days_to_expiry": days}, detail=detail,
+                    self.name,
+                    f"{host}: certificate expires in {days:.0f} days",
+                    metrics={"days_to_expiry": days},
+                    detail=detail,
                 )
             return CheckResult.ok(
-                self.name, f"{host}: certificate valid ({days:.0f} days left)",
-                metrics={"days_to_expiry": days}, detail=detail,
+                self.name,
+                f"{host}: certificate valid ({days:.0f} days left)",
+                metrics={"days_to_expiry": days},
+                detail=detail,
             )
         return CheckResult.ok(self.name, f"{host}: TLS handshake OK", detail=detail)

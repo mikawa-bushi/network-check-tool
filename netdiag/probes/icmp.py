@@ -19,7 +19,9 @@ _WIN_LOSS_RE = re.compile(r"\((\d+)%\s*loss\)")
 _WIN_RTT_RE = re.compile(r"Average\s*=\s*(\d+)ms")
 
 
-def ping(host: str, count: int = 4, timeout: float = 2.0) -> Tuple[Optional[float], float, str]:
+def ping(
+    host: str, count: int = 4, timeout: float = 2.0
+) -> Tuple[Optional[float], float, str]:
     """Return (avg_rtt_ms or None, loss_pct, raw_output)."""
     if is_windows():
         args = ["ping", "-n", str(count), "-w", str(int(timeout * 1000)), host]
@@ -78,18 +80,21 @@ class ExternalProbe(Probe):
             return CheckResult.fail(
                 self.name,
                 f"{host} unreachable (100% loss) — WAN/upstream or routing problem",
-                metrics=metrics, detail={"output": text},
+                metrics=metrics,
+                detail={"output": text},
             )
         if loss > 0:
             return CheckResult.warn(
                 self.name,
                 f"{host} reachable but {loss:.0f}% loss, avg {rtt:.1f}ms",
-                metrics=metrics, detail={"output": text},
+                metrics=metrics,
+                detail={"output": text},
             )
         return CheckResult.ok(
             self.name,
             f"{host} reachable ({rtt:.1f}ms, 0% loss)",
-            metrics=metrics, detail={"output": text},
+            metrics=metrics,
+            detail={"output": text},
         )
 
 
@@ -116,11 +121,17 @@ class PingProbe(Probe):
         if rtt is not None:
             metrics["rtt_ms"] = rtt
         if loss >= 100.0:
-            return CheckResult.fail(self.name, f"{host}: 100% loss", metrics=metrics,
-                                    detail={"output": text})
+            return CheckResult.fail(
+                self.name,
+                f"{host}: 100% loss",
+                metrics=metrics,
+                detail={"output": text},
+            )
         status_summary = f"{host}: {rtt:.1f}ms avg, {loss:.0f}% loss"
         if loss > 0:
-            return CheckResult.warn(self.name, status_summary, metrics=metrics,
-                                    detail={"output": text})
-        return CheckResult.ok(self.name, status_summary, metrics=metrics,
-                              detail={"output": text})
+            return CheckResult.warn(
+                self.name, status_summary, metrics=metrics, detail={"output": text}
+            )
+        return CheckResult.ok(
+            self.name, status_summary, metrics=metrics, detail={"output": text}
+        )

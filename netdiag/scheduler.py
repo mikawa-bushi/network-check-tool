@@ -17,10 +17,14 @@ from .storage import Storage
 
 
 class Monitor:
-    def __init__(self, config: Optional[dict] = None, interval: float = 60.0,
-                 storage: Optional[Storage] = None,
-                 only: Optional[List[str]] = None,
-                 on_tick: Optional[Callable] = None) -> None:
+    def __init__(
+        self,
+        config: Optional[dict] = None,
+        interval: float = 60.0,
+        storage: Optional[Storage] = None,
+        only: Optional[List[str]] = None,
+        on_tick: Optional[Callable] = None,
+    ) -> None:
         self.engine = Engine(config=config or {})
         self.interval = interval
         self.storage = storage or Storage()

@@ -60,8 +60,13 @@ class DualStackProbe(Probe):
         has6 = _has_family(host, socket.AF_INET6)
         v4 = _ping_family(host, v6=False) if has4 else None
         v6 = _ping_family(host, v6=True) if has6 else None
-        detail = {"host": host, "ipv4_ok": v4, "ipv6_ok": v6,
-                  "has_a": has4, "has_aaaa": has6}
+        detail = {
+            "host": host,
+            "ipv4_ok": v4,
+            "ipv6_ok": v6,
+            "has_a": has4,
+            "has_aaaa": has6,
+        }
         metrics = {}
         if v4 is not None:
             metrics["ipv4_ok"] = 1.0 if v4 else 0.0
@@ -69,18 +74,31 @@ class DualStackProbe(Probe):
             metrics["ipv6_ok"] = 1.0 if v6 else 0.0
 
         if v4 and v6:
-            return CheckResult.ok(self.name, f"{host}: IPv4 and IPv6 both reachable",
-                                  metrics=metrics, detail=detail)
+            return CheckResult.ok(
+                self.name,
+                f"{host}: IPv4 and IPv6 both reachable",
+                metrics=metrics,
+                detail=detail,
+            )
         if v4 and v6 is False:
             return CheckResult.warn(
                 self.name,
                 f"{host}: IPv4 OK but IPv6 unreachable (apps preferring v6 will stall)",
-                metrics=metrics, detail=detail)
+                metrics=metrics,
+                detail=detail,
+            )
         if v6 and v4 is False:
             return CheckResult.warn(
-                self.name, f"{host}: IPv6 OK but IPv4 unreachable",
-                metrics=metrics, detail=detail)
+                self.name,
+                f"{host}: IPv6 OK but IPv4 unreachable",
+                metrics=metrics,
+                detail=detail,
+            )
         if v4 is None and v6 is None:
             return CheckResult.skip(self.name, "no ping or no addresses to test")
-        return CheckResult.fail(self.name, f"{host}: neither IPv4 nor IPv6 reachable",
-                                metrics=metrics, detail=detail)
+        return CheckResult.fail(
+            self.name,
+            f"{host}: neither IPv4 nor IPv6 reachable",
+            metrics=metrics,
+            detail=detail,
+        )

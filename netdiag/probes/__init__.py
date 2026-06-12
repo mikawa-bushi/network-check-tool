@@ -22,6 +22,17 @@ from . import (  # noqa: F401  (imported for registration side effects)
 )
 
 __all__ = [
-    "interface", "neighbor", "gateway", "icmp", "traceroute", "dns",
-    "dualstack", "tcp", "firewall", "http", "tls", "system", "wifi",
+    "interface",
+    "neighbor",
+    "gateway",
+    "icmp",
+    "traceroute",
+    "dns",
+    "dualstack",
+    "tcp",
+    "firewall",
+    "http",
+    "tls",
+    "system",
+    "wifi",
 ]

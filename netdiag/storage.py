@@ -68,11 +68,29 @@ class Storage:
         rows = []
         if result.metrics:
             for metric, value in result.metrics.items():
-                rows.append((ts, result.name, target, result.status.value,
-                             metric, float(value), result.summary))
+                rows.append(
+                    (
+                        ts,
+                        result.name,
+                        target,
+                        result.status.value,
+                        metric,
+                        float(value),
+                        result.summary,
+                    )
+                )
         else:
-            rows.append((ts, result.name, target, result.status.value,
-                         "_status", None, result.summary))
+            rows.append(
+                (
+                    ts,
+                    result.name,
+                    target,
+                    result.status.value,
+                    "_status",
+                    None,
+                    result.summary,
+                )
+            )
         self.conn.executemany(
             "INSERT INTO samples (ts, probe, target, status, metric, value, summary) "
             "VALUES (?, ?, ?, ?, ?, ?, ?)",
@@ -85,10 +103,17 @@ class Storage:
             self.record_result(r, target=target)
 
     # -- reads ----------------------------------------------------------------
-    def series(self, probe: str, metric: str, target: Optional[str] = None,
-               since: Optional[float] = None) -> List[Tuple[float, float]]:
-        q = ("SELECT ts, value FROM samples WHERE probe=? AND metric=? "
-             "AND value IS NOT NULL")
+    def series(
+        self,
+        probe: str,
+        metric: str,
+        target: Optional[str] = None,
+        since: Optional[float] = None,
+    ) -> List[Tuple[float, float]]:
+        q = (
+            "SELECT ts, value FROM samples WHERE probe=? AND metric=? "
+            "AND value IS NOT NULL"
+        )
         params: List = [probe, metric]
         if target is not None:
             q += " AND target=?"
@@ -99,13 +124,22 @@ class Storage:
         q += " ORDER BY ts"
         return [(row["ts"], row["value"]) for row in self.conn.execute(q, params)]
 
-    def values(self, probe: str, metric: str, target: Optional[str] = None,
-               since: Optional[float] = None) -> List[float]:
+    def values(
+        self,
+        probe: str,
+        metric: str,
+        target: Optional[str] = None,
+        since: Optional[float] = None,
+    ) -> List[float]:
         return [v for _, v in self.series(probe, metric, target, since)]
 
     def probes_seen(self) -> List[str]:
-        return [r["probe"] for r in
-                self.conn.execute("SELECT DISTINCT probe FROM samples ORDER BY probe")]
+        return [
+            r["probe"]
+            for r in self.conn.execute(
+                "SELECT DISTINCT probe FROM samples ORDER BY probe"
+            )
+        ]
 
     def prune(self, older_than_days: float = 30) -> int:
         """Delete raw samples older than the cutoff. Returns rows removed."""
@@ -114,8 +148,7 @@ class Storage:
         self.conn.commit()
         return cur.rowcount
 
-    def downsample(self, older_than_days: float = 7,
-                   bucket_seconds: int = 3600) -> int:
+    def downsample(self, older_than_days: float = 7, bucket_seconds: int = 3600) -> int:
         """Roll raw samples older than the cutoff into per-bucket aggregates.
 
         Groups old rows by (time bucket, probe, target, metric), writes count/
@@ -147,20 +180,38 @@ class Storage:
                 self.conn.execute(
                     "UPDATE rollups SET count=?, avg=?, min=?, max=? WHERE "
                     "bucket_ts=? AND probe=? AND (target IS ?) AND metric=?",
-                    (tot, avg, mn, mx, r["bucket"], r["probe"], r["target"], r["metric"]),
+                    (
+                        tot,
+                        avg,
+                        mn,
+                        mx,
+                        r["bucket"],
+                        r["probe"],
+                        r["target"],
+                        r["metric"],
+                    ),
                 )
             else:
                 self.conn.execute(
                     "INSERT OR REPLACE INTO rollups "
                     "(bucket_ts, probe, target, metric, count, avg, min, max) "
                     "VALUES (?, ?, ?, ?, ?, ?, ?, ?)",
-                    (r["bucket"], r["probe"], r["target"], r["metric"],
-                     r["n"], r["a"], r["mn"], r["mx"]),
+                    (
+                        r["bucket"],
+                        r["probe"],
+                        r["target"],
+                        r["metric"],
+                        r["n"],
+                        r["a"],
+                        r["mn"],
+                        r["mx"],
+                    ),
                 )
             collapsed += r["n"]
 
         self.conn.execute(
-            "DELETE FROM samples WHERE ts < ? AND value IS NOT NULL", (cutoff,))
+            "DELETE FROM samples WHERE ts < ? AND value IS NOT NULL", (cutoff,)
+        )
         self.conn.commit()
         return collapsed
 
@@ -170,15 +221,17 @@ class Storage:
         self.conn.commit()
         return cur.rowcount
 
-    def retention(self, raw_days: float = 7, rollup_days: float = 90,
-                  bucket_seconds: int = 3600) -> dict:
+    def retention(
+        self, raw_days: float = 7, rollup_days: float = 90, bucket_seconds: int = 3600
+    ) -> dict:
         """One-shot maintenance: downsample old raw, drop ancient rollups.
 
         Keeps full-resolution data for ``raw_days`` and hourly aggregates up to
         ``rollup_days``. Returns a small summary for logging.
         """
-        collapsed = self.downsample(older_than_days=raw_days,
-                                    bucket_seconds=bucket_seconds)
+        collapsed = self.downsample(
+            older_than_days=raw_days, bucket_seconds=bucket_seconds
+        )
         dropped = self.prune_rollups(older_than_days=rollup_days)
         # Reclaim file space after large deletes.
         try:

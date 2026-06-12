@@ -28,8 +28,9 @@ def test_baseline_needs_minimum_samples():
 def test_changepoint_detects_shift():
     # 20 samples ~10ms then 20 samples ~200ms.
     t0 = 1_000_000.0
-    series = [(t0 + i, 10.0) for i in range(20)] + \
-             [(t0 + 20 + i, 200.0) for i in range(20)]
+    series = [(t0 + i, 10.0) for i in range(20)] + [
+        (t0 + 20 + i, 200.0) for i in range(20)
+    ]
     cp = detect_changepoint(series)
     assert cp is not None
     assert cp.worsened
@@ -51,12 +52,20 @@ def test_flapping_detected():
 def test_storage_roundtrip(tmp_path):
     db = tmp_path / "h.db"
     with Storage(db) as st:
-        r = CheckResult(name="external", status=Status.OK, summary="ok",
-                        metrics={"rtt_ms": 12.3, "loss_pct": 0.0})
+        r = CheckResult(
+            name="external",
+            status=Status.OK,
+            summary="ok",
+            metrics={"rtt_ms": 12.3, "loss_pct": 0.0},
+        )
         st.record_result(r, target="1.1.1.1")
         st.record_result(
-            CheckResult(name="external", status=Status.OK, summary="ok",
-                        metrics={"rtt_ms": 14.0, "loss_pct": 0.0}),
+            CheckResult(
+                name="external",
+                status=Status.OK,
+                summary="ok",
+                metrics={"rtt_ms": 14.0, "loss_pct": 0.0},
+            ),
             target="1.1.1.1",
         )
         vals = st.values("external", "rtt_ms", target="1.1.1.1")

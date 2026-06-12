@@ -108,8 +108,9 @@ RUNBOOKS: Dict[str, Dict] = {
 }
 
 
-def explain_failure(root: CheckResult,
-                    by_name: Dict[str, CheckResult]) -> Tuple[str, List[str]]:
+def explain_failure(
+    root: CheckResult, by_name: Dict[str, CheckResult]
+) -> Tuple[str, List[str]]:
     """Build a one-line cause summary plus supporting evidence bullets."""
     rb = RUNBOOKS.get(root.name, {})
     means = rb.get("means", root.summary)

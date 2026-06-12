@@ -60,8 +60,12 @@ class TcpProbe(Probe):
                 continue
             connected, elapsed, reason = tcp_connect(host, port, timeout)
             detail["targets"].append(
-                {"target": f"{host}:{port}", "connected": connected,
-                 "ms": round(elapsed, 1), "reason": reason}
+                {
+                    "target": f"{host}:{port}",
+                    "connected": connected,
+                    "ms": round(elapsed, 1),
+                    "reason": reason,
+                }
             )
             if not connected:
                 worst = "fail" if reason != "timeout (filtered?)" else "filtered"

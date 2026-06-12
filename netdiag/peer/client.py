@@ -35,9 +35,13 @@ class PeerReport:
         return statistics.pstdev(self.rtts_ms) if len(self.rtts_ms) > 1 else None
 
 
-def measure_loss_jitter(host: str, port: int = DEFAULT_PORT,
-                        count: int = 50, interval: float = 0.02,
-                        timeout: float = 1.0) -> PeerReport:
+def measure_loss_jitter(
+    host: str,
+    port: int = DEFAULT_PORT,
+    count: int = 50,
+    interval: float = 0.02,
+    timeout: float = 1.0,
+) -> PeerReport:
     sock = socket.socket(socket.AF_INET, socket.SOCK_DGRAM)
     sock.settimeout(timeout)
     rtts: List[float] = []
@@ -56,16 +60,16 @@ def measure_loss_jitter(host: str, port: int = DEFAULT_PORT,
                 pass
             time.sleep(interval)
     except OSError as e:
-        return PeerReport(host, port, count, received,
-                          100.0, rtts, error=str(e))
+        return PeerReport(host, port, count, received, 100.0, rtts, error=str(e))
     finally:
         sock.close()
     loss = (count - received) / count * 100.0 if count else 100.0
     return PeerReport(host, port, count, received, loss, rtts)
 
 
-def measure_throughput(host: str, port: int = DEFAULT_PORT,
-                       seconds: float = 3.0, timeout: float = 10.0) -> Optional[float]:
+def measure_throughput(
+    host: str, port: int = DEFAULT_PORT, seconds: float = 3.0, timeout: float = 10.0
+) -> Optional[float]:
     """Push data for *seconds* and return throughput in Mbit/s."""
     blob = b"\x00" * _CHUNK
     sent = 0
