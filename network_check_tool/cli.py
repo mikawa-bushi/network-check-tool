@@ -29,8 +29,13 @@ def start_monitoring(hosts, interval):
     app = create_app()
 
     with app.app_context():
-        scheduler = SchedulerService()
+        # Pass the app so each job (run in an APScheduler worker thread) can push
+        # its own application context before writing to the DB.
+        scheduler = SchedulerService(app=app)
 
+        # Startup must fail loudly: a job-registration or scheduler error here used
+        # to be swallowed and the process exited 0, looking healthy while no pings
+        # were ever recorded. Report it and exit non-zero instead.
         try:
             scheduler.start()
             click.echo(f"Starting ping monitoring for: {', '.join(hosts)}")
@@ -39,22 +44,23 @@ def start_monitoring(hosts, interval):
             for host in hosts:
                 scheduler.add_ping_job(host, interval)
                 click.echo(f"Added ping job for {host}")
+        except Exception as e:
+            click.echo(f"Error: {e}", err=True)
+            scheduler.shutdown()
+            raise SystemExit(1)
 
-            click.echo("Monitoring started. Press Ctrl+C to stop.")
+        click.echo("Monitoring started. Press Ctrl+C to stop.")
 
-            # Keep the process running
-            import time
+        # Keep the process running until the user interrupts (a clean exit 0).
+        import time
 
+        try:
             while True:
                 time.sleep(1)
-
         except KeyboardInterrupt:
             click.echo("\nStopping monitoring...")
             scheduler.shutdown()
             click.echo("Monitoring stopped.")
-        except Exception as e:
-            click.echo(f"Error: {e}")
-            scheduler.shutdown()
 
 
 @cli.command()
