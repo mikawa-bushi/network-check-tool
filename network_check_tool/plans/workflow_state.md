@@ -2,5 +2,5 @@ skill: implement
 package: network_check_tool
 issue: 4
 plan-review-preference: proceed
-step: 6 (implement)
-next: write code until tests pass; run new tests + black iteratively
+step: 7 (clean up)
+next: check dead code, bump version in pyproject.toml, create/update CHANGELOG.md

@@ -30,8 +30,9 @@ def start_monitoring(hosts, interval):
 
     with app.app_context():
         # Pass the app so each job (run in an APScheduler worker thread) can push
-        # its own application context before writing to the DB.
-        scheduler = SchedulerService(app=app)
+        # its own application context before writing to the DB. The configured
+        # PING_TIMEOUT is forwarded so monitored pings honour it (M2).
+        scheduler = SchedulerService(app=app, timeout=Config.PING_TIMEOUT)
 
         # Startup must fail loudly: a job-registration or scheduler error here used
         # to be swallowed and the process exited 0, looking healthy while no pings
@@ -73,7 +74,7 @@ def ping(host, count):
     with app.app_context():
         from .services import PingService
 
-        ping_service = PingService()
+        ping_service = PingService(timeout=Config.PING_TIMEOUT)
 
         click.echo(f"Pinging {host} {count} times...")
 
@@ -113,7 +114,7 @@ def status(host, limit):
             click.echo("No ping results found.")
             return
 
-        click.echo(f"Recent ping results{'for ' + host if host else ''}:")
+        click.echo(f"Recent ping results{' for ' + host if host else ''}:")
         click.echo("-" * 70)
         click.echo(f"{'Host':<20} {'Time':<20} {'Response':<12} {'Status'}")
         click.echo("-" * 70)
@@ -121,7 +122,9 @@ def status(host, limit):
         for result in results:
             status_str = "FAIL" if result.packet_loss else "OK"
             response_str = (
-                f"{result.response_time:.2f}ms" if result.response_time else "timeout"
+                "timeout"
+                if result.packet_loss or result.response_time is None
+                else f"{result.response_time:.2f}ms"
             )
             time_str = result.timestamp.strftime("%Y-%m-%d %H:%M:%S")
 

@@ -39,7 +39,7 @@ def _run_ping_job(app, ping_service: "PingService", host: str):
 
 
 class SchedulerService:
-    def __init__(self, app=None):
+    def __init__(self, app=None, timeout: Optional[float] = None):
         # MemoryJobStore (not SQLAlchemyJobStore): ``start-monitoring`` re-registers
         # every job on each launch via ``add_ping_job``, so persisting jobs across
         # runs buys nothing -- and an in-memory store never pickles the job func,
@@ -58,7 +58,12 @@ class SchedulerService:
 
         # Flask app whose context each job pushes before touching the DB session.
         self.app = app
-        self.ping_service = PingService()
+        # Forward the caller-provided timeout (e.g. Config.PING_TIMEOUT, injected at
+        # the CLI edge) to PingService; fall back to its built-in default when unset
+        # so the library layer never has to read global configuration itself (M2).
+        self.ping_service = (
+            PingService(timeout=timeout) if timeout is not None else PingService()
+        )
         self.is_running = False
 
         # Configure logging

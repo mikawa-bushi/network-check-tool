@@ -1,12 +1,35 @@
 from flask import Blueprint, render_template, jsonify, request
 from datetime import datetime, timedelta
-from sqlalchemy import desc, func
 import plotly.graph_objects as go
 import plotly.utils
 import json
 from ..models import db, PingResult
 
 dashboard_bp = Blueprint("dashboard", __name__, url_prefix="/")
+
+# Bounds for the ?hours= query parameter shared by the data/chart/stats endpoints.
+HOURS_MIN = 1
+HOURS_MAX = 168  # one week
+HOURS_DEFAULT = 24
+
+
+def _parse_hours():
+    """Parse and validate the ``?hours=`` query parameter.
+
+    Returns ``(hours, None)`` on success, where ``hours`` is clamped to
+    ``[HOURS_MIN, HOURS_MAX]``. On a non-integer value returns
+    ``(None, (json_response, 400))`` so the caller can ``return error``
+    instead of letting ``int()`` raise and surface a 500.
+    """
+    raw = request.args.get("hours", HOURS_DEFAULT)
+    try:
+        hours = int(raw)
+    except (TypeError, ValueError):
+        return None, (
+            jsonify({"error": "Invalid 'hours' parameter; must be an integer"}),
+            400,
+        )
+    return max(HOURS_MIN, min(hours, HOURS_MAX)), None
 
 
 @dashboard_bp.route("/")
@@ -26,7 +49,9 @@ def get_hosts():
 def get_ping_data():
     """Get ping data for visualization"""
     host = request.args.get("host")
-    hours = int(request.args.get("hours", 24))
+    hours, error = _parse_hours()
+    if error:
+        return error
 
     if not host:
         return jsonify({"error": "Host parameter is required"}), 400
@@ -73,7 +98,9 @@ def get_ping_data():
 def get_ping_chart():
     """Generate Plotly chart for ping data"""
     host = request.args.get("host")
-    hours = int(request.args.get("hours", 24))
+    hours, error = _parse_hours()
+    if error:
+        return error
 
     if not host:
         return jsonify({"error": "Host parameter is required"}), 400
@@ -149,7 +176,9 @@ def get_ping_chart():
 def get_stats():
     """Get overall statistics"""
     host = request.args.get("host")
-    hours = int(request.args.get("hours", 24))
+    hours, error = _parse_hours()
+    if error:
+        return error
 
     since = datetime.utcnow() - timedelta(hours=hours)
 
