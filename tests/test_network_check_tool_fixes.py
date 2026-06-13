@@ -132,9 +132,12 @@ def test_cli_ping_uses_config_timeout(tmp_path, monkeypatch):
 
     import network_check_tool.services as services_module
 
+    # cli.py uses a deferred `from .services import PingService` inside the command
+    # body, which reads the attribute off the `services` package at call time --
+    # so patching it there (not the origin ping_service module) is what takes effect.
     monkeypatch.setattr(services_module, "PingService", FakePingService)
 
-    # --count 0 means no actual network pings are issued.
+    # --count 0 means no actual network pings are issued (ping_and_save never runs).
     result = CliRunner().invoke(cli, ["ping", "example.com", "--count", "0"])
 
     assert result.exit_code == 0, result.output
@@ -187,3 +190,16 @@ def test_invalid_hours_rejected_on_all_routes(tmp_path, route):
     resp = client.get(f"{route}?host=google.com&hours=abc")
 
     assert resp.status_code == 400, route
+
+
+@pytest.mark.parametrize("route", ["/api/ping_data", "/api/ping_chart", "/api/stats"])
+@pytest.mark.parametrize("hours", ["-5", "0", "100000"])
+def test_out_of_range_hours_handled_gracefully(tmp_path, route, hours):
+    """E4: negative/zero/huge ?hours= is clamped, never a 500, on every endpoint."""
+    app = _make_web_app(tmp_path / "e4d.db")
+    client = app.test_client()
+
+    resp = client.get(f"{route}?host=google.com&hours={hours}")
+
+    # Clamped to [1, 168]: data endpoints may 404 (no rows), stats returns 200 zeros.
+    assert resp.status_code in (200, 404), (route, hours, resp.status_code)
