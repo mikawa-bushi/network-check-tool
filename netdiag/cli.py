@@ -42,6 +42,10 @@ def _setup_logging(verbose: bool = False, log_file: Optional[str] = None) -> Non
     if not verbose and not log_file:
         return
     lg = logging.getLogger("netdiag")
+    # Idempotent: if a real (non-Null) handler is already attached, don't stack
+    # another one (avoids duplicate lines / leaked file handles on repeat calls).
+    if any(not isinstance(h, logging.NullHandler) for h in lg.handlers):
+        return
     lg.setLevel(logging.DEBUG if verbose else logging.WARNING)
     handler: logging.Handler = (
         logging.FileHandler(log_file) if log_file else logging.StreamHandler()

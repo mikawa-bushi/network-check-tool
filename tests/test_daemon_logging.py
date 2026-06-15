@@ -26,6 +26,11 @@ def _restore_netdiag_logger():
     try:
         yield
     finally:
+        # Close any handler the test added before restoring, so FileHandlers
+        # don't leak their file descriptor past the test.
+        for h in lg.handlers[:]:
+            if h not in handlers:
+                h.close()
         lg.handlers[:] = handlers
         lg.setLevel(level)
         lg.propagate = propagate
@@ -50,6 +55,11 @@ class _BoomEngine:
 
     def run(self, only=None):
         raise RuntimeError("engine boom")
+
+
+class _NullSink:
+    def emit(self, transition):
+        pass
 
 
 def test_multisink_logs_failure_and_continues(caplog):
@@ -92,6 +102,32 @@ def test_monitor_loop_logs_tick_failure(tmp_path, caplog):
 
     assert got, "expected a warning log from the monitor loop on tick failure"
     st.close()
+
+
+def test_watcher_loop_logs_tick_failure(tmp_path, caplog):
+    from netdiag.watch import Watcher
+
+    st = Storage(tmp_path / "w.db")
+    watcher = Watcher(interval=0.05, storage=st, sink=_NullSink(), escalate=False)
+    watcher.engine = _BoomEngine()
+
+    with caplog.at_level(logging.WARNING, logger="netdiag"):
+        watcher.start()  # background
+        try:
+            deadline = time.time() + 3
+            got = False
+            while time.time() < deadline:
+                if any(
+                    r.name.startswith("netdiag.watch") and r.levelno >= logging.WARNING
+                    for r in caplog.records
+                ):
+                    got = True
+                    break
+                time.sleep(0.05)
+        finally:
+            watcher.stop()  # closes storage
+
+    assert got, "expected a warning log from the watcher loop on tick failure"
 
 
 def test_library_is_quiet_by_default():
