@@ -14,17 +14,37 @@ EXEC = (
 )
 
 
+# Fields shared by both variants — pin the ones most likely to drift on a future edit.
+COMMON_DIRECTIVES = [
+    "Description=netdiag always-on network diagnosis watcher",
+    "After=network-online.target",
+    "Wants=network-online.target",
+    "Type=simple",
+    "Restart=on-failure",
+    "RestartSec=10",
+    "Nice=10",
+]
+
+
 def test_unit_text_user_variant():
     text = _unit_text(EXEC, system=False)
     assert "WantedBy=default.target" in text
+    assert "WantedBy=multi-user.target" not in text
     assert f"ExecStart={EXEC}" in text
-    assert "Description=netdiag always-on network diagnosis watcher" in text
+    for directive in COMMON_DIRECTIVES:
+        assert directive in text, directive
+    # No User= directive is emitted (the removed dead local never produced one).
+    assert "User=" not in text
 
 
 def test_unit_text_system_variant():
     text = _unit_text(EXEC, system=True)
     assert "WantedBy=multi-user.target" in text
+    assert "WantedBy=default.target" not in text
     assert f"ExecStart={EXEC}" in text
+    for directive in COMMON_DIRECTIVES:
+        assert directive in text, directive
+    assert "User=" not in text
 
 
 def test_unit_text_has_no_dead_user_line():

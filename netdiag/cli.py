@@ -623,6 +623,13 @@ def service():
 
 
 def _unit_text(exec_start: str, system: bool) -> str:
+    """Render a systemd unit file that runs ``netdiag watch`` as a service.
+
+    ``exec_start`` is used verbatim as the ``ExecStart=`` command. ``system``
+    selects the install target: a system unit (``WantedBy=multi-user.target``)
+    when True, or a per-user unit (``WantedBy=default.target``) when False. No
+    ``User=`` directive is emitted in either case.
+    """
     after = "After=network-online.target\nWants=network-online.target"
     install_target = "multi-user.target" if system else "default.target"
     return f"""[Unit]
