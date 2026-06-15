@@ -8,12 +8,13 @@ The app is built through the real factory with a throwaway SQLite database, so
 templates render and no real network is touched.
 """
 
-from datetime import datetime, timedelta
+from datetime import timedelta
 
 import pytest
 
 from network_check_tool.app import create_app
 from network_check_tool.config.config import Config, DevelopmentConfig
+from network_check_tool.utils import utcnow
 from network_check_tool.models import db, PingResult
 
 
@@ -32,7 +33,7 @@ def _seed(app, rows):
     # Seed *recent* rows with strictly increasing timestamps: the endpoints filter
     # to the last 24h (so a fixed past date would silently expire and 404), and the
     # ORDER BY timestamp needs distinct values to be deterministic.
-    base = datetime.utcnow() - timedelta(minutes=5)
+    base = utcnow() - timedelta(minutes=5)
     with app.app_context():
         for i, (host, rt, loss) in enumerate(rows):
             db.session.add(

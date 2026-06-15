@@ -5,11 +5,10 @@ values as the previous Python-side computation (characterization).
 P6: ``PingResult`` must carry a composite ``(target_host, timestamp)`` index.
 """
 
-from datetime import datetime
-
 from flask import Flask
 
 from network_check_tool.models import db, PingResult
+from network_check_tool.utils import utcnow
 from network_check_tool.views.dashboard import dashboard_bp
 
 
@@ -27,7 +26,7 @@ def _make_app(tmp_path):
 def _seed(app, rows):
     # Recent timestamp: /api/stats filters to the last 24h, so a fixed past date
     # would fall outside the window and make these aggregates read as empty.
-    now = datetime.utcnow()
+    now = utcnow()
     with app.app_context():
         for host, rt, loss in rows:
             db.session.add(

@@ -2,6 +2,16 @@
 
 All notable changes to this project are documented in this file.
 
+## [0.2.5] - 2026-06-15
+
+### Changed (network_check_tool, issue #37)
+
+- **M7**: replaced the deprecated `datetime.utcnow()` (deprecated in Python 3.12) with a shared
+  `network_check_tool.utils.utcnow()` helper. It returns the same naive-UTC instant via
+  `datetime.now(timezone.utc).replace(tzinfo=None)`, so stored `PingResult.timestamp` values and the
+  dashboard's time-range comparisons are byte-for-byte unchanged — this is a forward-compatibility
+  cleanup, not a timezone-storage change.
+
 ## [0.2.4] - 2026-06-15
 
 ### Fixed (network_check_tool, issue #33)

@@ -1,10 +1,10 @@
-from datetime import datetime
 from typing import Dict
 
 from netdiag.core.util import have
 from netdiag.probes.icmp import ping as _measure_ping
 
 from ..models import db, PingResult
+from ..utils import utcnow
 
 
 class PingService:
@@ -20,7 +20,7 @@ class PingService:
         failure), ``packet_loss`` (``True`` when no reply was received), and
         ``error_message``.
         """
-        timestamp = datetime.utcnow()
+        timestamp = utcnow()
 
         if not have("ping"):
             return {

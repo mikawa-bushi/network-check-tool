@@ -1,5 +1,5 @@
 from flask import Blueprint, render_template, jsonify, request, Response
-from datetime import datetime, timedelta
+from datetime import timedelta
 import threading
 from sqlalchemy import func
 import plotly
@@ -7,6 +7,7 @@ import plotly.graph_objects as go
 import plotly.utils
 import json
 from ..models import db, PingResult
+from ..utils import utcnow
 
 dashboard_bp = Blueprint("dashboard", __name__, url_prefix="/")
 
@@ -95,7 +96,7 @@ def get_ping_data():
         return jsonify({"error": "Host parameter is required"}), 400
 
     # Get data for the specified time range
-    since = datetime.utcnow() - timedelta(hours=hours)
+    since = utcnow() - timedelta(hours=hours)
 
     results = (
         db.session.query(PingResult)
@@ -143,7 +144,7 @@ def get_ping_chart():
     if not host:
         return jsonify({"error": "Host parameter is required"}), 400
 
-    since = datetime.utcnow() - timedelta(hours=hours)
+    since = utcnow() - timedelta(hours=hours)
 
     results = (
         db.session.query(PingResult)
@@ -218,7 +219,7 @@ def get_stats():
     if error:
         return error
 
-    since = datetime.utcnow() - timedelta(hours=hours)
+    since = utcnow() - timedelta(hours=hours)
 
     # Aggregate in SQL rather than reading every row into Python, so latency does
     # not grow linearly with the number of stored pings (the composite
