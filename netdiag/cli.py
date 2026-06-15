@@ -7,6 +7,7 @@ layered sweep and prints the root cause and next steps. Everything else
 
 from __future__ import annotations
 
+import logging
 import sys
 import time
 from pathlib import Path
@@ -27,6 +28,28 @@ from .plugins import load_plugins
 from . import report as report_mod
 from . import __version__
 from .storage import Storage
+
+logger = logging.getLogger(__name__)
+
+
+def _setup_logging(verbose: bool = False, log_file: Optional[str] = None) -> None:
+    """Configure the ``netdiag`` logger for CLI use (library code never does this).
+
+    Quiet by default: with neither ``verbose`` nor ``log_file`` set, no handler is
+    attached and the package's NullHandler keeps things silent. ``verbose`` lowers
+    the level to DEBUG and logs to stderr; ``log_file`` writes to that file instead.
+    """
+    if not verbose and not log_file:
+        return
+    lg = logging.getLogger("netdiag")
+    lg.setLevel(logging.DEBUG if verbose else logging.WARNING)
+    handler: logging.Handler = (
+        logging.FileHandler(log_file) if log_file else logging.StreamHandler()
+    )
+    handler.setFormatter(
+        logging.Formatter("%(asctime)s %(levelname)s %(name)s: %(message)s")
+    )
+    lg.addHandler(handler)
 
 
 def _resolve_version() -> str:
@@ -71,8 +94,20 @@ def _build_config(external_ip, dns_name, tcp, http_url, count) -> dict:
 
 @click.group()
 @click.version_option(version=_resolve_version(), prog_name="netdiag")
-def cli() -> None:
+@click.option(
+    "--verbose",
+    "-v",
+    is_flag=True,
+    help="Verbose netdiag logging to stderr (or --log-file). Quiet by default.",
+)
+@click.option(
+    "--log-file",
+    type=click.Path(),
+    help="Write netdiag logs to this file instead of stderr.",
+)
+def cli(verbose: bool, log_file: Optional[str]) -> None:
     """netdiag — local-first network & OS trouble isolation."""
+    _setup_logging(verbose=verbose, log_file=log_file)
     load_plugins()
 
 
@@ -554,7 +589,9 @@ def status(state_file, alert_file, limit, fmt):
         with Storage() as st:
             counts = st.counts()
     except Exception:
-        pass
+        # History is optional context for `status`; don't fail the command, but
+        # log so a broken/locked history db is observable with -v.
+        logger.warning("could not read history db counts", exc_info=True)
 
     if fmt == "json":
         click.echo(

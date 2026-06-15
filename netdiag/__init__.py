@@ -7,7 +7,14 @@ offline, as an unprivileged user, on the standard library alone (``click`` is th
 only hard dependency; everything else is optional).
 """
 
+import logging
+
 from .core import CheckResult, Status, Probe, Context, register
+
+# Library-friendly logging: attach a NullHandler so netdiag stays silent by
+# default (no "lastResort" stderr output) until an application/CLI configures
+# the "netdiag" logger. The library itself never calls basicConfig.
+logging.getLogger(__name__).addHandler(logging.NullHandler())
 
 __version__ = "0.1.4"
 

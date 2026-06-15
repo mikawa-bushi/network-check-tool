@@ -15,6 +15,7 @@ change-point analysis keep working.
 
 from __future__ import annotations
 
+import logging
 import threading
 import time
 from typing import Callable, List, Optional
@@ -22,6 +23,8 @@ from typing import Callable, List, Optional
 from .alerting import AlertSink, FileAlertSink, StateMachine, Transition
 from .diagnosis import Engine, runbook_steps
 from .storage import Storage
+
+logger = logging.getLogger(__name__)
 
 # Cheap, non-intrusive probes suitable for the steady-state loop. Heavy/active
 # probes (http, tls, traceroute, peer throughput) are reserved for escalation or
@@ -134,7 +137,8 @@ class Watcher:
                 raw_days=self.retention_raw_days, rollup_days=self.retention_rollup_days
             )
         except Exception:
-            pass
+            # Maintenance failure must not stop the watcher; record it.
+            logger.warning("storage maintenance (retention) failed", exc_info=True)
 
     def _loop(self) -> None:
         while not self._stop.is_set():
@@ -143,8 +147,9 @@ class Watcher:
                 self.tick()
                 self._maybe_maintain()
             except Exception:
-                # A single failed tick must never kill the watcher.
-                pass
+                # A single failed tick must never kill the watcher, but log it
+                # so silent failures are observable.
+                logger.warning("watcher tick failed", exc_info=True)
             elapsed = time.time() - start
             self._stop.wait(max(0.0, self.interval - elapsed))
 
