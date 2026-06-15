@@ -2,13 +2,13 @@
 
 import time
 
+from netdiag.core import CheckResult, Status
 from netdiag.diagnosis import (
-    compute_baseline,
     classify,
+    compute_baseline,
     detect_changepoint,
     detect_flapping,
 )
-from netdiag.core import CheckResult, Status
 from netdiag.storage import Storage
 
 

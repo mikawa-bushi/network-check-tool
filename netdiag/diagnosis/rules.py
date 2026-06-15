@@ -11,7 +11,6 @@ from typing import Dict, List, Tuple
 
 from ..core import CheckResult
 
-
 # What each failing probe means + the manual steps to confirm/fix it.
 RUNBOOKS: Dict[str, Dict] = {
     "interface": {

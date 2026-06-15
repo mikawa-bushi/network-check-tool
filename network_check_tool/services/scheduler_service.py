@@ -1,10 +1,11 @@
-from apscheduler.schedulers.background import BackgroundScheduler
-from apscheduler.jobstores.memory import MemoryJobStore
-from apscheduler.executors.pool import ThreadPoolExecutor
-from typing import List, Optional
 import logging
-from .ping_service import PingService
+from typing import List, Optional
 
+from apscheduler.executors.pool import ThreadPoolExecutor
+from apscheduler.jobstores.memory import MemoryJobStore
+from apscheduler.schedulers.background import BackgroundScheduler
+
+from .ping_service import PingService
 
 logger = logging.getLogger(__name__)
 

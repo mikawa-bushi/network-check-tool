@@ -6,9 +6,10 @@ Covers:
 * CORS is not all-permissive by default; allowed origins are configurable.
 """
 
+from click.testing import CliRunner
+
 import network_check_tool.cli as cli_module
 from network_check_tool.cli import cli
-from click.testing import CliRunner
 
 
 class _FakeApp:

@@ -7,7 +7,7 @@ P6: ``PingResult`` must carry a composite ``(target_host, timestamp)`` index.
 
 from flask import Flask
 
-from network_check_tool.models import db, PingResult
+from network_check_tool.models import PingResult, db
 from network_check_tool.utils import utcnow
 from network_check_tool.views.dashboard import dashboard_bp
 

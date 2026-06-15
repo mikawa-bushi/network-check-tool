@@ -1,7 +1,7 @@
 """Tests for snapshot diffing and scenario parsing (no network needed)."""
 
+from netdiag.scenario.loader import merged_config, parse_scenario
 from netdiag.snapshot.diff import diff_snapshots
-from netdiag.scenario.loader import parse_scenario, merged_config
 
 
 def _snap(routes, dns, ts="t"):

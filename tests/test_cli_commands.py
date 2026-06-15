@@ -13,9 +13,8 @@ from flask import Flask
 import network_check_tool.cli as nct_cli
 from netdiag.cli import cli as netdiag_cli
 from network_check_tool.cli import cli as nct_cli_group
-from network_check_tool.models import db, PingResult
+from network_check_tool.models import PingResult, db
 from network_check_tool.utils import utcnow
-
 
 # ===================================================================== netdiag
 

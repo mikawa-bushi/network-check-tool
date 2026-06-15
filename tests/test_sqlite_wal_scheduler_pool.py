@@ -18,7 +18,6 @@ from network_check_tool.services.scheduler_service import (
     SchedulerService,
 )
 
-
 # ----------------------------------------------------------------- WAL / pragmas
 
 

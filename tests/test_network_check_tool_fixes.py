@@ -18,7 +18,7 @@ from flask import Flask
 from network_check_tool import cli as cli_module
 from network_check_tool.cli import cli
 from network_check_tool.config.config import Config
-from network_check_tool.models import db, PingResult
+from network_check_tool.models import PingResult, db
 from network_check_tool.services import SchedulerService
 from network_check_tool.views.dashboard import dashboard_bp
 
