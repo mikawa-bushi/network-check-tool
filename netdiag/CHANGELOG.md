@@ -2,6 +2,15 @@
 
 All notable changes to the `netdiag` package are documented in this file.
 
+## [0.1.3] - 2026-06-15
+
+### Changed (issue #8)
+
+- **Dead-code removal (M6)**: dropped the unused `user_line = "" if system else ""` local in
+  `cli.py`'s `_unit_text`. No change to the generated systemd unit. Added characterization
+  tests for `_unit_text` (user/system variants) plus a guard against reintroducing the dead
+  local.
+
 ## [0.1.2] - 2026-06-14
 
 ### Fixed (issue #6)
