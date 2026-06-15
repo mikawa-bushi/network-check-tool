@@ -2,6 +2,18 @@
 
 All notable changes to this project are documented in this file.
 
+## [0.2.2] - 2026-06-15
+
+### Performance (network_check_tool, issue #18)
+
+- The dashboard's SQLite database is now opened in WAL journal mode with a
+  `busy_timeout` (default 5000 ms, `SQLITE_BUSY_TIMEOUT_MS`), so a dashboard reader and the
+  monitoring writer no longer collide into an immediate "database is locked". The PRAGMAs are
+  applied only when the backend is SQLite; a non-SQLite `DATABASE_URL` (e.g. PostgreSQL) is
+  untouched (P3).
+- The monitoring scheduler's worker pool is now a small, configurable default
+  (`SCHEDULER_MAX_WORKERS`, default 4) instead of a hardcoded 20 threads (P3).
+
 ## [0.2.1] - 2026-06-15
 
 ### Performance (network_check_tool, issue #16)

@@ -67,8 +67,13 @@ def start_monitoring(hosts, interval):
     with app.app_context():
         # Pass the app so each job (run in an APScheduler worker thread) can push
         # its own application context before writing to the DB. The configured
-        # PING_TIMEOUT is forwarded so monitored pings honour it (M2).
-        scheduler = SchedulerService(app=app, timeout=Config.PING_TIMEOUT)
+        # PING_TIMEOUT is forwarded so monitored pings honour it (M2); the worker
+        # pool is sized from SCHEDULER_MAX_WORKERS rather than a fixed 20 (P3).
+        scheduler = SchedulerService(
+            app=app,
+            timeout=Config.PING_TIMEOUT,
+            max_workers=Config.SCHEDULER_MAX_WORKERS,
+        )
 
         # Startup must fail loudly: a job-registration or scheduler error here used
         # to be swallowed and the process exited 0, looking healthy while no pings

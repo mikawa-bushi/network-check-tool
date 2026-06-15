@@ -219,10 +219,17 @@ Customize behavior with environment variables:
 ```bash
 # Database configuration
 DATABASE_URL=sqlite:///network_check_tool.db
+# SQLite-only: busy timeout (ms) applied alongside WAL journal mode. Ignored for
+# non-SQLite backends. Raise it on slow/contended filesystems.
+SQLITE_BUSY_TIMEOUT_MS=5000
 
 # Ping settings
 PING_TIMEOUT=4.0
 DEFAULT_PING_INTERVAL=60
+
+# Monitoring scheduler: worker-pool size. The default suits a handful of hosts;
+# raise it when monitoring many hosts.
+SCHEDULER_MAX_WORKERS=4
 
 # Default hosts to monitor
 DEFAULT_HOSTS=google.com,cloudflare.com

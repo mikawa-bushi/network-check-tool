@@ -1,6 +1,6 @@
 [tool.poetry]
 name = "network-check-tool"
-version = "0.2.1"
+version = "0.2.2"
 description = "Local-first network & OS trouble isolation (netdiag) plus a ping-monitoring dashboard (network-checker)."
 authors = ["hardwork9047 <155122235+hardwork9047@users.noreply.github.com>"]
 readme = "README.md"

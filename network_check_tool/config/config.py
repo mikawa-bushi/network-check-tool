@@ -11,9 +11,18 @@ class Config:
     )
     SQLALCHEMY_TRACK_MODIFICATIONS = False
 
+    # SQLite tuning (ignored for non-SQLite DATABASE_URL backends). Matches
+    # netdiag.storage: WAL plus a non-zero busy timeout so a dashboard reader and
+    # the monitoring writer don't collide into an immediate "database is locked".
+    SQLITE_BUSY_TIMEOUT_MS = int(os.environ.get("SQLITE_BUSY_TIMEOUT_MS", "5000"))
+
     # Ping configuration
     PING_TIMEOUT = float(os.environ.get("PING_TIMEOUT", "4.0"))
     DEFAULT_PING_INTERVAL = int(os.environ.get("DEFAULT_PING_INTERVAL", "60"))
+
+    # Monitoring scheduler worker-pool size. A handful of monitored hosts needs
+    # only a small pool; raise this env var when monitoring many hosts.
+    SCHEDULER_MAX_WORKERS = int(os.environ.get("SCHEDULER_MAX_WORKERS", "4"))
 
     # Cross-origin access for the data API. Comma-separated list of allowed
     # origins (e.g. "https://dash.example"). Empty (default) means no

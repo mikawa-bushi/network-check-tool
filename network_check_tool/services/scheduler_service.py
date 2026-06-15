@@ -8,6 +8,10 @@ from .ping_service import PingService
 
 logger = logging.getLogger(__name__)
 
+# Default scheduler worker-pool size. Monitoring a handful of hosts needs only a
+# small pool; callers inject Config.SCHEDULER_MAX_WORKERS to override.
+DEFAULT_SCHEDULER_MAX_WORKERS = 4
+
 
 def _run_ping_job(app, ping_service: "PingService", host: str):
     """Module-level job target executed by an APScheduler worker thread.
@@ -39,7 +43,12 @@ def _run_ping_job(app, ping_service: "PingService", host: str):
 
 
 class SchedulerService:
-    def __init__(self, app=None, timeout: Optional[float] = None):
+    def __init__(
+        self,
+        app=None,
+        timeout: Optional[float] = None,
+        max_workers: Optional[int] = None,
+    ):
         # MemoryJobStore (not SQLAlchemyJobStore): ``start-monitoring`` re-registers
         # every job on each launch via ``add_ping_job``, so persisting jobs across
         # runs buys nothing -- and an in-memory store never pickles the job func,
@@ -48,7 +57,17 @@ class SchedulerService:
         # ``sqlite:///network_check_tool.db`` jobstore URL that ignored DATABASE_URL.
         jobstores = {"default": MemoryJobStore()}
 
-        executors = {"default": ThreadPoolExecutor(20)}
+        self.max_workers = (
+            max_workers if max_workers is not None else DEFAULT_SCHEDULER_MAX_WORKERS
+        )
+        # Guard a misconfigured SCHEDULER_MAX_WORKERS up front: ThreadPoolExecutor
+        # otherwise raises a cryptic "max_workers must be greater than 0" from deep
+        # inside concurrent.futures when the scheduler is built.
+        if self.max_workers <= 0:
+            raise ValueError(
+                f"max_workers must be a positive integer, got {self.max_workers}"
+            )
+        executors = {"default": ThreadPoolExecutor(self.max_workers)}
 
         job_defaults = {"coalesce": False, "max_instances": 3}
 
