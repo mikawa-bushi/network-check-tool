@@ -11,12 +11,48 @@ def cli():
     pass
 
 
+_LOOPBACK_HOSTS = {"127.0.0.1", "localhost", "::1"}
+
+
+def _is_loopback(host: str) -> bool:
+    """Return True if ``host`` refers only to the local loopback interface.
+
+    Recognises ``localhost``, ``::1`` and any ``127.0.0.0/8`` address. Wildcard
+    binds such as ``0.0.0.0`` and ``::`` (all IPv6 interfaces) are NOT loopback
+    and return False, so they trigger the public-bind warning / debug refusal.
+    Used to keep the interactive debugger off network-facing interfaces.
+    """
+    return host in _LOOPBACK_HOSTS or host.startswith("127.")
+
+
 @cli.command("run-server")
-@click.option("--host", "-h", default="0.0.0.0", help="Host to bind to")
+@click.option(
+    "--host",
+    "-h",
+    default="127.0.0.1",
+    help="Host to bind to (default: localhost only; use 0.0.0.0 to expose on the network)",
+)
 @click.option("--port", "-p", default=9991, help="Port to bind to")
-@click.option("--debug", is_flag=True, help="Enable debug mode")
+@click.option("--debug", is_flag=True, help="Enable debug mode (loopback hosts only)")
 def run_server(host, port, debug):
-    """Run the Flask web application"""
+    """Run the Flask web application.
+
+    Binds to localhost (127.0.0.1) by default. Pass ``--host 0.0.0.0`` to expose
+    it on the network -- but the dashboard and data API have no authentication,
+    so only do that behind a reverse proxy that adds access control.
+    """
+    if debug and not _is_loopback(host):
+        raise click.ClickException(
+            f"Refusing to enable --debug on non-loopback host {host!r}: the Werkzeug "
+            "debugger allows arbitrary code execution. Debug only on --host 127.0.0.1."
+        )
+    if not _is_loopback(host):
+        click.echo(
+            f"WARNING: binding to {host} exposes the dashboard and data API on the "
+            "network with no authentication. Put it behind a reverse proxy with access "
+            "control, and do not use --debug.",
+            err=True,
+        )
     app = create_app("development" if debug else "production")
     app.run(host=host, port=port, debug=debug)
 
