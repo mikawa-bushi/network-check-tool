@@ -25,7 +25,9 @@ def _make_app(tmp_path):
 
 
 def _seed(app, rows):
-    now = datetime(2026, 6, 15, 12, 0, 0)
+    # Recent timestamp: /api/stats filters to the last 24h, so a fixed past date
+    # would fall outside the window and make these aggregates read as empty.
+    now = datetime.utcnow()
     with app.app_context():
         for host, rt, loss in rows:
             db.session.add(
