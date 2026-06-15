@@ -136,6 +136,12 @@ def cli(verbose: bool, log_file: Optional[str]) -> None:
 @click.option("--verbose", is_flag=True, help="Show the engine's reasoning steps.")
 @click.option("--save/--no-save", default=False, help="Record metrics to history db.")
 @click.option("--no-color", is_flag=True, help="Disable ANSI colour.")
+@click.option(
+    "--jobs",
+    type=int,
+    default=1,
+    help="Run independent probes concurrently (1=serial default; 3-4 recommended).",
+)
 def check(
     external_ip,
     dns_name,
@@ -149,6 +155,7 @@ def check(
     verbose,
     save,
     no_color,
+    jobs,
 ):
     """Run the full layered diagnosis and report the root cause."""
     cfg = _build_config(external_ip, dns_name, tcp, http_url, count)
@@ -156,7 +163,7 @@ def check(
     skip_list = [s.strip() for s in skip.split(",")] if skip else None
 
     engine = Engine(config=cfg, verbose=verbose)
-    diag = engine.run(only=only_list, skip=skip_list)
+    diag = engine.run(only=only_list, skip=skip_list, jobs=jobs)
 
     if save:
         with Storage() as st:

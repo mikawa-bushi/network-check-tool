@@ -2,6 +2,19 @@
 
 All notable changes to the `netdiag` package are documented in this file.
 
+## [0.1.6] - 2026-06-15
+
+### Performance (issue #20)
+
+- **Parallel probes (P2)**: `Engine.run` accepts `jobs=` to run mutually-independent probes
+  (those in the same dependency tier) concurrently instead of strictly one at a time. A full
+  sweep that includes the active ping probes (`gateway`/`external`/`dualstack`) is much faster
+  when parallelised. Dependencies are still honoured (each tier completes before the next), and
+  the resulting `Diagnosis` — ordered results, reasoning, hypotheses, `healthy` — is identical to
+  a serial run for any `jobs` value. `netdiag check --jobs N` exposes it; the default stays serial
+  (`jobs=1`) for measurement purity, and concurrency is capped at `MAX_PARALLEL_JOBS = 4` so active
+  probes don't contend for the link. Other callers (scheduler, watcher, replay) are unchanged.
+
 ## [0.1.5] - 2026-06-15
 
 ### Added / Fixed (issue #14)
