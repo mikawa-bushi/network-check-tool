@@ -13,15 +13,25 @@ def _insert(st, ts, value, probe="external", target="1.1.1.1", metric="rtt_ms"):
     )
 
 
-def test_downsample_collapses_old_keeps_recent(tmp_path):
-    st = Storage(tmp_path / "h.db")
-    now = time.time()
+def _seed_old_and_recent(st, now):
+    """Seed 60 'old' samples inside a single hour bucket plus 4 recent samples.
+
+    The 60 old samples are placed one second apart starting at ``old``. ``old`` is
+    derived from ``now`` so callers can pin the clock; the construction must keep all
+    60 inside one ``ts // 3600`` bucket regardless of ``now``.
+    """
     old = now - 10 * 86400
     for i in range(60):
         _insert(st, old + i, 10.0 + (i % 5))  # old, within one hour bucket
     for i in range(4):
         _insert(st, now - i, 12.0)  # recent
     st.conn.commit()
+
+
+def test_downsample_collapses_old_keeps_recent(tmp_path):
+    st = Storage(tmp_path / "h.db")
+    now = time.time()
+    _seed_old_and_recent(st, now)
 
     assert st.counts() == {"samples": 64, "rollups": 0}
     collapsed = st.downsample(older_than_days=7)
@@ -31,6 +41,21 @@ def test_downsample_collapses_old_keeps_recent(tmp_path):
     assert c["rollups"] == 1  # 60 old rows -> one hourly bucket
     # recent raw still readable for baselining
     assert st.values("external", "rtt_ms", target="1.1.1.1") == [12.0, 12.0, 12.0, 12.0]
+    st.close()
+
+
+def test_downsample_collapse_deterministic_at_hour_boundary(tmp_path, monkeypatch):
+    # Pin the clock to the last second of an epoch hour -- the window that used to make
+    # the (now - 10d, +0..59s) construction straddle two ts//3600 buckets and flake
+    # (~1.6% of runs). With the bucket-snapped seed the 60 old rows must always
+    # collapse into exactly one rollup; reverting the snap makes this fail every run.
+    bad_now = (int(time.time()) // 3600) * 3600 + 3599
+    monkeypatch.setattr(time, "time", lambda: bad_now)
+
+    st = Storage(tmp_path / "boundary.db")
+    _seed_old_and_recent(st, time.time())
+    st.downsample(older_than_days=7)
+    assert st.counts()["rollups"] == 1
     st.close()
 
 
