@@ -2,6 +2,18 @@
 
 All notable changes to the `netdiag` package are documented in this file.
 
+## [0.1.4] - 2026-06-15
+
+### Fixed (issue #12)
+
+- **Thread safety (M4)**: `Storage` now opens its sqlite connection with
+  `check_same_thread=False` and serializes every operation behind a re-entrant lock, with
+  WAL journaling and a busy timeout enabled. Previously `Monitor.start()` / `Watcher.start()`
+  (which default to `background=True`) wrote from a worker thread and hit a cross-thread
+  `sqlite3.ProgrammingError` that the loops silently swallowed — so nothing was recorded.
+  The threaded background loops now record correctly; public signatures and CLI behaviour
+  are unchanged.
+
 ## [0.1.3] - 2026-06-15
 
 ### Changed (issue #8)

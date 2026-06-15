@@ -9,6 +9,6 @@ only hard dependency; everything else is optional).
 
 from .core import CheckResult, Status, Probe, Context, register
 
-__version__ = "0.1.3"
+__version__ = "0.1.4"
 
 __all__ = ["CheckResult", "Status", "Probe", "Context", "register", "__version__"]
