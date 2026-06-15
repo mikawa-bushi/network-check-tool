@@ -2,5 +2,5 @@ skill: implement
 package: netdiag
 issue: 12
 plan-review-preference: proceed
-step: 5 (write tests)
-next: write failing thread-safety tests (storage cross-thread, concurrent, Monitor/Watcher bg)
+step: 6 (implement)
+next: make Storage thread-safe (check_same_thread=False + RLock + WAL); verify green
