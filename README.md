@@ -136,12 +136,24 @@ network-checker status --host google.com --limit 10
 ### Web Dashboard
 
 ```bash
-# Start the web server (default: http://localhost:9991)
+# Start the web server (default: binds to localhost only — http://localhost:9991)
 network-checker run-server
 
-# Run on different host/port
+# Expose on the network (opt-in). The dashboard and data API have NO built-in
+# authentication, so only do this behind a reverse proxy that adds access control.
 network-checker run-server --host 0.0.0.0 --port 8080
 ```
+
+> **Security note**
+> - `run-server` binds to `127.0.0.1` by default; `--host 0.0.0.0` (or any non-loopback
+>   address) is an explicit opt-in and prints a warning.
+> - There is no authentication on the dashboard or `/api/*`. For remote access, run behind a
+>   reverse proxy (e.g. nginx) that handles TLS and authentication; do not expose the Flask
+>   development server directly in production.
+> - `--debug` (the Werkzeug interactive debugger) is refused on non-loopback hosts because it
+>   allows arbitrary code execution. Debug only on `--host 127.0.0.1`.
+> - Cross-origin access to `/api/*` is disabled unless you set `CORS_ORIGINS` (comma-separated
+>   allowed origins).
 
 ### Data Management
 

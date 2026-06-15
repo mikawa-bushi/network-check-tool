@@ -16,7 +16,12 @@ def create_app(config_name=None):
 
     # Initialize extensions
     db.init_app(app)
-    CORS(app)
+    # Only enable cross-origin access when origins are explicitly configured, and
+    # scope it to the data API. With no CORS_ORIGINS set (default), no permissive
+    # CORS headers are sent; same-origin dashboard requests are unaffected.
+    cors_origins = app.config.get("CORS_ORIGINS") or []
+    if cors_origins:
+        CORS(app, resources={r"/api/*": {"origins": cors_origins}})
 
     # Register blueprints
     app.register_blueprint(dashboard_bp)

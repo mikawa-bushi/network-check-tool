@@ -94,9 +94,7 @@ def test_no_permissive_cors_by_default(monkeypatch, tmp_path):
 
 
 def test_configured_cors_origin_allowed(monkeypatch, tmp_path):
-    app = _make_web_app(
-        monkeypatch, tmp_path, cors_origins=["http://allowed.example"]
-    )
+    app = _make_web_app(monkeypatch, tmp_path, cors_origins=["http://allowed.example"])
     client = app.test_client()
     resp = client.get("/api/hosts", headers={"Origin": "http://allowed.example"})
     assert resp.headers.get("Access-Control-Allow-Origin") == "http://allowed.example"

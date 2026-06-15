@@ -15,6 +15,13 @@ class Config:
     PING_TIMEOUT = float(os.environ.get("PING_TIMEOUT", "4.0"))
     DEFAULT_PING_INTERVAL = int(os.environ.get("DEFAULT_PING_INTERVAL", "60"))
 
+    # Cross-origin access for the data API. Comma-separated list of allowed
+    # origins (e.g. "https://dash.example"). Empty (default) means no
+    # cross-origin access is granted -- same-origin requests are unaffected.
+    CORS_ORIGINS = [
+        o.strip() for o in os.environ.get("CORS_ORIGINS", "").split(",") if o.strip()
+    ]
+
     # Default hosts to monitor
     DEFAULT_HOSTS = os.environ.get("DEFAULT_HOSTS", "google.com,cloudflare.com").split(
         ","
