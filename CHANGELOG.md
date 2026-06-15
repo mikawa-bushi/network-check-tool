@@ -2,6 +2,18 @@
 
 All notable changes to this project are documented in this file.
 
+## [0.2.3] - 2026-06-15
+
+### Changed (network_check_tool, issue #22)
+
+- **M1 (phase 1)**: `PingService` no longer carries its own ICMP implementation — it now measures
+  via `netdiag`'s shared, stdlib-only `ping` core (one ping per sample, returning milliseconds) and
+  guards on the `ping` command being available. The returned result dict, `save_ping_result` /
+  `ping_and_save`, the stored `PingResult` fields, and the `PING_TIMEOUT` wiring are all unchanged.
+- The `ping3` dependency is removed (`pyproject.toml` + `poetry.lock`); ping measurement no longer
+  needs raw-socket privileges. Unifying storage and the scheduler with `netdiag` are deferred to
+  later M1 phases.
+
 ## [0.2.2] - 2026-06-15
 
 ### Performance (network_check_tool, issue #18)

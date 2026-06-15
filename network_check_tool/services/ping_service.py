@@ -1,43 +1,70 @@
-import ping3
 from datetime import datetime
-from typing import Dict, Optional
+from typing import Dict
+
+from netdiag.core.util import have
+from netdiag.probes.icmp import ping as _measure_ping
+
 from ..models import db, PingResult
 
 
 class PingService:
     def __init__(self, timeout: float = 4.0):
         self.timeout = timeout
-        ping3.EXCEPTIONS = True
 
     def ping_host(self, host: str) -> Dict:
+        """Measure one ping to ``host`` and return a result dict.
+
+        The measurement comes from netdiag's shared ``ping`` core (M1) rather than
+        a separate implementation. The returned dict has the keys
+        ``host``, ``timestamp``, ``response_time`` (milliseconds, or ``None`` on
+        failure), ``packet_loss`` (``True`` when no reply was received), and
+        ``error_message``.
+        """
+        timestamp = datetime.utcnow()
+
+        if not have("ping"):
+            return {
+                "host": host,
+                "timestamp": timestamp,
+                "response_time": None,
+                "packet_loss": True,
+                "error_message": "ping command not available",
+            }
+
         try:
-            response_time = ping3.ping(host, timeout=self.timeout)
-
-            if response_time is None:
-                return {
-                    "host": host,
-                    "timestamp": datetime.utcnow(),
-                    "response_time": None,
-                    "packet_loss": True,
-                    "error_message": "Request timeout",
-                }
-            else:
-                return {
-                    "host": host,
-                    "timestamp": datetime.utcnow(),
-                    "response_time": response_time * 1000,  # Convert to milliseconds
-                    "packet_loss": False,
-                    "error_message": None,
-                }
-
+            # One ping per sample (preserves the previous cadence/cost). netdiag's
+            # ping returns the average RTT already in milliseconds. Note netdiag's
+            # run() caps the whole subprocess at count*timeout+5s, so the worst-case
+            # block here is a few seconds longer than self.timeout alone.
+            rtt, loss, _raw = _measure_ping(host, count=1, timeout=self.timeout)
         except Exception as e:
             return {
                 "host": host,
-                "timestamp": datetime.utcnow(),
+                "timestamp": timestamp,
                 "response_time": None,
                 "packet_loss": True,
                 "error_message": str(e),
             }
+
+        # With count=1 loss is only ever 0 or 100, so "got a reply" == success.
+        # (A reply with partial loss can't occur here; if count were ever raised,
+        # a measured RTT would still be reported as a successful sample.)
+        if rtt is None or loss >= 100.0:
+            return {
+                "host": host,
+                "timestamp": timestamp,
+                "response_time": None,
+                "packet_loss": True,
+                "error_message": "Request timeout",
+            }
+
+        return {
+            "host": host,
+            "timestamp": timestamp,
+            "response_time": rtt,
+            "packet_loss": False,
+            "error_message": None,
+        }
 
     def save_ping_result(self, result: Dict) -> PingResult:
         ping_result = PingResult(
