@@ -41,7 +41,7 @@ def test_run_server_public_bind_is_opt_in_and_warns(monkeypatch):
     result = CliRunner().invoke(cli, ["run-server", "--host", "0.0.0.0"])
     assert result.exit_code == 0, result.output
     assert fake.run_kwargs["host"] == "0.0.0.0"
-    assert "WARNING" in result.output.upper()
+    assert "WARNING" in result.output
 
 
 # ----------------------------------------------------------------- debug gating
@@ -98,3 +98,13 @@ def test_configured_cors_origin_allowed(monkeypatch, tmp_path):
     client = app.test_client()
     resp = client.get("/api/hosts", headers={"Origin": "http://allowed.example"})
     assert resp.headers.get("Access-Control-Allow-Origin") == "http://allowed.example"
+
+
+def test_configured_cors_rejects_other_origin(monkeypatch, tmp_path):
+    # With an allowlist set, a non-listed origin must NOT receive a CORS grant.
+    app = _make_web_app(monkeypatch, tmp_path, cors_origins=["http://allowed.example"])
+    client = app.test_client()
+    resp = client.get("/api/hosts", headers={"Origin": "http://evil.example"})
+    acao = resp.headers.get("Access-Control-Allow-Origin")
+    assert acao != "*"
+    assert acao != "http://evil.example"

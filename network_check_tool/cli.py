@@ -17,8 +17,10 @@ _LOOPBACK_HOSTS = {"127.0.0.1", "localhost", "::1"}
 def _is_loopback(host: str) -> bool:
     """Return True if ``host`` refers only to the local loopback interface.
 
-    Recognises ``localhost``, ``::1`` and any ``127.0.0.0/8`` address. Used to
-    keep the interactive debugger off network-facing interfaces.
+    Recognises ``localhost``, ``::1`` and any ``127.0.0.0/8`` address. Wildcard
+    binds such as ``0.0.0.0`` and ``::`` (all IPv6 interfaces) are NOT loopback
+    and return False, so they trigger the public-bind warning / debug refusal.
+    Used to keep the interactive debugger off network-facing interfaces.
     """
     return host in _LOOPBACK_HOSTS or host.startswith("127.")
 

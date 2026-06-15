@@ -18,6 +18,8 @@ class Config:
     # Cross-origin access for the data API. Comma-separated list of allowed
     # origins (e.g. "https://dash.example"). Empty (default) means no
     # cross-origin access is granted -- same-origin requests are unaffected.
+    # NOTE: evaluated at import time (like the other settings here), so the
+    # CORS_ORIGINS env var must be set before this module is first imported.
     CORS_ORIGINS = [
         o.strip() for o in os.environ.get("CORS_ORIGINS", "").split(",") if o.strip()
     ]
