@@ -20,7 +20,10 @@ def _seed_old_and_recent(st, now):
     derived from ``now`` so callers can pin the clock; the construction must keep all
     60 inside one ``ts // 3600`` bucket regardless of ``now``.
     """
-    old = now - 10 * 86400
+    # Snap to the start of an hour bucket (+1s) so old..old+59 never straddle a
+    # ts//3600 boundary. Using ``now - 10*86400`` directly would split into two
+    # buckets whenever ``now`` falls in the last ~59s of an epoch hour (see issue #6).
+    old = (int(now - 10 * 86400) // 3600) * 3600 + 1
     for i in range(60):
         _insert(st, old + i, 10.0 + (i % 5))  # old, within one hour bucket
     for i in range(4):
