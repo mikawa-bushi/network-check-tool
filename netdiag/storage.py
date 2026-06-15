@@ -7,13 +7,32 @@ just ping RTT) means change-point detection works for DNS latency, TTFB, etc.
 
 from __future__ import annotations
 
+import functools
 import json
 import sqlite3
+import threading
 import time
 from pathlib import Path
 from typing import Dict, Iterable, List, Optional, Tuple
 
 DEFAULT_DB = Path.home() / ".netdiag" / "history.db"
+
+
+def _synchronized(method):
+    """Serialize a Storage method on ``self._lock``.
+
+    The single sqlite connection is shared across threads (Monitor/Watcher run
+    their loops in a background thread), so every method that touches it holds
+    the re-entrant lock for the duration of its work.
+    """
+
+    @functools.wraps(method)
+    def wrapper(self, *args, **kwargs):
+        with self._lock:
+            return method(self, *args, **kwargs)
+
+    return wrapper
+
 
 _SCHEMA = """
 CREATE TABLE IF NOT EXISTS samples (
@@ -52,12 +71,24 @@ class Storage:
     def __init__(self, path: Optional[Path] = None) -> None:
         self.path = Path(path) if path else DEFAULT_DB
         self.path.parent.mkdir(parents=True, exist_ok=True)
-        self.conn = sqlite3.connect(str(self.path))
+        # check_same_thread=False lets the background loops (Monitor/Watcher
+        # start(background=True)) use this connection. A single sqlite connection
+        # object is not safe for *concurrent* use, so a re-entrant lock serializes
+        # every access below. RLock (not Lock) because some public methods call
+        # others (record_diagnosis -> record_result, retention -> downsample).
+        self._lock = threading.RLock()
+        self.conn = sqlite3.connect(str(self.path), check_same_thread=False)
         self.conn.row_factory = sqlite3.Row
-        self.conn.executescript(_SCHEMA)
-        self.conn.commit()
+        with self._lock:
+            # WAL improves reader/writer concurrency; busy_timeout avoids spurious
+            # "database is locked" under contention. (WAL is a no-op on :memory:.)
+            self.conn.execute("PRAGMA journal_mode=WAL")
+            self.conn.execute("PRAGMA busy_timeout=5000")
+            self.conn.executescript(_SCHEMA)
+            self.conn.commit()
 
     # -- writes ---------------------------------------------------------------
+    @_synchronized
     def record_result(self, result, target: Optional[str] = None) -> None:
         """Persist every numeric metric of a CheckResult as one row each.
 
@@ -98,11 +129,13 @@ class Storage:
         )
         self.conn.commit()
 
+    @_synchronized
     def record_diagnosis(self, diagnosis, target: Optional[str] = None) -> None:
         for r in diagnosis.results:
             self.record_result(r, target=target)
 
     # -- reads ----------------------------------------------------------------
+    @_synchronized
     def series(
         self,
         probe: str,
@@ -133,6 +166,7 @@ class Storage:
     ) -> List[float]:
         return [v for _, v in self.series(probe, metric, target, since)]
 
+    @_synchronized
     def probes_seen(self) -> List[str]:
         return [
             r["probe"]
@@ -141,6 +175,7 @@ class Storage:
             )
         ]
 
+    @_synchronized
     def prune(self, older_than_days: float = 30) -> int:
         """Delete raw samples older than the cutoff. Returns rows removed."""
         cutoff = time.time() - older_than_days * 86400
@@ -148,6 +183,7 @@ class Storage:
         self.conn.commit()
         return cur.rowcount
 
+    @_synchronized
     def downsample(self, older_than_days: float = 7, bucket_seconds: int = 3600) -> int:
         """Roll raw samples older than the cutoff into per-bucket aggregates.
 
@@ -215,12 +251,14 @@ class Storage:
         self.conn.commit()
         return collapsed
 
+    @_synchronized
     def prune_rollups(self, older_than_days: float = 90) -> int:
         cutoff = time.time() - older_than_days * 86400
         cur = self.conn.execute("DELETE FROM rollups WHERE bucket_ts < ?", (cutoff,))
         self.conn.commit()
         return cur.rowcount
 
+    @_synchronized
     def retention(
         self, raw_days: float = 7, rollup_days: float = 90, bucket_seconds: int = 3600
     ) -> dict:
@@ -240,11 +278,13 @@ class Storage:
             pass
         return {"raw_collapsed": collapsed, "rollups_dropped": dropped}
 
+    @_synchronized
     def counts(self) -> dict:
         s = self.conn.execute("SELECT COUNT(*) AS c FROM samples").fetchone()["c"]
         r = self.conn.execute("SELECT COUNT(*) AS c FROM rollups").fetchone()["c"]
         return {"samples": s, "rollups": r}
 
+    @_synchronized
     def close(self) -> None:
         self.conn.close()
 
