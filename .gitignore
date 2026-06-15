@@ -170,3 +170,13 @@ instance/
 Network Trash Folder
 Temporary Items
 .apdisk
+
+# AI coding-tool config & local state (never commit/push these)
+.claude/
+.agents/
+.codex/
+.cursor/
+.cursorrules
+.aider*
+.continue/
+.windsurf/
