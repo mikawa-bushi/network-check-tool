@@ -64,6 +64,9 @@ def test_downsample_collapse_deterministic_at_hour_boundary(tmp_path, monkeypatc
 
 def test_downsample_is_idempotent(tmp_path):
     st = Storage(tmp_path / "h.db")
+    # Unsnapped on purpose: this test only asserts idempotency + stable counts, which
+    # hold whether the window lands in one bucket or two. Do NOT copy this pattern into
+    # a test that asserts a specific rollup count -- snap to a bucket instead (issue #6).
     old = time.time() - 10 * 86400
     for i in range(30):
         _insert(st, old + i, 5.0)
