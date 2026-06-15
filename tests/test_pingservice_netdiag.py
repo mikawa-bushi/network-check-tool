@@ -6,7 +6,7 @@ the ``ping3`` library, while keeping the same returned dict contract so the
 dashboard, scheduler, and stored ``PingResult`` are unaffected.
 """
 
-import tomllib
+import re
 from pathlib import Path
 
 import network_check_tool.services.ping_service as ps
@@ -109,9 +109,9 @@ def test_timeout_is_forwarded(monkeypatch):
 def test_ping3_no_longer_used():
     # The module must not import ping3 any more...
     assert not hasattr(ps, "ping3")
-    # ...and it must be gone from the project dependencies.
-    pyproject = tomllib.loads(
+    # ...and it must be gone from the project dependencies. A regex line scan
+    # avoids tomllib (3.11+ only) so this runs on the project's 3.10 floor.
+    pyproject_text = (
         Path(__file__).resolve().parent.parent.joinpath("pyproject.toml").read_text()
     )
-    deps = pyproject["tool"]["poetry"]["dependencies"]
-    assert "ping3" not in deps
+    assert not re.search(r"(?m)^\s*ping3\s*=", pyproject_text)
