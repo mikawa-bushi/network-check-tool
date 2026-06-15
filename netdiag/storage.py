@@ -84,6 +84,8 @@ class Storage:
             # "database is locked" under contention. (WAL is a no-op on :memory:.)
             self.conn.execute("PRAGMA journal_mode=WAL")
             self.conn.execute("PRAGMA busy_timeout=5000")
+            # executescript() implicitly commits before running; the trailing
+            # commit() is belt-and-suspenders and harmless.
             self.conn.executescript(_SCHEMA)
             self.conn.commit()
 
@@ -271,7 +273,11 @@ class Storage:
             older_than_days=raw_days, bucket_seconds=bucket_seconds
         )
         dropped = self.prune_rollups(older_than_days=rollup_days)
-        # Reclaim file space after large deletes.
+        # Reclaim file space after large deletes. VACUUM runs under the lock on
+        # purpose: it shares the single connection object, so a concurrent write
+        # from a Monitor/Watcher worker thread would corrupt it. retention() is a
+        # periodic maintenance call (hourly by default), so the bounded hold
+        # (up to busy_timeout) is acceptable; releasing the lock here would not be.
         try:
             self.conn.execute("VACUUM")
         except sqlite3.OperationalError:

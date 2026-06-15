@@ -110,6 +110,7 @@ def test_monitor_background_records(tmp_path):
         assert _wait_for_samples(st)
     finally:
         mon.stop()
+    # Monitor.stop() does not own storage (unlike Watcher.stop()), so close here.
     st.close()
 
 
