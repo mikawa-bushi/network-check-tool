@@ -16,6 +16,6 @@ from .core import CheckResult, Status, Probe, Context, register
 # the "netdiag" logger. The library itself never calls basicConfig.
 logging.getLogger(__name__).addHandler(logging.NullHandler())
 
-__version__ = "0.1.4"
+__version__ = "0.1.5"
 
 __all__ = ["CheckResult", "Status", "Probe", "Context", "register", "__version__"]
