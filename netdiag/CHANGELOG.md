@@ -2,6 +2,19 @@
 
 All notable changes to the `netdiag` package are documented in this file.
 
+## [0.1.5] - 2026-06-15
+
+### Added / Fixed (issue #14)
+
+- **Observable daemon error handling (E1)**: the long-running loops and fan-out sinks still
+  swallow exceptions (so one failure can't kill the daemon), but now log a warning with a
+  traceback instead of failing silently — `MultiSink.emit`, `Monitor`/`Watcher` tick loops,
+  storage maintenance (retention), and `status`. Each module logs via
+  `logging.getLogger(__name__)`.
+- The package attaches a `NullHandler` to the `netdiag` logger so it stays quiet by default,
+  and the CLI gains `--verbose/-v` and `--log-file` (via `_setup_logging`) to surface those
+  logs on demand. The library never calls `logging.basicConfig`.
+
 ## [0.1.4] - 2026-06-15
 
 ### Fixed (issue #12)

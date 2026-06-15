@@ -14,11 +14,14 @@ so the output is trivial to act on.
 from __future__ import annotations
 
 import json
+import logging
 import time
 from dataclasses import dataclass, field, asdict
 from enum import Enum
 from pathlib import Path
 from typing import List, Optional, Protocol
+
+logger = logging.getLogger(__name__)
 
 
 class State(str, Enum):
@@ -211,4 +214,8 @@ class MultiSink:
             try:
                 s.emit(transition)
             except Exception:
-                pass
+                # One sink failing must not stop the others, but the failure
+                # must be observable rather than vanishing silently.
+                logger.warning(
+                    "alert sink %s failed to emit", type(s).__name__, exc_info=True
+                )

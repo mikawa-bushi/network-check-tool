@@ -8,12 +8,15 @@ baseline and change-point features have data to work with.
 
 from __future__ import annotations
 
+import logging
 import threading
 import time
 from typing import Callable, List, Optional
 
 from .diagnosis import Engine
 from .storage import Storage
+
+logger = logging.getLogger(__name__)
 
 
 class Monitor:
@@ -43,8 +46,9 @@ class Monitor:
                 if self.on_tick:
                     self.on_tick(diag)
             except Exception:
-                # A single failed tick must not kill the monitor loop.
-                pass
+                # A single failed tick must not kill the monitor loop, but log
+                # it so the failure is observable instead of silently dropped.
+                logger.warning("monitor tick failed", exc_info=True)
             # Sleep the remainder of the interval, waking promptly on stop().
             elapsed = time.time() - start
             self._stop.wait(max(0.0, self.interval - elapsed))
