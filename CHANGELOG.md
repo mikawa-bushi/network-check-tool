@@ -2,6 +2,18 @@
 
 All notable changes to this project are documented in this file.
 
+## [0.2.1] - 2026-06-15
+
+### Performance (network_check_tool, issue #16)
+
+- `/api/stats` now computes its aggregates (count / packet-loss rate / avg / min / max response
+  time) in SQL instead of loading every row in the time range into Python. Response shape and
+  values are unchanged; latency no longer grows linearly with stored ping volume (P1).
+- `PingResult` gains a composite `(target_host, timestamp)` index matching the dashboard's
+  host + time-range + ordered query; the redundant single-column `target_host` index is dropped
+  (the composite's leading column covers it). New databases get the index via `create_all`;
+  pre-existing databases would need it created manually (no migration framework) (P6).
+
 ## [0.2.0] - 2026-06-15
 
 ### Security (network_check_tool, issue #10)

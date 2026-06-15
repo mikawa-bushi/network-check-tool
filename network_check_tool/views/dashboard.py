@@ -1,5 +1,6 @@
 from flask import Blueprint, render_template, jsonify, request
 from datetime import datetime, timedelta
+from sqlalchemy import func
 import plotly.graph_objects as go
 import plotly.utils
 import json
@@ -182,16 +183,16 @@ def get_stats():
 
     since = datetime.utcnow() - timedelta(hours=hours)
 
+    # Aggregate in SQL rather than reading every row into Python, so latency does
+    # not grow linearly with the number of stored pings (the composite
+    # (target_host, timestamp) index serves the filter).
+    base = db.session.query(PingResult).filter(PingResult.timestamp >= since)
     if host:
-        query = db.session.query(PingResult).filter(
-            PingResult.target_host == host, PingResult.timestamp >= since
-        )
-    else:
-        query = db.session.query(PingResult).filter(PingResult.timestamp >= since)
+        base = base.filter(PingResult.target_host == host)
 
-    results = query.all()
+    total = base.with_entities(func.count()).scalar() or 0
 
-    if not results:
+    if total == 0:
         return jsonify(
             {
                 "total_pings": 0,
@@ -204,27 +205,29 @@ def get_stats():
             }
         )
 
-    successful = [
-        r for r in results if not r.packet_loss and r.response_time is not None
-    ]
-    successful_response_times = [r.response_time for r in successful]
+    # "Successful" matches the prior definition: not a packet loss and an actual
+    # response time was recorded. is_(False) is strict (NULL packet_loss is not
+    # treated as success); the column is NOT NULL so NULLs should never occur.
+    ok = base.filter(
+        PingResult.packet_loss.is_(False), PingResult.response_time.isnot(None)
+    )
+    successful = ok.with_entities(func.count()).scalar() or 0
+    avg_v, min_v, max_v = ok.with_entities(
+        func.avg(PingResult.response_time),
+        func.min(PingResult.response_time),
+        func.max(PingResult.response_time),
+    ).one()
 
+    # Cast to float: on PostgreSQL func.avg/min/max return Decimal, which Flask's
+    # JSON encoder can't serialize. On SQLite these are already float (no-op).
     return jsonify(
         {
-            "total_pings": len(results),
-            "successful_pings": len(successful),
-            "failed_pings": len(results) - len(successful),
-            "packet_loss_rate": ((len(results) - len(successful)) / len(results)) * 100,
-            "avg_response_time": (
-                sum(successful_response_times) / len(successful_response_times)
-                if successful_response_times
-                else 0
-            ),
-            "min_response_time": (
-                min(successful_response_times) if successful_response_times else 0
-            ),
-            "max_response_time": (
-                max(successful_response_times) if successful_response_times else 0
-            ),
+            "total_pings": total,
+            "successful_pings": successful,
+            "failed_pings": total - successful,
+            "packet_loss_rate": ((total - successful) / total) * 100,
+            "avg_response_time": float(avg_v) if avg_v is not None else 0,
+            "min_response_time": float(min_v) if min_v is not None else 0,
+            "max_response_time": float(max_v) if max_v is not None else 0,
         }
     )

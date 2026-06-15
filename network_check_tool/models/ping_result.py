@@ -7,8 +7,15 @@ db = SQLAlchemy()
 class PingResult(db.Model):
     __tablename__ = "ping_results"
 
+    # Composite index matching the dashboard's hot query
+    # (target_host == ? AND timestamp >= ? ORDER BY timestamp). Its leading
+    # column also serves target_host-only lookups (e.g. the /api/hosts DISTINCT
+    # scan), so target_host needs no separate single-column index. timestamp keeps
+    # its own index for the all-hosts (host=None) time-range query.
+    __table_args__ = (db.Index("ix_ping_results_host_ts", "target_host", "timestamp"),)
+
     id = db.Column(db.Integer, primary_key=True)
-    target_host = db.Column(db.String(255), nullable=False, index=True)
+    target_host = db.Column(db.String(255), nullable=False)
     timestamp = db.Column(
         db.DateTime, default=datetime.utcnow, nullable=False, index=True
     )

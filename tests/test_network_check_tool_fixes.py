@@ -148,11 +148,14 @@ def test_cli_ping_uses_config_timeout(tmp_path, monkeypatch):
 
 
 def test_dashboard_has_no_unused_sqlalchemy_imports():
-    """M3: the unused `desc`/`func` imports were removed from the dashboard view."""
+    """M3: the unused `desc` import stays removed from the dashboard view.
+
+    (`func` was also unused at M3 time, but as of #16 it is imported and used for
+    SQL aggregation in get_stats — so only `desc` is asserted absent here.)
+    """
     import network_check_tool.views.dashboard as dash
 
     assert not hasattr(dash, "desc")
-    assert not hasattr(dash, "func")
 
 
 # --------------------------------------------------------------------------- E4
