@@ -623,7 +623,6 @@ def service():
 
 
 def _unit_text(exec_start: str, system: bool) -> str:
-    user_line = "" if system else ""
     after = "After=network-online.target\nWants=network-online.target"
     install_target = "multi-user.target" if system else "default.target"
     return f"""[Unit]

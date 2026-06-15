@@ -9,7 +9,9 @@ import inspect
 
 from netdiag.cli import _unit_text
 
-EXEC = "/usr/bin/netdiag watch --interval 30 --external-ip 1.1.1.1 --dns-name example.com"
+EXEC = (
+    "/usr/bin/netdiag watch --interval 30 --external-ip 1.1.1.1 --dns-name example.com"
+)
 
 
 def test_unit_text_user_variant():
