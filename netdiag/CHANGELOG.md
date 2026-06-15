@@ -2,6 +2,17 @@
 
 All notable changes to the `netdiag` package are documented in this file.
 
+## [0.1.7] - 2026-06-15
+
+### Fixed (issue #35)
+
+- **M5**: a scenario's custom DNS `resolver:` is now actually honored. It reaches `DnsProbe` as
+  `ctx["_resolver"]`, which previously no probe read, so the setting was silently ignored. The DNS
+  probe now queries the specified server with `nslookup` (parsing answer addresses, ignoring the
+  server's own `#53` line) and surfaces the resolver in its result. If `nslookup` isn't available
+  the probe warns rather than silently resolving against the system configuration. The default
+  (no custom resolver) path is unchanged.
+
 ## [0.1.6] - 2026-06-15
 
 ### Performance (issue #20)
