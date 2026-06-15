@@ -1,0 +1,8 @@
+# check_ai_traces の検査から除外するパス（1 行 1 glob、# はコメント）。
+# 例: ツール名を正当に含むドキュメントを除外する場合
+# docs/ai-tooling-notes.md
+
+# このゲート自身のバンドル（検出器・設定・ドキュメントを含むため、ツール名を
+# 正当に含む）。SELF_EXCLUDE はルート直下のコピーのみ対象なので、ここで除外する。
+tools/precommit-bundle/*
+tools/precommit-bundle/**
