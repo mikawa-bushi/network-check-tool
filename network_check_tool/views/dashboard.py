@@ -1,12 +1,20 @@
-from flask import Blueprint, render_template, jsonify, request
+from flask import Blueprint, render_template, jsonify, request, Response
 from datetime import datetime, timedelta
+import threading
 from sqlalchemy import func
+import plotly
 import plotly.graph_objects as go
 import plotly.utils
 import json
 from ..models import db, PingResult
 
 dashboard_bp = Blueprint("dashboard", __name__, url_prefix="/")
+
+# Plotly's JS bundle, served locally so the dashboard works fully offline and is
+# pinned to the installed plotly version (no CDN). Loaded once (double-checked
+# under a lock so concurrent first requests don't each rebuild the ~5MB string).
+_PLOTLY_JS = None
+_PLOTLY_JS_LOCK = threading.Lock()
 
 # Bounds for the ?hours= query parameter shared by the data/chart/stats endpoints.
 HOURS_MIN = 1
@@ -37,6 +45,35 @@ def _parse_hours():
 def index():
     """Main dashboard page"""
     return render_template("dashboard.html")
+
+
+@dashboard_bp.route("/vendor/plotly.min.js")
+def plotly_js():
+    """Serve the Plotly JS bundle shipped with the installed plotly package.
+
+    Keeps the dashboard usable offline and version-locked to the dependency
+    instead of fetching an unpinned build from the Plotly CDN.
+    """
+    global _PLOTLY_JS
+    if _PLOTLY_JS is None:
+        with _PLOTLY_JS_LOCK:
+            if _PLOTLY_JS is None:
+                from plotly.offline import get_plotlyjs
+
+                _PLOTLY_JS = get_plotlyjs()
+    resp = Response(
+        _PLOTLY_JS,
+        mimetype="text/javascript",
+        headers={
+            "Cache-Control": "public, max-age=86400",
+            "X-Content-Type-Options": "nosniff",
+        },
+    )
+    # ETag keyed on the installed plotly version: a same-version reload after the
+    # cache TTL revalidates with a cheap 304 instead of re-sending the bundle, and
+    # an upgrade changes the tag so clients pull the new build.
+    resp.set_etag(f"plotly-{plotly.__version__}")
+    return resp.make_conditional(request)
 
 
 @dashboard_bp.route("/api/hosts")

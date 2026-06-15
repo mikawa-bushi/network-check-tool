@@ -2,6 +2,15 @@
 
 All notable changes to this project are documented in this file.
 
+## [0.2.4] - 2026-06-15
+
+### Fixed (network_check_tool, issue #33)
+
+- **U1**: the dashboard no longer loads Plotly from `cdn.plot.ly/plotly-latest` — it serves the
+  bundle shipped with the installed `plotly` package from a local route (`/vendor/plotly.min.js`).
+  The dashboard now renders charts with no outbound network access, and the Plotly version is
+  pinned to the dependency instead of a moving CDN tag.
+
 ## [0.2.3] - 2026-06-15
 
 ### Changed (network_check_tool, issue #22)
