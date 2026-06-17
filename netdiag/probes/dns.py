@@ -9,6 +9,7 @@ from __future__ import annotations
 
 import re
 import socket
+import threading
 import time
 from pathlib import Path
 from typing import List, Optional
@@ -60,14 +61,29 @@ def configured_resolvers() -> List[str]:
 
 
 def _resolve(name: str, timeout: float = 3.0) -> Optional[List[str]]:
-    socket.setdefaulttimeout(timeout)
-    try:
-        infos = socket.getaddrinfo(name, None)
-        return sorted({i[4][0] for i in infos})
-    except (socket.gaierror, socket.timeout, OSError):
-        return None
-    finally:
-        socket.setdefaulttimeout(None)
+    """Resolve ``name`` to a sorted list of unique addresses, or ``None``.
+
+    Bounds the lookup with a worker thread + ``join(timeout)`` instead of
+    ``socket.setdefaulttimeout`` -- the latter mutates a process-global that would
+    race other probes under ``--jobs`` and clobber any timeout the host
+    application had set. A lookup that overruns the budget is reported as a
+    failure; its daemon thread is abandoned and exits on its own.
+    """
+    result: List[Optional[List[str]]] = [None]
+
+    def _lookup() -> None:
+        try:
+            infos = socket.getaddrinfo(name, None)
+            result[0] = sorted({i[4][0] for i in infos})
+        except (socket.gaierror, OSError):
+            result[0] = None
+
+    worker = threading.Thread(target=_lookup, daemon=True)
+    worker.start()
+    worker.join(timeout)
+    if worker.is_alive():
+        return None  # resolver exceeded the budget
+    return result[0]
 
 
 @register

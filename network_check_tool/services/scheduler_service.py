@@ -86,8 +86,9 @@ class SchedulerService:
         )
         self.is_running = False
 
-        # Configure logging
-        logging.basicConfig(level=logging.INFO)
+        # Use a module logger only. A service/library must not call
+        # logging.basicConfig -- that reconfigures the root logger as a global
+        # side effect of construction. The CLI entry point owns logging setup.
         self.logger = logging.getLogger(__name__)
 
     def start(self):

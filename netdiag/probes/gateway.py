@@ -11,7 +11,7 @@ from typing import Optional
 
 from ..core import CheckResult, Context, Probe, register
 from ..core.util import have, is_linux, is_macos, run
-from .icmp import ping
+from .icmp import classify_ping, ping
 
 
 def default_gateway() -> Optional[str]:
@@ -72,26 +72,14 @@ class GatewayProbe(Probe):
                 metrics={"has_gateway": 1.0},
             )
         rtt, loss, text = ping(gw, count=int(ctx.get("count", 4)))
-        metrics = {"has_gateway": 1.0, "loss_pct": loss}
-        if rtt is not None:
-            metrics["rtt_ms"] = rtt
-        if loss >= 100.0:
-            return CheckResult.fail(
-                self.name,
-                f"default gateway {gw} not responding (100% loss) — router/LAN problem",
-                metrics=metrics,
-                detail={"gateway": gw, "output": text},
-            )
-        if loss > 0:
-            return CheckResult.warn(
-                self.name,
-                f"gateway {gw} reachable but {loss:.0f}% loss ({rtt:.1f}ms)",
-                metrics=metrics,
-                detail={"gateway": gw, "output": text},
-            )
-        return CheckResult.ok(
+        return classify_ping(
             self.name,
-            f"{gw} reachable ({rtt:.2f}ms)",
-            metrics=metrics,
-            detail={"gateway": gw, "output": text},
+            rtt,
+            loss,
+            text,
+            fail_msg=f"default gateway {gw} not responding (100% loss) — router/LAN problem",
+            warn_msg=lambda: f"gateway {gw} reachable but {loss:.0f}% loss ({rtt:.1f}ms)",
+            ok_msg=lambda: f"{gw} reachable ({rtt:.2f}ms)",
+            extra_metrics={"has_gateway": 1.0},
+            extra_detail={"gateway": gw},
         )

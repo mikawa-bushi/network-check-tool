@@ -94,6 +94,31 @@ def _parse_hours():
     return max(HOURS_MIN, min(hours, HOURS_MAX)), None
 
 
+def _host_window(require_host=False):
+    """Resolve the ``(host, hours, since)`` shared by the data/chart/stats endpoints.
+
+    Returns ``((host, hours, since), None)`` on success, or ``(None, error)`` where
+    ``error`` is a ready-to-return ``(response, status)`` -- a 400 for an invalid
+    ``hours`` value or, when ``require_host`` is set, a missing ``host``.
+    """
+    host = request.args.get("host")
+    hours, error = _parse_hours()
+    if error:
+        return None, error
+    if require_host and not host:
+        return None, (jsonify({"error": "Host parameter is required"}), 400)
+    return (host, hours, utcnow() - timedelta(hours=hours)), None
+
+
+def _window_query(host, since):
+    """Time-ordered ``PingResult`` rows for one host within the window."""
+    return (
+        db.session.query(PingResult)
+        .filter(PingResult.target_host == host, PingResult.timestamp >= since)
+        .order_by(PingResult.timestamp)
+    )
+
+
 @dashboard_bp.route("/")
 def index():
     """Main dashboard page"""
@@ -139,23 +164,12 @@ def get_hosts():
 @dashboard_bp.route("/api/ping_data")
 def get_ping_data():
     """Get ping data for visualization"""
-    host = request.args.get("host")
-    hours, error = _parse_hours()
+    parsed, error = _host_window(require_host=True)
     if error:
         return error
+    host, _hours, since = parsed
 
-    if not host:
-        return jsonify({"error": "Host parameter is required"}), 400
-
-    # Get data for the specified time range
-    since = utcnow() - timedelta(hours=hours)
-
-    results = (
-        db.session.query(PingResult)
-        .filter(PingResult.target_host == host, PingResult.timestamp >= since)
-        .order_by(PingResult.timestamp)
-        .all()
-    )
+    results = _window_query(host, since).all()
 
     if not results:
         return jsonify({"error": "No data found for the specified host"}), 404
@@ -189,22 +203,12 @@ def get_ping_data():
 @dashboard_bp.route("/api/ping_chart")
 def get_ping_chart():
     """Generate Plotly chart for ping data"""
-    host = request.args.get("host")
-    hours, error = _parse_hours()
+    parsed, error = _host_window(require_host=True)
     if error:
         return error
+    host, hours, since = parsed
 
-    if not host:
-        return jsonify({"error": "Host parameter is required"}), 400
-
-    since = utcnow() - timedelta(hours=hours)
-
-    results = (
-        db.session.query(PingResult)
-        .filter(PingResult.target_host == host, PingResult.timestamp >= since)
-        .order_by(PingResult.timestamp)
-        .all()
-    )
+    results = _window_query(host, since).all()
 
     if not results:
         return jsonify({"error": "No data found"}), 404
@@ -269,12 +273,10 @@ def get_ping_chart():
 @dashboard_bp.route("/api/stats")
 def get_stats():
     """Get overall statistics"""
-    host = request.args.get("host")
-    hours, error = _parse_hours()
+    parsed, error = _host_window()
     if error:
         return error
-
-    since = utcnow() - timedelta(hours=hours)
+    host, _hours, since = parsed
 
     # Aggregate in SQL rather than reading every row into Python, so latency does
     # not grow linearly with the number of stored pings (the composite
