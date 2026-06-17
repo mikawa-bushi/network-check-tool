@@ -54,6 +54,7 @@ netdiag = "netdiag.cli:main"
 [tool.poetry.group.dev.dependencies]
 pytest = "^8.3.4"
 black = "^24.0.0"
+pre-commit = "^4.6.0"
 
 [tool.black]
 line-length = 88
