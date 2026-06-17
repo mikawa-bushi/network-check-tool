@@ -5,6 +5,8 @@
 * U8  -- ``netdiag scenario`` gains ``--no-color`` (symmetry with ``check``).
 * U10 -- the report-reasoning flag is ``--reasoning``; the word "verbose" is now
   reserved for the global logging flag (no command-level ``--verbose``).
+* M7  -- a probe absent from RUNBOOKS (e.g. a plugin) still gets a diagnosis
+  narrative from its own ``means``/``runbook`` (or ``why``/``manual_commands``).
 """
 
 import pytest
@@ -13,6 +15,7 @@ from netdiag.cli import check, scenario
 from netdiag.core import CheckResult, Probe, Status
 from netdiag.core.probe import _REGISTRY
 from netdiag.diagnosis import Engine
+from netdiag.diagnosis.rules import _runbook, runbook_steps
 
 
 @pytest.fixture
@@ -80,3 +83,44 @@ def test_scenario_has_no_color_and_reasoning():
     assert "no_color" in names
     assert "reasoning" in names
     assert "verbose" not in names
+
+
+# ---------------------------------------------------------------------- M7
+
+
+def test_runbook_uses_plugin_probe_attrs(isolated_registry):
+    class _Plugin(Probe):
+        name = "widget"
+        title = "Widget service"
+        layer = "L7"
+        means = "the widget service is down"
+        runbook = ["restart the widget", "check widget logs"]
+
+        def check(self, ctx):
+            return CheckResult.ok(self.name, "ok")
+
+    isolated_registry["widget"] = _Plugin
+    assert runbook_steps("widget") == ["restart the widget", "check widget logs"]
+    assert _runbook("widget")["means"] == "the widget service is down"
+
+
+def test_runbook_falls_back_to_manual_commands(isolated_registry):
+    class _Plugin(Probe):
+        name = "gizmo"
+        title = "Gizmo"
+        layer = "L7"
+        why = "checks the gizmo"
+        manual_commands = ["gizmoctl status"]
+
+        def check(self, ctx):
+            return CheckResult.ok(self.name, "ok")
+
+    isolated_registry["gizmo"] = _Plugin
+    # No explicit runbook/means -> fall back to manual_commands / why.
+    assert runbook_steps("gizmo") == ["gizmoctl status"]
+    assert _runbook("gizmo")["means"] == "checks the gizmo"
+
+
+def test_runbook_builtin_unchanged_and_unknown_empty():
+    assert runbook_steps("dns")  # built-in still resolves to its steps
+    assert runbook_steps("definitely-not-a-probe") == []

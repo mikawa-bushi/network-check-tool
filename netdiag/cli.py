@@ -96,6 +96,11 @@ def _build_config(external_ip, dns_name, tcp, http_url, count) -> dict:
     return cfg
 
 
+def _split_csv(value: Optional[str]) -> Optional[List[str]]:
+    """Parse a comma-separated CLI option into a stripped list, or None if unset."""
+    return [s.strip() for s in value.split(",")] if value else None
+
+
 @click.group()
 @click.version_option(version=_resolve_version(), prog_name="netdiag")
 @click.option(
@@ -164,8 +169,8 @@ def check(
 ):
     """Run the full layered diagnosis and report the root cause."""
     cfg = _build_config(external_ip, dns_name, tcp, http_url, count)
-    only_list = [s.strip() for s in only.split(",")] if only else None
-    skip_list = [s.strip() for s in skip.split(",")] if skip else None
+    only_list = _split_csv(only)
+    skip_list = _split_csv(skip)
 
     # Progress feedback for long sweeps -- only to stderr, only on a TTY, and only
     # for text output, so a redirected report (or json/html) stays clean.
@@ -401,7 +406,7 @@ def monitor(interval, external_ip, only):
     """Continuously run the diagnosis and record metrics to history."""
     from .scheduler import Monitor
 
-    only_list = [s.strip() for s in only.split(",")] if only else None
+    only_list = _split_csv(only)
     cfg = dict(DEFAULT_CONFIG, external_ip=external_ip)
 
     def on_tick(diag):
@@ -483,11 +488,7 @@ def watch(
     from .alerting import FileAlertSink
     from .watch import LIGHT_PROBES, Watcher
 
-    probes = (
-        [s.strip() for s in light_probes.split(",")]
-        if light_probes
-        else list(LIGHT_PROBES)
-    )
+    probes = _split_csv(light_probes) or list(LIGHT_PROBES)
     cfg = dict(DEFAULT_CONFIG, external_ip=external_ip, dns_name=dns_name)
     sink = FileAlertSink(jsonl_path=Path(alert_file) if alert_file else None)
     default_state = Path.home() / ".netdiag" / "state.json"

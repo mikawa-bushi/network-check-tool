@@ -41,7 +41,7 @@ jobs:
       run: poetry install --only=dev
 
     - name: Run Black check
-      run: poetry run black --check --diff network_check_tool/
+      run: poetry run black --check --diff network_check_tool/ netdiag/
 
     - name: Run Black check on tests (if exists)
       run: |
@@ -49,6 +49,14 @@ jobs:
           poetry run black --check --diff tests/
         fi
       continue-on-error: false
+
+    - name: Run Ruff import-order check
+      # Enforce in CI the same import ordering the pre-commit gate applies, so a
+      # contributor who skips the local hooks is still caught. Pinned to the
+      # pre-commit ruff version; the scope (isort "I") comes from pyproject.
+      run: |
+        pip install ruff==0.15.17
+        ruff check --output-format=github .
 
   black-format:
     runs-on: ubuntu-latest
@@ -79,7 +87,7 @@ jobs:
 
     - name: Run Black formatter
       run: |
-        poetry run black network_check_tool/
+        poetry run black network_check_tool/ netdiag/
         if [ -d "tests" ]; then
           poetry run black tests/
         fi

@@ -110,7 +110,10 @@ def start_monitoring(hosts, interval):
 @click.argument("host")
 @click.option("--count", "-c", default=4, help="Number of pings to send")
 def ping(host, count):
-    """Send ping to a specific host"""
+    """Send pings to a host and record them in the monitoring database.
+
+    For a one-shot check that stores nothing, use ``netdiag ping`` instead.
+    """
     app = create_app()
 
     with app.app_context():
@@ -145,7 +148,11 @@ def ping(host, count):
 @click.option("--host", help="Filter by host")
 @click.option("--limit", "-l", default=10, help="Number of recent results to show")
 def status(host, limit):
-    """Show recent ping status"""
+    """Show recent ping results from the monitoring database.
+
+    This reads the network-checker store; ``netdiag status`` reports the separate
+    netdiag history DB.
+    """
     app = create_app()
 
     with app.app_context():

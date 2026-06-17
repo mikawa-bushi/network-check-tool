@@ -51,6 +51,13 @@ class Probe:
     what: str = ""
     why: str = ""
     manual_commands: List[str] = []
+    # Diagnosis narrative for when THIS probe is the root cause. Built-in probes
+    # are described in diagnosis/rules.py::RUNBOOKS; plugin probes (not in that
+    # table) supply their own here so they still get a "what it means / next
+    # steps" report. ``means`` falls back to ``why`` and ``runbook`` to
+    # ``manual_commands`` when left unset.
+    means: str = ""
+    runbook: List[str] = []
 
     def check(self, ctx: Context) -> CheckResult:  # pragma: no cover - abstract
         raise NotImplementedError

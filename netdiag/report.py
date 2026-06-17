@@ -24,6 +24,23 @@ _COLORS = {
 _RESET = "\033[0m"
 _BOLD = "\033[1m"
 
+# Human (terminal) section labels, centralised so the wording lives in one place
+# and a future locale switch has a single seam. The JSON/HTML renderers serve a
+# machine/archive audience and keep their own English keys (see render_json /
+# render_html); only this human channel is localised.
+_TERM = {
+    "healthy": "診断: 異常は見つかりませんでした。 All checks passed.",
+    "warn_only": "診断: 失敗はありませんが警告があります。",
+    "diagnosis_header": "━━━ 診断 (Diagnosis) ━━━",
+    "cause": "推定原因",
+    "confidence": "確信度",
+    "evidence": "根拠",
+    "runbook": "次の確認手順:",
+    "consequences": "これに連動して失敗した項目 (原因ではなく結果): ",
+    "reasoning": "推論過程:",
+    "confidence_levels": {"high": "高", "medium": "中", "low": "低"},
+}
+
 
 def render_terminal(diag: Diagnosis, color: bool = True, verbose: bool = False) -> str:
     def c(code: str) -> str:
@@ -40,45 +57,39 @@ def render_terminal(diag: Diagnosis, color: bool = True, verbose: bool = False) 
 
     lines.append("")
     if diag.healthy:
-        lines.append(
-            f"{c(_BOLD)}{c(_COLORS[Status.OK])}診断: 異常は見つかりませんでした。"
-            f" All checks passed.{c(_RESET)}"
-        )
+        lines.append(f"{c(_BOLD)}{c(_COLORS[Status.OK])}{_TERM['healthy']}{c(_RESET)}")
         return "\n".join(lines)
 
     if not diag.hypotheses:
-        lines.append(f"{c(_BOLD)}診断: 失敗はありませんが警告があります。{c(_RESET)}")
+        lines.append(f"{c(_BOLD)}{_TERM['warn_only']}{c(_RESET)}")
         return "\n".join(lines)
 
-    lines.append(f"{c(_BOLD)}━━━ 診断 (Diagnosis) ━━━{c(_RESET)}")
+    lines.append(f"{c(_BOLD)}{_TERM['diagnosis_header']}{c(_RESET)}")
     for i, h in enumerate(diag.hypotheses, 1):
         col = c(_COLORS[Status.FAIL] if h.confidence != "low" else _COLORS[Status.WARN])
         lines.append(
-            f"{col}{c(_BOLD)}{i}. 推定原因: {h.cause} — {h.summary} "
-            f"[確信度: {_confidence_ja(h.confidence)}]{c(_RESET)}"
+            f"{col}{c(_BOLD)}{i}. {_TERM['cause']}: {h.cause} — {h.summary} "
+            f"[{_TERM['confidence']}: {_confidence_ja(h.confidence)}]{c(_RESET)}"
         )
         for ev in h.evidence:
-            lines.append(f"     根拠: {ev}")
+            lines.append(f"     {_TERM['evidence']}: {ev}")
         steps = runbook_steps(h.cause)
         if steps:
-            lines.append("     次の確認手順:")
+            lines.append(f"     {_TERM['runbook']}")
             for s in steps:
                 lines.append(f"       - {s}")
         if h.consequences:
-            lines.append(
-                f"     これに連動して失敗した項目 (原因ではなく結果): "
-                f"{', '.join(h.consequences)}"
-            )
+            lines.append(f"     {_TERM['consequences']}{', '.join(h.consequences)}")
     if verbose and diag.reasoning:
         lines.append("")
-        lines.append(f"{c(_BOLD)}推論過程:{c(_RESET)}")
+        lines.append(f"{c(_BOLD)}{_TERM['reasoning']}{c(_RESET)}")
         for step in diag.reasoning:
             lines.append(f"  {step}")
     return "\n".join(lines)
 
 
 def _confidence_ja(conf: str) -> str:
-    return {"high": "高", "medium": "中", "low": "低"}.get(conf, conf)
+    return _TERM["confidence_levels"].get(conf, conf)
 
 
 def render_json(diag: Diagnosis) -> str:

@@ -8,18 +8,16 @@ baseline and change-point features have data to work with.
 
 from __future__ import annotations
 
-import logging
-import threading
-import time
 from typing import Callable, List, Optional
 
+from ._periodic import _PeriodicLoop
 from .diagnosis import Engine
 from .storage import Storage
 
-logger = logging.getLogger(__name__)
 
+class Monitor(_PeriodicLoop):
+    _tick_error_msg = "monitor tick failed"
 
-class Monitor:
     def __init__(
         self,
         config: Optional[dict] = None,
@@ -28,39 +26,16 @@ class Monitor:
         only: Optional[List[str]] = None,
         on_tick: Optional[Callable] = None,
     ) -> None:
+        super().__init__()
         self.engine = Engine(config=config or {})
         self.interval = interval
         self.storage = storage or Storage()
         self.only = only
         self.on_tick = on_tick
-        self._stop = threading.Event()
-        self._thread: Optional[threading.Thread] = None
 
-    def _loop(self) -> None:
-        while not self._stop.is_set():
-            start = time.time()
-            try:
-                diag = self.engine.run(only=self.only)
-                target = self.engine.config.get("external_ip")
-                self.storage.record_diagnosis(diag, target=target)
-                if self.on_tick:
-                    self.on_tick(diag)
-            except Exception:
-                # A single failed tick must not kill the monitor loop, but log
-                # it so the failure is observable instead of silently dropped.
-                logger.warning("monitor tick failed", exc_info=True)
-            # Sleep the remainder of the interval, waking promptly on stop().
-            elapsed = time.time() - start
-            self._stop.wait(max(0.0, self.interval - elapsed))
-
-    def start(self, background: bool = True) -> None:
-        if background:
-            self._thread = threading.Thread(target=self._loop, daemon=True)
-            self._thread.start()
-        else:
-            self._loop()
-
-    def stop(self) -> None:
-        self._stop.set()
-        if self._thread:
-            self._thread.join(timeout=2)
+    def _tick(self) -> None:
+        diag = self.engine.run(only=self.only)
+        target = self.engine.config.get("external_ip")
+        self.storage.record_diagnosis(diag, target=target)
+        if self.on_tick:
+            self.on_tick(diag)

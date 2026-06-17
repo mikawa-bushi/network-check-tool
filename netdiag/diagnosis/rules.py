@@ -9,7 +9,7 @@ from __future__ import annotations
 
 from typing import Dict, List, Tuple
 
-from ..core import CheckResult
+from ..core import CheckResult, get_probe
 
 # What each failing probe means + the manual steps to confirm/fix it.
 RUNBOOKS: Dict[str, Dict] = {
@@ -107,12 +107,33 @@ RUNBOOKS: Dict[str, Dict] = {
 }
 
 
+def _probe_runbook(cause: str) -> Dict:
+    """Narrative pulled from a probe's own class attributes.
+
+    Lets plugin probes (absent from ``RUNBOOKS``) still contribute a 'means' line
+    and next-steps, via their ``means``/``runbook`` (falling back to ``why``/
+    ``manual_commands``). Returns ``{}`` for an unknown cause.
+    """
+    cls = get_probe(cause)
+    if cls is None:
+        return {}
+    steps = list(getattr(cls, "runbook", []) or getattr(cls, "manual_commands", []))
+    return {
+        "means": getattr(cls, "means", "") or getattr(cls, "why", ""),
+        "steps": steps,
+    }
+
+
+def _runbook(cause: str) -> Dict:
+    """Built-in runbook for ``cause``, else the probe's own (for plugins)."""
+    return RUNBOOKS.get(cause) or _probe_runbook(cause)
+
+
 def explain_failure(
     root: CheckResult, by_name: Dict[str, CheckResult]
 ) -> Tuple[str, List[str]]:
     """Build a one-line cause summary plus supporting evidence bullets."""
-    rb = RUNBOOKS.get(root.name, {})
-    means = rb.get("means", root.summary)
+    means = _runbook(root.name).get("means") or root.summary
     evidence = [root.summary]
     # Cite the OK dependency that makes this the root (e.g. gateway OK -> dns is cause).
     for dep in root.depends_on:
@@ -123,4 +144,4 @@ def explain_failure(
 
 
 def runbook_steps(cause: str) -> List[str]:
-    return RUNBOOKS.get(cause, {}).get("steps", [])
+    return _runbook(cause).get("steps", [])

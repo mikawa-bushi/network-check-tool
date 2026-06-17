@@ -176,6 +176,14 @@ network-checker clear
 | `network-checker init` | Initialize the database | `network-checker init` |
 | `network-checker clear` | Clear all ping data | `network-checker clear` |
 
+> **`network-checker` vs `netdiag` — same words, different jobs.** Both ship a
+> `ping` and a `status` command, but they are not interchangeable:
+> - `network-checker ping`/`status` are about the **monitoring database** —
+>   `ping` records samples to SQLite, `status` lists recently stored results.
+> - `netdiag ping`/`status` are about **ad-hoc diagnosis** — `ping` is a
+>   one-shot ICMP check that stores nothing, `status` reports the netdiag
+>   history DB. Reach for `netdiag` to answer *why* something is down.
+
 ## 🌐 Web Dashboard
 
 After starting the server with `network-checker run-server`, access the dashboard at http://localhost:9991.
