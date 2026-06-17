@@ -7,7 +7,7 @@ from .config.config import Config
 from .services import SchedulerService
 
 
-@click.group()
+@click.group(context_settings={"help_option_names": ["-h", "--help"]})
 def cli():
     """Network Checker CLI - Monitor network hosts with ping"""
     pass
@@ -30,7 +30,6 @@ def _is_loopback(host: str) -> bool:
 @cli.command("run-server")
 @click.option(
     "--host",
-    "-h",
     default="127.0.0.1",
     help="Host to bind to (default: localhost only; use 0.0.0.0 to expose on the network)",
 )
@@ -121,8 +120,11 @@ def ping(host, count):
 
         click.echo(f"Pinging {host} {count} times...")
 
+        # Add each sample to the session but commit once after the loop: a batch
+        # of N ad-hoc pings is one transaction instead of N. The result object's
+        # attributes are populated before commit, so per-ping output is unaffected.
         for i in range(count):
-            result = ping_service.ping_and_save(host)
+            result = ping_service.ping_and_save(host, commit=False)
 
             if result.packet_loss:
                 click.echo(f"Ping {i+1}: Request timeout ({result.error_message})")
@@ -133,6 +135,10 @@ def ping(host, count):
                 import time
 
                 time.sleep(1)
+
+        from .models import db
+
+        db.session.commit()
 
 
 @cli.command()

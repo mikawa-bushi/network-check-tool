@@ -14,7 +14,7 @@ from __future__ import annotations
 
 from concurrent.futures import ThreadPoolExecutor
 from dataclasses import dataclass, field
-from typing import Dict, List, Optional, Tuple, Type
+from typing import Callable, Dict, List, Optional, Tuple, Type
 
 from ..core import CheckResult, Context, Probe, Status, all_probes, get_probe
 
@@ -190,7 +190,14 @@ class Engine:
         only: Optional[List[str]] = None,
         skip: Optional[List[str]] = None,
         jobs: int = 1,
+        on_probe: Optional[Callable[[str], None]] = None,
     ) -> Diagnosis:
+        """Run the selected probes and diagnose.
+
+        ``on_probe(name)``, if given, is called in the main thread just before each
+        probe is dispatched -- a hook for CLI progress feedback. It never runs
+        inside a worker thread, so it can safely write to a shared stream.
+        """
         ctx = Context(dict(self.config))
         names = self.select(only=only, skip=skip)
         order = _topo_order(names)
@@ -203,6 +210,8 @@ class Engine:
             # Serial: evaluate in topological order, recording each result before
             # the next probe so dependency gates see it.
             for name in order:
+                if on_probe is not None:
+                    on_probe(name)
                 res, reason = self._evaluate_probe(name, ctx)
                 if res is not None:
                     ctx.results[name] = res
@@ -217,6 +226,9 @@ class Engine:
             # unread key, is an atomic, dead side-effect.) Each tier commits in the
             # main thread between tiers, so reads never race a write.
             for tier in _dependency_tiers(order, names):
+                if on_probe is not None:
+                    for name in tier:  # announce the whole tier before it runs
+                        on_probe(name)
                 if len(tier) == 1:
                     name = tier[0]
                     tier_out = {name: self._evaluate_probe(name, ctx)}

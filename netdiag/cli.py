@@ -133,7 +133,12 @@ def cli(verbose: bool, log_file: Optional[str]) -> None:
     "--format", "fmt", type=click.Choice(["text", "json", "html"]), default="text"
 )
 @click.option("--output", type=click.Path(), help="Write the report to a file.")
-@click.option("--verbose", is_flag=True, help="Show the engine's reasoning steps.")
+@click.option(
+    "--reasoning",
+    is_flag=True,
+    help="Show the engine's step-by-step reasoning in the report. "
+    "(Distinct from the global -v/--verbose, which controls logging.)",
+)
 @click.option("--save/--no-save", default=False, help="Record metrics to history db.")
 @click.option("--no-color", is_flag=True, help="Disable ANSI colour.")
 @click.option(
@@ -152,7 +157,7 @@ def check(
     skip,
     fmt,
     output,
-    verbose,
+    reasoning,
     save,
     no_color,
     jobs,
@@ -162,8 +167,18 @@ def check(
     only_list = [s.strip() for s in only.split(",")] if only else None
     skip_list = [s.strip() for s in skip.split(",")] if skip else None
 
-    engine = Engine(config=cfg, verbose=verbose)
-    diag = engine.run(only=only_list, skip=skip_list, jobs=jobs)
+    # Progress feedback for long sweeps -- only to stderr, only on a TTY, and only
+    # for text output, so a redirected report (or json/html) stays clean.
+    on_probe = None
+    if fmt == "text" and sys.stderr.isatty():
+
+        def on_probe(name):
+            click.echo(f"\r\033[K… {name}", nl=False, err=True)
+
+    engine = Engine(config=cfg, verbose=reasoning)
+    diag = engine.run(only=only_list, skip=skip_list, jobs=jobs, on_probe=on_probe)
+    if on_probe is not None:
+        click.echo("\r\033[K", nl=False, err=True)  # clear the progress line
 
     if save:
         with Storage() as st:
@@ -175,7 +190,7 @@ def check(
         text = report_mod.render_html(diag)
     else:
         color = sys.stdout.isatty() and not no_color
-        text = report_mod.render_terminal(diag, color=color, verbose=verbose)
+        text = report_mod.render_terminal(diag, color=color, verbose=reasoning)
 
     if output:
         Path(output).write_text(text)
@@ -351,15 +366,20 @@ def peer_test(address, port, count, throughput):
 @cli.command()
 @click.argument("path", type=click.Path(exists=True))
 @click.option("--format", "fmt", type=click.Choice(["text", "json"]), default="text")
-@click.option("--verbose", is_flag=True)
-def scenario(path, fmt, verbose):
+@click.option(
+    "--reasoning",
+    is_flag=True,
+    help="Show the engine's step-by-step reasoning in the report.",
+)
+@click.option("--no-color", is_flag=True, help="Disable ANSI colour.")
+def scenario(path, fmt, reasoning, no_color):
     """Run a declarative YAML/JSON diagnosis scenario."""
     from .scenario import load_scenario, merged_config
 
     sc = load_scenario(path)
     cfg = dict(DEFAULT_CONFIG)
     cfg.update(merged_config(sc))
-    engine = Engine(config=cfg, verbose=verbose)
+    engine = Engine(config=cfg, verbose=reasoning)
     diag = engine.run(only=sc.probe_names)
     click.echo(f"# {sc.name}")
     if sc.description:
@@ -367,9 +387,8 @@ def scenario(path, fmt, verbose):
     if fmt == "json":
         click.echo(report_mod.render_json(diag))
     else:
-        click.echo(
-            report_mod.render_terminal(diag, color=sys.stdout.isatty(), verbose=verbose)
-        )
+        color = sys.stdout.isatty() and not no_color
+        click.echo(report_mod.render_terminal(diag, color=color, verbose=reasoning))
     sys.exit(0 if diag.healthy else 1)
 
 

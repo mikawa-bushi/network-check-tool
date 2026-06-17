@@ -163,7 +163,8 @@ baselining while history stays bounded over months. Run it by hand any time with
 
 - `--only a,b,c` / `--skip a,b` — restrict the probe set.
 - `--format text|json|html` and `--output FILE`.
-- `--verbose` — show the engine's step-by-step reasoning.
+- `--reasoning` — show the engine's step-by-step reasoning in the report.
+  (The global `-v`/`--verbose` is separate: it controls netdiag's logging.)
 - `--save` — record every metric to the history DB for baselining.
 
 ## Key features, and what they isolate

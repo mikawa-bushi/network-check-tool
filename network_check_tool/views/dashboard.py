@@ -1,6 +1,8 @@
 import json
+import math
 import threading
-from datetime import timedelta
+from collections import namedtuple
+from datetime import timedelta, timezone
 
 import plotly
 import plotly.graph_objects as go
@@ -23,6 +25,54 @@ _PLOTLY_JS_LOCK = threading.Lock()
 HOURS_MIN = 1
 HOURS_MAX = 168  # one week
 HOURS_DEFAULT = 24
+
+# Cap on the number of points handed to the chart/data endpoints. Beyond this the
+# raw rows are bucketed and averaged (see ``_downsample``) so the JSON payload and
+# the browser-side render stay bounded no matter how long the window or how short
+# the ping interval -- the dashboard re-fetches on a 30s timer.
+MAX_CHART_POINTS = 2000
+
+# A plotted point decoupled from the ORM row, carrying a tz-aware UTC timestamp so
+# Plotly/the browser never reads a naive value as the viewer's local time.
+_Point = namedtuple("_Point", ["timestamp", "response_time", "packet_loss"])
+
+
+def _as_utc(dt):
+    """Tag a naive ``datetime`` as UTC (timestamps are stored naive-UTC)."""
+    return dt.replace(tzinfo=timezone.utc) if dt.tzinfo is None else dt
+
+
+def _downsample(results, max_points=MAX_CHART_POINTS):
+    """Thin a time-ordered ``PingResult`` list to at most ~``max_points`` points.
+
+    At or below the cap the rows pass through unchanged (callers get the exact
+    same series). Above it, rows are grouped into uniform index buckets; each
+    bucket emits the average RTT of its successful samples (when any) and, if it
+    contained any packet loss, one loss marker -- so outages stay visible no
+    matter how aggressively the successful samples are thinned.
+    """
+    n = len(results)
+    if n <= max_points:
+        return [
+            _Point(_as_utc(r.timestamp), r.response_time, r.packet_loss)
+            for r in results
+        ]
+    points = []
+    bucket = math.ceil(n / max_points)
+    for start in range(0, n, bucket):
+        chunk = results[start : start + bucket]
+        oks = [
+            r.response_time
+            for r in chunk
+            if not r.packet_loss and r.response_time is not None
+        ]
+        if oks:
+            points.append(
+                _Point(_as_utc(chunk[0].timestamp), sum(oks) / len(oks), False)
+            )
+        if any(r.packet_loss for r in chunk):
+            points.append(_Point(_as_utc(chunk[-1].timestamp), None, True))
+    return points
 
 
 def _parse_hours():
@@ -110,15 +160,17 @@ def get_ping_data():
     if not results:
         return jsonify({"error": "No data found for the specified host"}), 404
 
-    # Prepare data for plotting
-    timestamps = []
-    response_times = []
-    packet_losses = []
+    # Plotted series come from the (possibly thinned) points; their timestamps are
+    # tz-aware UTC so the browser cannot mis-read them as local time.
+    points = _downsample(results)
+    timestamps = [p.timestamp.isoformat() for p in points]
+    response_times = [p.response_time if not p.packet_loss else None for p in points]
+    packet_losses = [1 if p.packet_loss else 0 for p in points]
 
-    for result in results:
-        timestamps.append(result.timestamp.isoformat())
-        response_times.append(result.response_time if not result.packet_loss else None)
-        packet_losses.append(1 if result.packet_loss else 0)
+    # Headline counts are computed from the raw rows so they stay exact regardless
+    # of any downsampling applied to the plotted series above.
+    total = len(results)
+    loss_count = sum(1 for r in results if r.packet_loss)
 
     return jsonify(
         {
@@ -126,11 +178,10 @@ def get_ping_data():
             "timestamps": timestamps,
             "response_times": response_times,
             "packet_losses": packet_losses,
-            "total_pings": len(results),
-            "successful_pings": sum(1 for r in results if not r.packet_loss),
-            "packet_loss_rate": (
-                (sum(packet_losses) / len(packet_losses)) * 100 if packet_losses else 0
-            ),
+            "total_pings": total,
+            "successful_pings": total - loss_count,
+            "packet_loss_rate": ((loss_count / total) * 100 if total else 0),
+            "downsampled": len(points) != total,
         }
     )
 
@@ -158,17 +209,19 @@ def get_ping_chart():
     if not results:
         return jsonify({"error": "No data found"}), 404
 
-    # Separate successful pings and packet losses
+    # Separate successful pings and packet losses. Points carry tz-aware UTC
+    # timestamps and are thinned to a bounded count for long windows.
+    points = _downsample(results)
     successful_times = []
     successful_response_times = []
     failed_times = []
 
-    for result in results:
-        if result.packet_loss:
-            failed_times.append(result.timestamp)
+    for p in points:
+        if p.packet_loss:
+            failed_times.append(p.timestamp)
         else:
-            successful_times.append(result.timestamp)
-            successful_response_times.append(result.response_time)
+            successful_times.append(p.timestamp)
+            successful_response_times.append(p.response_time)
 
     # Create plotly figure
     fig = go.Figure()
@@ -204,7 +257,7 @@ def get_ping_chart():
 
     fig.update_layout(
         title=f"Ping Results for {host} (Last {hours} hours)",
-        xaxis_title="Time",
+        xaxis_title="Time (UTC)",
         yaxis_title="Response Time (ms)",
         template="plotly_white",
         hovermode="x unified",
