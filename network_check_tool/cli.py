@@ -1,3 +1,4 @@
+import json
 import os
 
 import click
@@ -109,7 +110,10 @@ def start_monitoring(hosts, interval):
 @cli.command()
 @click.argument("host")
 @click.option("--count", "-c", default=4, help="Number of pings to send")
-def ping(host, count):
+@click.option(
+    "--json", "as_json", is_flag=True, help="Output results as JSON (UTC timestamps)."
+)
+def ping(host, count, as_json):
     """Send pings to a host and record them in the monitoring database.
 
     For a one-shot check that stores nothing, use ``netdiag ping`` instead.
@@ -117,37 +121,48 @@ def ping(host, count):
     app = create_app()
 
     with app.app_context():
+        from .models import db
         from .services import PingService
 
         ping_service = PingService(timeout=Config.PING_TIMEOUT)
 
-        click.echo(f"Pinging {host} {count} times...")
+        if not as_json:
+            click.echo(f"Pinging {host} {count} times...")
 
         # Add each sample to the session but commit once after the loop: a batch
         # of N ad-hoc pings is one transaction instead of N. The result object's
         # attributes are populated before commit, so per-ping output is unaffected.
+        results = []
         for i in range(count):
             result = ping_service.ping_and_save(host, commit=False)
 
-            if result.packet_loss:
-                click.echo(f"Ping {i+1}: Request timeout ({result.error_message})")
-            else:
-                click.echo(f"Ping {i+1}: {result.response_time:.2f}ms")
+            if not as_json:
+                if result.packet_loss:
+                    click.echo(f"Ping {i+1}: Request timeout ({result.error_message})")
+                else:
+                    click.echo(f"Ping {i+1}: {result.response_time:.2f}ms")
+
+            results.append(result)
 
             if i < count - 1:
                 import time
 
                 time.sleep(1)
 
-        from .models import db
-
         db.session.commit()
+
+        if as_json:
+            # Emitted after commit so each row carries its assigned id.
+            click.echo(json.dumps([r.to_dict() for r in results], ensure_ascii=False))
 
 
 @cli.command()
 @click.option("--host", help="Filter by host")
 @click.option("--limit", "-l", default=10, help="Number of recent results to show")
-def status(host, limit):
+@click.option(
+    "--json", "as_json", is_flag=True, help="Output results as JSON (UTC timestamps)."
+)
+def status(host, limit, as_json):
     """Show recent ping results from the monitoring database.
 
     This reads the network-checker store; ``netdiag status`` reports the separate
@@ -166,6 +181,11 @@ def status(host, limit):
             query = query.filter(PingResult.target_host == host)
 
         results = query.order_by(desc(PingResult.timestamp)).limit(limit).all()
+
+        if as_json:
+            # Empty result set is a valid [] rather than the human "no results" line.
+            click.echo(json.dumps([r.to_dict() for r in results], ensure_ascii=False))
+            return
 
         if not results:
             click.echo("No ping results found.")

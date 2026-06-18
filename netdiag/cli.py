@@ -7,6 +7,7 @@ layered sweep and prints the root cause and next steps. Everything else
 
 from __future__ import annotations
 
+import json
 import logging
 import sys
 import time
@@ -295,7 +296,8 @@ def snapshot_list():
 
 @snapshot.command("diff")
 @click.argument("name", default="default")
-def snapshot_diff(name):
+@click.option("--format", "fmt", type=click.Choice(["text", "json"]), default="text")
+def snapshot_diff(name, fmt):
     """Diff a saved snapshot against the current configuration."""
     from . import snapshot as snap
 
@@ -309,6 +311,12 @@ def snapshot_diff(name):
         sys.exit(1)
     current = snap.capture()
     d = snap.diff_snapshots(baseline, current)
+
+    if fmt == "json":
+        # Same exit-code contract as the text form: 0 = no change, 2 = changed.
+        click.echo(json.dumps(d.to_dict(), ensure_ascii=False, indent=2))
+        sys.exit(2 if d.any_change else 0)
+
     if not d.any_change:
         click.echo(
             f"no configuration changes since '{name}' " f"(saved {d.baseline_time})."
@@ -462,6 +470,19 @@ def monitor(interval, external_ip, only):
     default=True,
     help="On degradation, run the full diagnosis once for the root cause.",
 )
+@click.option(
+    "--webhook-url", default=None, help="Also POST each alert as JSON to this URL."
+)
+@click.option(
+    "--slack-url",
+    default=None,
+    help="Also post a one-line alert to this Slack incoming-webhook URL.",
+)
+@click.option(
+    "--desktop",
+    is_flag=True,
+    help="Also show OS desktop notifications (notify-send / osascript).",
+)
 @click.option("--save/--no-save", default=True, help="Record metrics to history db.")
 @click.option("--once", is_flag=True, help="Run a single tick and exit (for testing).")
 def watch(
@@ -474,6 +495,9 @@ def watch(
     fail_threshold,
     recover_threshold,
     escalate,
+    webhook_url,
+    slack_url,
+    desktop,
     save,
     once,
 ):
@@ -485,12 +509,29 @@ def watch(
     """
     from pathlib import Path
 
-    from .alerting import FileAlertSink
+    from .alerting import (
+        DesktopSink,
+        FileAlertSink,
+        MultiSink,
+        SlackSink,
+        WebhookSink,
+    )
     from .watch import LIGHT_PROBES, Watcher
 
     probes = _split_csv(light_probes) or list(LIGHT_PROBES)
     cfg = dict(DEFAULT_CONFIG, external_ip=external_ip, dns_name=dns_name)
-    sink = FileAlertSink(jsonl_path=Path(alert_file) if alert_file else None)
+
+    # The file sink is always present (it owns the on-disk JSONL/log); optional
+    # push channels are added only when requested and fanned out via MultiSink.
+    file_sink = FileAlertSink(jsonl_path=Path(alert_file) if alert_file else None)
+    extra_sinks = []
+    if webhook_url:
+        extra_sinks.append(WebhookSink(webhook_url))
+    if slack_url:
+        extra_sinks.append(SlackSink(slack_url))
+    if desktop:
+        extra_sinks.append(DesktopSink())
+    sink = file_sink if not extra_sinks else MultiSink([file_sink, *extra_sinks])
     default_state = Path.home() / ".netdiag" / "state.json"
     state_path = Path(state_file) if state_file else default_state
 
@@ -524,7 +565,15 @@ def watch(
         watcher.stop()
         return
 
-    click.echo(f"watching every {interval}s — alerts → {sink.jsonl_path}")
+    channels = ", ".join(
+        ["file"]
+        + (["webhook"] if webhook_url else [])
+        + (["slack"] if slack_url else [])
+        + (["desktop"] if desktop else [])
+    )
+    click.echo(
+        f"watching every {interval}s — alerts → {file_sink.jsonl_path} [{channels}]"
+    )
     click.echo(
         f"flap damping: {fail_threshold} bad → DEGRADED, "
         f"{recover_threshold} good → RECOVERED. Ctrl-C to stop."

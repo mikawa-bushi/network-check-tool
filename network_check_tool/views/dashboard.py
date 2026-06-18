@@ -1,3 +1,5 @@
+import csv
+import io
 import json
 import math
 import threading
@@ -7,8 +9,15 @@ from datetime import timedelta, timezone
 import plotly
 import plotly.graph_objects as go
 import plotly.utils
-from flask import Blueprint, Response, jsonify, render_template, request
-from sqlalchemy import func
+from flask import (
+    Blueprint,
+    Response,
+    jsonify,
+    render_template,
+    request,
+    stream_with_context,
+)
+from sqlalchemy import case, func
 
 from ..models import PingResult, db
 from ..utils import utcnow
@@ -326,3 +335,117 @@ def get_stats():
             "max_response_time": float(max_v) if max_v is not None else 0,
         }
     )
+
+
+def _safe_filename(host):
+    """A filesystem-safe filename stem derived from a host label."""
+    return "".join(c if (c.isalnum() or c in ".-_") else "_" for c in host) or "host"
+
+
+@dashboard_bp.route("/api/export")
+def export_data():
+    """Stream a host's raw ping rows as CSV for spreadsheets/offline analysis.
+
+    Rows are streamed (not buffered) so a long window stays memory-bounded.
+    Timestamps are explicit UTC, matching the chart endpoints.
+    """
+    fmt = request.args.get("format", "csv").lower()
+    if fmt != "csv":
+        return jsonify({"error": "Only format=csv is supported"}), 400
+    parsed, error = _host_window(require_host=True)
+    if error:
+        return error
+    host, _hours, since = parsed
+    query = _window_query(host, since)
+
+    def rows():
+        buf = io.StringIO()
+        writer = csv.writer(buf)
+
+        def flush():
+            data = buf.getvalue()
+            buf.seek(0)
+            buf.truncate(0)
+            return data
+
+        writer.writerow(
+            ["timestamp_utc", "response_time_ms", "packet_loss", "error_message"]
+        )
+        yield flush()
+        for r in query:
+            writer.writerow(
+                [
+                    _as_utc(r.timestamp).isoformat(),
+                    "" if r.response_time is None else r.response_time,
+                    int(bool(r.packet_loss)),
+                    r.error_message or "",
+                ]
+            )
+            yield flush()
+
+    filename = f"ping_{_safe_filename(host)}.csv"
+    return Response(
+        stream_with_context(rows()),
+        mimetype="text/csv",
+        headers={"Content-Disposition": f'attachment; filename="{filename}"'},
+    )
+
+
+def _prom_escape(value):
+    """Escape a Prometheus label value (backslash, quote, newline)."""
+    return value.replace("\\", "\\\\").replace('"', '\\"').replace("\n", "\\n")
+
+
+@dashboard_bp.route("/metrics")
+def metrics():
+    """Prometheus text exposition of per-host ping health over the window.
+
+    Pull-based and dependency-free. Default window is the last hour; override
+    with ``?hours=``. Per host:
+      ``network_ping_up``         1 if any ping succeeded in the window, else 0
+      ``network_ping_loss_ratio`` fraction of pings lost (0..1)
+      ``network_ping_rtt_ms``     average RTT of successful pings (ms)
+    """
+    raw = request.args.get("hours", 1)  # metrics default to a short, recent window
+    try:
+        hours = max(HOURS_MIN, min(int(raw), HOURS_MAX))
+    except (TypeError, ValueError):
+        return jsonify({"error": "Invalid 'hours' parameter; must be an integer"}), 400
+    since = utcnow() - timedelta(hours=hours)
+
+    loss_count = func.sum(case((PingResult.packet_loss.is_(True), 1), else_=0))
+    rtt_avg = func.avg(
+        case((PingResult.packet_loss.is_(False), PingResult.response_time))
+    )
+    grouped = (
+        db.session.query(PingResult.target_host, func.count(), loss_count, rtt_avg)
+        .filter(PingResult.timestamp >= since)
+        .group_by(PingResult.target_host)
+        .all()
+    )
+
+    up_lines = [
+        "# HELP network_ping_up 1 if the host had any successful ping in the window.",
+        "# TYPE network_ping_up gauge",
+    ]
+    loss_lines = [
+        "# HELP network_ping_loss_ratio Fraction of pings lost in the window (0-1).",
+        "# TYPE network_ping_loss_ratio gauge",
+    ]
+    rtt_lines = [
+        "# HELP network_ping_rtt_ms Average RTT of successful pings in the window (ms).",
+        "# TYPE network_ping_rtt_ms gauge",
+    ]
+    for host, total, losses, rtt in grouped:
+        total = total or 0
+        losses = int(losses or 0)
+        label = f'host="{_prom_escape(host)}"'
+        up_lines.append(f"network_ping_up{{{label}}} {1 if total - losses > 0 else 0}")
+        loss_lines.append(
+            f"network_ping_loss_ratio{{{label}}} {(losses / total) if total else 0.0}"
+        )
+        if rtt is not None:
+            rtt_lines.append(f"network_ping_rtt_ms{{{label}}} {float(rtt)}")
+
+    body = "\n".join(up_lines + loss_lines + rtt_lines) + "\n"
+    return Response(body, mimetype="text/plain; version=0.0.4; charset=utf-8")
