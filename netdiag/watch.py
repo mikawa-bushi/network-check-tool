@@ -16,10 +16,10 @@ change-point analysis keep working.
 from __future__ import annotations
 
 import logging
-import threading
 import time
 from typing import Callable, List, Optional
 
+from ._periodic import _PeriodicLoop
 from .alerting import AlertSink, FileAlertSink, StateMachine, Transition
 from .diagnosis import Engine, runbook_steps
 from .storage import Storage
@@ -32,7 +32,9 @@ logger = logging.getLogger(__name__)
 LIGHT_PROBES = ["interface", "gateway", "external", "dns"]
 
 
-class Watcher:
+class Watcher(_PeriodicLoop):
+    _tick_error_msg = "watcher tick failed"
+
     def __init__(
         self,
         config: Optional[dict] = None,
@@ -50,6 +52,7 @@ class Watcher:
         retention_rollup_days: float = 90,
         maintenance_interval: float = 3600.0,
     ) -> None:
+        super().__init__()
         self.engine = Engine(config=config or {})
         self.interval = interval
         self.light_probes = light_probes or LIGHT_PROBES
@@ -66,8 +69,6 @@ class Watcher:
         self.retention_rollup_days = retention_rollup_days
         self.maintenance_interval = maintenance_interval
         self._last_maintenance = time.time()
-        self._stop = threading.Event()
-        self._thread: Optional[threading.Thread] = None
 
     # -- one observation ------------------------------------------------------
     def tick(self) -> Optional[Transition]:
@@ -140,29 +141,10 @@ class Watcher:
             # Maintenance failure must not stop the watcher; record it.
             logger.warning("storage maintenance (retention) failed", exc_info=True)
 
-    def _loop(self) -> None:
-        while not self._stop.is_set():
-            start = time.time()
-            try:
-                self.tick()
-                self._maybe_maintain()
-            except Exception:
-                # A single failed tick must never kill the watcher, but log it
-                # so silent failures are observable.
-                logger.warning("watcher tick failed", exc_info=True)
-            elapsed = time.time() - start
-            self._stop.wait(max(0.0, self.interval - elapsed))
+    def _tick(self) -> None:
+        self.tick()
+        self._maybe_maintain()
 
-    def start(self, background: bool = True) -> None:
-        if background:
-            self._thread = threading.Thread(target=self._loop, daemon=True)
-            self._thread.start()
-        else:
-            self._loop()
-
-    def stop(self) -> None:
-        self._stop.set()
-        if self._thread:
-            self._thread.join(timeout=2)
+    def _on_stop(self) -> None:
         if self.storage is not None:
             self.storage.close()

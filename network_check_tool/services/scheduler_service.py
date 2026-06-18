@@ -14,7 +14,7 @@ logger = logging.getLogger(__name__)
 DEFAULT_SCHEDULER_MAX_WORKERS = 4
 
 
-def _run_ping_job(app, ping_service: "PingService", host: str):
+def _run_ping_job(app, ping_service: "PingService", host: str, alerter=None):
     """Module-level job target executed by an APScheduler worker thread.
 
     Two reasons this lives at module scope instead of being a bound method:
@@ -39,6 +39,10 @@ def _run_ping_job(app, ping_service: "PingService", host: str):
             f"Ping result for {host}: {result.response_time}ms, "
             f"packet_loss: {result.packet_loss}"
         )
+        # Threshold alerting (F3): feed the sample to this host's state machine,
+        # which emits a DEGRADED/RECOVERED alert only on a confirmed change.
+        if alerter is not None:
+            alerter.observe(result.packet_loss, result.response_time)
     except Exception as e:
         logger.error(f"Error pinging {host}: {e}")
 
@@ -49,6 +53,8 @@ class SchedulerService:
         app=None,
         timeout: Optional[float] = None,
         max_workers: Optional[int] = None,
+        sink=None,
+        diagnose: bool = False,
     ):
         # MemoryJobStore (not SQLAlchemyJobStore): ``start-monitoring`` re-registers
         # every job on each launch via ``add_ping_job``, so persisting jobs across
@@ -78,6 +84,11 @@ class SchedulerService:
 
         # Flask app whose context each job pushes before touching the DB session.
         self.app = app
+        # Optional alert sink (netdiag AlertSink). When set, each ping job is given
+        # a per-host HostAlerter and threshold breaches emit DEGRADED/RECOVERED.
+        self.sink = sink
+        # When True, a confirmed degradation also runs a netdiag sweep (F1).
+        self.diagnose = diagnose
         # Forward the caller-provided timeout (e.g. Config.PING_TIMEOUT, injected at
         # the CLI edge) to PingService; fall back to its built-in default when unset
         # so the library layer never has to read global configuration itself (M2).
@@ -86,8 +97,9 @@ class SchedulerService:
         )
         self.is_running = False
 
-        # Configure logging
-        logging.basicConfig(level=logging.INFO)
+        # Use a module logger only. A service/library must not call
+        # logging.basicConfig -- that reconfigures the root logger as a global
+        # side effect of construction. The CLI entry point owns logging setup.
         self.logger = logging.getLogger(__name__)
 
     def start(self):
@@ -102,16 +114,37 @@ class SchedulerService:
             self.is_running = False
             self.logger.info("Scheduler stopped")
 
-    def add_ping_job(self, host: str, interval: int = 60, job_id: Optional[str] = None):
+    def add_ping_job(
+        self,
+        host: str,
+        interval: int = 60,
+        job_id: Optional[str] = None,
+        rtt_warn_ms: Optional[float] = None,
+        loss_warn_pct: Optional[float] = None,
+    ):
         if job_id is None:
             job_id = f"ping_{host}"
+
+        # Build a per-host alerter only when a sink is configured; the alerter is
+        # passed as a plain job arg (the in-memory jobstore never pickles it).
+        alerter = None
+        if self.sink is not None:
+            from .alerting import HostAlerter
+
+            alerter = HostAlerter(
+                host,
+                self.sink,
+                rtt_warn_ms=rtt_warn_ms,
+                loss_warn_pct=loss_warn_pct,
+                diagnose=self.diagnose,
+            )
 
         self.scheduler.add_job(
             func=_run_ping_job,
             trigger="interval",
             seconds=interval,
             id=job_id,
-            args=[self.app, self.ping_service, host],
+            args=[self.app, self.ping_service, host, alerter],
             replace_existing=True,
         )
 

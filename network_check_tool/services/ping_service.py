@@ -66,7 +66,7 @@ class PingService:
             "error_message": None,
         }
 
-    def save_ping_result(self, result: Dict) -> PingResult:
+    def save_ping_result(self, result: Dict, commit: bool = True) -> PingResult:
         ping_result = PingResult(
             target_host=result["host"],
             timestamp=result["timestamp"],
@@ -76,9 +76,14 @@ class PingService:
         )
 
         db.session.add(ping_result)
-        db.session.commit()
+        # ``commit=False`` lets a batch caller (e.g. ``ping --count N``) add many
+        # rows and commit once. The default keeps the monitoring scheduler's
+        # one-row-per-job behaviour unchanged. The returned object's attributes are
+        # readable before the commit, so callers can report each result immediately.
+        if commit:
+            db.session.commit()
         return ping_result
 
-    def ping_and_save(self, host: str) -> PingResult:
+    def ping_and_save(self, host: str, commit: bool = True) -> PingResult:
         result = self.ping_host(host)
-        return self.save_ping_result(result)
+        return self.save_ping_result(result, commit=commit)

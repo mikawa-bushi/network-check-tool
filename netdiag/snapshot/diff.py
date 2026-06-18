@@ -59,6 +59,28 @@ class SnapshotDiff:
     def any_change(self) -> bool:
         return any(d.changed for d in self.diffs)
 
+    def to_dict(self) -> Dict:
+        """JSON-friendly view: only the changed sources, framed for triage.
+
+        Note: this is a per-source line diff (added/removed config lines), not an
+        ok->fail status transition -- snapshots capture configuration, not health.
+        """
+        return {
+            "baseline_time": self.baseline_time,
+            "current_time": self.current_time,
+            "any_change": self.any_change,
+            "changed": [
+                {
+                    "key": d.key,
+                    "label": d.label,
+                    "why": d.why,
+                    "added": d.added,
+                    "removed": d.removed,
+                }
+                for d in self.changed
+            ],
+        }
+
 
 def _line_diff(old: Optional[str], new: Optional[str]) -> (List[str], List[str]):
     old_lines = (old or "").splitlines()

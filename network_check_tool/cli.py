@@ -1,3 +1,4 @@
+import json
 import os
 
 import click
@@ -7,7 +8,7 @@ from .config.config import Config
 from .services import SchedulerService
 
 
-@click.group()
+@click.group(context_settings={"help_option_names": ["-h", "--help"]})
 def cli():
     """Network Checker CLI - Monitor network hosts with ping"""
     pass
@@ -30,7 +31,6 @@ def _is_loopback(host: str) -> bool:
 @cli.command("run-server")
 @click.option(
     "--host",
-    "-h",
     default="127.0.0.1",
     help="Host to bind to (default: localhost only; use 0.0.0.0 to expose on the network)",
 )
@@ -55,15 +55,75 @@ def run_server(host, port, debug):
             "control, and do not use --debug.",
             err=True,
         )
-    app = create_app("development" if debug else "production")
+    # Enable the in-process monitoring scheduler (host-management API) only on a
+    # loopback bind and outside debug mode: the write API has no auth, and the
+    # debug reloader would otherwise spawn a second scheduler in the child process.
+    enable_scheduler = _is_loopback(host) and not debug
+    app = create_app(
+        "development" if debug else "production",
+        register_scheduler=enable_scheduler,
+    )
+    if enable_scheduler:
+        click.echo("Host-management API enabled (POST/DELETE /api/hosts).", err=True)
     app.run(host=host, port=port, debug=debug)
 
 
 @cli.command()
-@click.argument("hosts", nargs=-1, required=True)
+@click.argument("hosts", nargs=-1, required=False)
 @click.option("--interval", "-i", default=60, help="Ping interval in seconds")
-def start_monitoring(hosts, interval):
-    """Start monitoring specified hosts"""
+@click.option(
+    "--config",
+    "config_path",
+    type=click.Path(exists=True, dir_okay=False),
+    default=None,
+    help="TOML/JSON file declaring hosts with per-host interval/thresholds.",
+)
+@click.option(
+    "--alert-file",
+    "alert_file",
+    type=click.Path(dir_okay=False),
+    default=None,
+    help="Write threshold alerts (DEGRADED/RECOVERED) as JSONL to this path.",
+)
+@click.option(
+    "--diagnose",
+    is_flag=True,
+    default=False,
+    help="On a confirmed degradation, run netdiag once and attach the root cause.",
+)
+def start_monitoring(hosts, interval, config_path, alert_file, diagnose):
+    """Start monitoring hosts (positional args, or a --config file).
+
+    Without --config, each positional host shares the single --interval. With
+    --config, each host carries its own interval and warning thresholds
+    (rtt_warn_ms / loss_warn_pct), which raise DEGRADED/RECOVERED alerts.
+    """
+    # Resolve the host list: a --config file (per-host interval) takes precedence
+    # over positional args (shared --interval). One or the other is required.
+    if config_path:
+        from .config.hosts import load_hosts
+
+        try:
+            host_configs = load_hosts(config_path, default_interval=interval)
+        except (ValueError, OSError) as e:
+            # Fail loudly rather than start up monitoring nothing.
+            click.echo(f"Error: invalid --config {config_path}: {e}", err=True)
+            raise SystemExit(1)
+    elif hosts:
+        from .config.hosts import HostConfig
+
+        host_configs = [HostConfig(name=h, interval=interval) for h in hosts]
+    else:
+        raise click.UsageError("provide one or more HOSTS or --config PATH")
+
+    # Threshold alerts (DEGRADED/RECOVERED) are written to a JSONL sink; per-host
+    # thresholds come from the config file. The default path lives under ~/.netdiag.
+    from pathlib import Path
+
+    from netdiag.alerting import FileAlertSink
+
+    sink = FileAlertSink(jsonl_path=Path(alert_file) if alert_file else None)
+
     app = create_app()
 
     with app.app_context():
@@ -75,6 +135,8 @@ def start_monitoring(hosts, interval):
             app=app,
             timeout=Config.PING_TIMEOUT,
             max_workers=Config.SCHEDULER_MAX_WORKERS,
+            sink=sink,
+            diagnose=diagnose,
         )
 
         # Startup must fail loudly: a job-registration or scheduler error here used
@@ -82,18 +144,25 @@ def start_monitoring(hosts, interval):
         # were ever recorded. Report it and exit non-zero instead.
         try:
             scheduler.start()
-            click.echo(f"Starting ping monitoring for: {', '.join(hosts)}")
-            click.echo(f"Ping interval: {interval} seconds")
+            names = ", ".join(hc.name for hc in host_configs)
+            click.echo(f"Starting ping monitoring for: {names}")
 
-            for host in hosts:
-                scheduler.add_ping_job(host, interval)
-                click.echo(f"Added ping job for {host}")
+            for hc in host_configs:
+                scheduler.add_ping_job(
+                    hc.name,
+                    hc.interval,
+                    rtt_warn_ms=hc.rtt_warn_ms,
+                    loss_warn_pct=hc.loss_warn_pct,
+                )
+                click.echo(f"Added ping job for {hc.name} (every {hc.interval}s)")
         except Exception as e:
             click.echo(f"Error: {e}", err=True)
             scheduler.shutdown()
             raise SystemExit(1)
 
-        click.echo("Monitoring started. Press Ctrl+C to stop.")
+        click.echo(
+            f"Monitoring started (alerts → {sink.jsonl_path}). Press Ctrl+C to stop."
+        )
 
         # Keep the process running until the user interrupts (a clean exit 0).
         import time
@@ -110,36 +179,64 @@ def start_monitoring(hosts, interval):
 @cli.command()
 @click.argument("host")
 @click.option("--count", "-c", default=4, help="Number of pings to send")
-def ping(host, count):
-    """Send ping to a specific host"""
+@click.option(
+    "--json", "as_json", is_flag=True, help="Output results as JSON (UTC timestamps)."
+)
+def ping(host, count, as_json):
+    """Send pings to a host and record them in the monitoring database.
+
+    For a one-shot check that stores nothing, use ``netdiag ping`` instead.
+    """
     app = create_app()
 
     with app.app_context():
+        from .models import db
         from .services import PingService
 
         ping_service = PingService(timeout=Config.PING_TIMEOUT)
 
-        click.echo(f"Pinging {host} {count} times...")
+        if not as_json:
+            click.echo(f"Pinging {host} {count} times...")
 
+        # Add each sample to the session but commit once after the loop: a batch
+        # of N ad-hoc pings is one transaction instead of N. The result object's
+        # attributes are populated before commit, so per-ping output is unaffected.
+        results = []
         for i in range(count):
-            result = ping_service.ping_and_save(host)
+            result = ping_service.ping_and_save(host, commit=False)
 
-            if result.packet_loss:
-                click.echo(f"Ping {i+1}: Request timeout ({result.error_message})")
-            else:
-                click.echo(f"Ping {i+1}: {result.response_time:.2f}ms")
+            if not as_json:
+                if result.packet_loss:
+                    click.echo(f"Ping {i+1}: Request timeout ({result.error_message})")
+                else:
+                    click.echo(f"Ping {i+1}: {result.response_time:.2f}ms")
+
+            results.append(result)
 
             if i < count - 1:
                 import time
 
                 time.sleep(1)
 
+        db.session.commit()
+
+        if as_json:
+            # Emitted after commit so each row carries its assigned id.
+            click.echo(json.dumps([r.to_dict() for r in results], ensure_ascii=False))
+
 
 @cli.command()
 @click.option("--host", help="Filter by host")
 @click.option("--limit", "-l", default=10, help="Number of recent results to show")
-def status(host, limit):
-    """Show recent ping status"""
+@click.option(
+    "--json", "as_json", is_flag=True, help="Output results as JSON (UTC timestamps)."
+)
+def status(host, limit, as_json):
+    """Show recent ping results from the monitoring database.
+
+    This reads the network-checker store; ``netdiag status`` reports the separate
+    netdiag history DB.
+    """
     app = create_app()
 
     with app.app_context():
@@ -153,6 +250,11 @@ def status(host, limit):
             query = query.filter(PingResult.target_host == host)
 
         results = query.order_by(desc(PingResult.timestamp)).limit(limit).all()
+
+        if as_json:
+            # Empty result set is a valid [] rather than the human "no results" line.
+            click.echo(json.dumps([r.to_dict() for r in results], ensure_ascii=False))
+            return
 
         if not results:
             click.echo("No ping results found.")

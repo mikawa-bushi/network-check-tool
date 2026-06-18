@@ -15,7 +15,10 @@ from __future__ import annotations
 
 import json
 import logging
+import shutil
+import subprocess
 import time
+import urllib.request
 from dataclasses import asdict, dataclass, field
 from enum import Enum
 from pathlib import Path
@@ -201,6 +204,61 @@ class FileAlertSink:
             dur = f" (degraded for {t.duration_s:.0f}s)" if t.duration_s else ""
             return f"[{t.iso}] RECOVERED{dur}"
         return f"[{t.iso}] {t.event.upper()} {t.summary}"
+
+
+class WebhookSink:
+    """POST each event as JSON to a webhook URL (stdlib ``urllib`` only).
+
+    The connect/read timeout is mandatory so a stuck endpoint can't hang the
+    watcher -- a network monitor must never block on its own notifications.
+    """
+
+    def __init__(self, url: str, timeout: float = 5.0) -> None:
+        self.url = url
+        self.timeout = timeout
+
+    def _post(self, payload: dict) -> None:
+        data = json.dumps(payload, ensure_ascii=False).encode("utf-8")
+        req = urllib.request.Request(
+            self.url,
+            data=data,
+            method="POST",
+            headers={"Content-Type": "application/json"},
+        )
+        # Close the response so the connection is released promptly.
+        urllib.request.urlopen(req, timeout=self.timeout).close()
+
+    def emit(self, transition: Transition) -> None:
+        self._post(transition.to_dict())
+
+
+class SlackSink(WebhookSink):
+    """Post a human one-liner to a Slack-style incoming webhook (``{"text": ...}``)."""
+
+    def emit(self, transition: Transition) -> None:
+        self._post({"text": FileAlertSink._format_line(transition)})
+
+
+class DesktopSink:
+    """Best-effort OS desktop notification (Linux ``notify-send`` / macOS ``osascript``)."""
+
+    def __init__(self, timeout: float = 5.0) -> None:
+        self.timeout = timeout
+
+    def emit(self, transition: Transition) -> None:
+        line = FileAlertSink._format_line(transition)
+        if shutil.which("notify-send"):
+            subprocess.run(
+                ["notify-send", "netdiag", line], timeout=self.timeout, check=False
+            )
+        elif shutil.which("osascript"):
+            script = f'display notification {json.dumps(line)} with title "netdiag"'
+            subprocess.run(
+                ["osascript", "-e", script], timeout=self.timeout, check=False
+            )
+        else:
+            # Surface via MultiSink's logging rather than silently no-op'ing.
+            raise RuntimeError("no desktop notifier (notify-send/osascript) found")
 
 
 class MultiSink:

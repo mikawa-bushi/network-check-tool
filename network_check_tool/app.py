@@ -33,8 +33,16 @@ def _register_sqlite_pragmas(engine, busy_timeout_ms):
     return True
 
 
-def create_app(config_name=None):
-    """Application factory pattern"""
+def create_app(config_name=None, register_scheduler=False):
+    """Application factory pattern.
+
+    ``register_scheduler=True`` starts an in-process monitoring scheduler and
+    attaches it at ``app.extensions['scheduler']`` so the dashboard's host-CRUD
+    API can manage jobs in the same process. It defaults off because it is only
+    safe in a single process: under a multi-worker WSGI server each worker would
+    start its own scheduler and double up pings. ``run-server`` enables it (on a
+    loopback bind only); multi-worker deployments use ``start-monitoring`` instead.
+    """
     if config_name is None:
         config_name = os.environ.get("FLASK_ENV", "development")
 
@@ -61,5 +69,19 @@ def create_app(config_name=None):
     # Create database tables
     with app.app_context():
         db.create_all()
+
+    if register_scheduler:
+        # In-process scheduler for the dashboard's host-management API (F4). Starts
+        # empty; hosts are added via POST /api/hosts. Single-process only (see the
+        # docstring). Attached under app.extensions so the views can reach it.
+        from .services import SchedulerService
+
+        scheduler = SchedulerService(
+            app=app,
+            timeout=app.config["PING_TIMEOUT"],
+            max_workers=app.config["SCHEDULER_MAX_WORKERS"],
+        )
+        scheduler.start()
+        app.extensions["scheduler"] = scheduler
 
     return app

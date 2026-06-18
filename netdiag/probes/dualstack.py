@@ -8,29 +8,26 @@ the asymmetry obvious.
 from __future__ import annotations
 
 import socket
-from typing import List, Optional
+from typing import Optional
 
 from ..core import CheckResult, Context, Probe, register
-from ..core.util import have, is_windows, run
+from ..core.util import have
+from .icmp import ping
 
 
 def _ping_family(host: str, v6: bool, count: int = 2) -> Optional[bool]:
-    cmd = "ping"
-    if is_windows():
-        args = [cmd, "-6" if v6 else "-4", "-n", str(count), host]
-    else:
-        # Linux/mac: ping handles -4/-6
-        args = [cmd, "-6" if v6 else "-4", "-c", str(count), "-W", "2", host]
-    if not have(cmd):
+    """Ping ``host`` over one IP family. True=reachable, False=down, None=untested.
+
+    Delegates execution and parsing to ``icmp.ping`` (with ``-4``/``-6``) instead
+    of re-implementing the arg builder and a brittle ``"0% packet loss" in stdout``
+    substring match -- the latter mis-reads e.g. "10% packet loss" as success.
+    """
+    if not have("ping"):
         return None
-    res = run(args, timeout=count * 3 + 5)
-    if not res.found:
-        return None
-    if "0% packet loss" in res.stdout or " 0.0% packet loss" in res.stdout:
-        return True
-    if "100% packet loss" in res.stdout or "100.0% packet loss" in res.stdout:
-        return False
-    return res.ok
+    _rtt, loss, text = ping(host, count=count, family=6 if v6 else 4)
+    if not text:
+        return None  # ping produced no output (could not run for this family)
+    return loss < 100.0
 
 
 def _has_family(host: str, family: int) -> bool:
@@ -56,10 +53,13 @@ class DualStackProbe(Probe):
 
     def check(self, ctx: Context) -> CheckResult:
         host = ctx.get("dns_name", "example.com")
+        # Honour the shared ``count`` (other ping probes do); keep dual-stack's
+        # lighter default of 2 when the user hasn't asked for more.
+        count = int(ctx.get("count", 2))
         has4 = _has_family(host, socket.AF_INET)
         has6 = _has_family(host, socket.AF_INET6)
-        v4 = _ping_family(host, v6=False) if has4 else None
-        v6 = _ping_family(host, v6=True) if has6 else None
+        v4 = _ping_family(host, v6=False, count=count) if has4 else None
+        v6 = _ping_family(host, v6=True, count=count) if has6 else None
         detail = {
             "host": host,
             "ipv4_ok": v4,

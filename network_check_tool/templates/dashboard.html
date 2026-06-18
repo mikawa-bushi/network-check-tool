@@ -6,105 +6,152 @@
     <title>Network Checker Dashboard</title>
     <script src="{{ url_for('dashboard.plotly_js') }}"></script>
     <style>
+        /* Colors live in CSS variables so the whole UI follows the OS light/dark
+           preference (prefers-color-scheme) without any JS. */
+        :root {
+            --bg: #f5f5f5;
+            --card-bg: #ffffff;
+            --text: #1a1a1a;
+            --muted: #666666;
+            --accent: #007bff;
+            --accent-hover: #0056b3;
+            --border: #dddddd;
+            --shadow: rgba(0, 0, 0, 0.1);
+            --error-bg: #f8d7da;
+            --error-fg: #721c24;
+            --neutral-fg: #666666;
+        }
+
+        @media (prefers-color-scheme: dark) {
+            :root {
+                --bg: #15181c;
+                --card-bg: #1f242b;
+                --text: #e6e6e6;
+                --muted: #9aa4af;
+                --accent: #4c8dff;
+                --accent-hover: #6ba1ff;
+                --border: #3a4049;
+                --shadow: rgba(0, 0, 0, 0.45);
+                --error-bg: #4a2225;
+                --error-fg: #f5c2c7;
+                --neutral-fg: #9aa4af;
+            }
+        }
+
         body {
             font-family: -apple-system, BlinkMacSystemFont, 'Segoe UI', Roboto, sans-serif;
             margin: 0;
             padding: 20px;
-            background-color: #f5f5f5;
+            background-color: var(--bg);
+            color: var(--text);
         }
-        
+
         .container {
             max-width: 1200px;
             margin: 0 auto;
         }
-        
+
         .header {
-            background: white;
+            background: var(--card-bg);
             padding: 20px;
             border-radius: 8px;
-            box-shadow: 0 2px 4px rgba(0,0,0,0.1);
+            box-shadow: 0 2px 4px var(--shadow);
             margin-bottom: 20px;
         }
-        
+
         .controls {
             display: flex;
+            flex-wrap: wrap;
             gap: 15px;
             margin-bottom: 20px;
             align-items: center;
         }
-        
+
         select, button {
             padding: 8px 12px;
-            border: 1px solid #ddd;
+            border: 1px solid var(--border);
             border-radius: 4px;
             font-size: 14px;
+            background: var(--card-bg);
+            color: var(--text);
         }
-        
+
         button {
-            background-color: #007bff;
-            color: white;
+            background-color: var(--accent);
+            color: #ffffff;
             border: none;
             cursor: pointer;
         }
-        
+
         button:hover {
-            background-color: #0056b3;
+            background-color: var(--accent-hover);
         }
-        
+
         .stats-grid {
             display: grid;
             grid-template-columns: repeat(auto-fit, minmax(200px, 1fr));
             gap: 15px;
             margin-bottom: 20px;
         }
-        
+
         .stat-card {
-            background: white;
+            background: var(--card-bg);
             padding: 20px;
             border-radius: 8px;
-            box-shadow: 0 2px 4px rgba(0,0,0,0.1);
+            box-shadow: 0 2px 4px var(--shadow);
             text-align: center;
         }
-        
+
         .stat-value {
             font-size: 2em;
             font-weight: bold;
-            color: #007bff;
+            color: var(--accent);
         }
-        
+
         .stat-label {
-            color: #666;
+            color: var(--muted);
             margin-top: 5px;
         }
-        
+
         .chart-container {
-            background: white;
+            background: var(--card-bg);
             padding: 20px;
             border-radius: 8px;
-            box-shadow: 0 2px 4px rgba(0,0,0,0.1);
+            box-shadow: 0 2px 4px var(--shadow);
             margin-bottom: 20px;
         }
-        
-        .loading {
+
+        /* Neutral placeholder: loading + "no data yet" (an empty period is normal,
+           not an error, so it must not look like the red error box). */
+        .loading, .empty {
             text-align: center;
             padding: 50px;
-            color: #666;
+            color: var(--neutral-fg);
         }
-        
+
         .error {
-            background-color: #f8d7da;
-            color: #721c24;
+            background-color: var(--error-bg);
+            color: var(--error-fg);
             padding: 15px;
             border-radius: 4px;
             margin-bottom: 20px;
         }
-        
-        .success {
-            background-color: #d4edda;
-            color: #155724;
-            padding: 15px;
-            border-radius: 4px;
-            margin-bottom: 20px;
+
+        .jobs-table {
+            width: 100%;
+            border-collapse: collapse;
+        }
+
+        .jobs-table th, .jobs-table td {
+            text-align: left;
+            padding: 8px 6px;
+            border-bottom: 1px solid var(--border);
+            font-size: 0.9em;
+        }
+
+        @media (max-width: 600px) {
+            body { padding: 10px; }
+            .stat-value { font-size: 1.6em; }
         }
     </style>
 </head>
@@ -114,47 +161,66 @@
             <h1>Network Checker Dashboard</h1>
             <p>Monitor ping responses and packet loss for your network hosts</p>
         </div>
-        
+
         <div class="controls">
             <label for="hostSelect">Host:</label>
-            <select id="hostSelect">
+            <select id="hostSelect" aria-label="Select host">
                 <option value="">Select a host...</option>
             </select>
-            
+
             <label for="timeRange">Time Range:</label>
-            <select id="timeRange">
+            <select id="timeRange" aria-label="Select time range">
                 <option value="1">Last 1 hour</option>
                 <option value="6">Last 6 hours</option>
                 <option value="24" selected>Last 24 hours</option>
                 <option value="72">Last 3 days</option>
                 <option value="168">Last week</option>
             </select>
-            
-            <button onclick="refreshData()">Refresh</button>
+
+            <button type="button" onclick="refreshData()">Refresh</button>
         </div>
-        
-        <div id="statsContainer" class="stats-grid" style="display: none;">
+
+        <!-- Host management (F4). Hidden unless the server exposes the scheduler
+             API (run-server on a loopback bind); stays hidden in read-only mode. -->
+        <div id="monitorSection" class="chart-container" style="display: none;">
+            <h2 style="margin-top: 0; font-size: 1.1em;">Monitoring</h2>
+            <div class="controls">
+                <input id="newHost" type="text" placeholder="host to monitor"
+                       aria-label="Host to monitor">
+                <input id="newInterval" type="number" min="1" value="60"
+                       style="width: 90px;" aria-label="Ping interval (seconds)">
+                <button type="button" onclick="addHost()">Add host</button>
+            </div>
+            <table class="jobs-table">
+                <thead>
+                    <tr><th>Host</th><th>Next run</th><th></th></tr>
+                </thead>
+                <tbody id="jobsBody" aria-live="polite"></tbody>
+            </table>
+        </div>
+
+        <div id="statsContainer" class="stats-grid" style="display: none;" aria-live="polite">
             <div class="stat-card">
                 <div class="stat-value" id="totalPings">-</div>
                 <div class="stat-label">Total Pings</div>
-            </div>
-            <div class="stat-card">
-                <div class="stat-value" id="successRate">-</div>
-                <div class="stat-label">Success Rate</div>
             </div>
             <div class="stat-card">
                 <div class="stat-value" id="avgResponseTime">-</div>
                 <div class="stat-label">Avg Response Time</div>
             </div>
             <div class="stat-card">
+                <div class="stat-value" id="minMaxResponseTime">-</div>
+                <div class="stat-label">Min / Max RTT</div>
+            </div>
+            <div class="stat-card">
                 <div class="stat-value" id="packetLossRate">-</div>
                 <div class="stat-label">Packet Loss Rate</div>
             </div>
         </div>
-        
+
         <div class="chart-container">
-            <div id="chartContainer">
-                <div class="loading">
+            <div id="chartContainer" aria-live="polite">
+                <div class="empty">
                     Select a host to view ping data
                 </div>
             </div>
@@ -164,39 +230,62 @@
     <script>
         let currentHost = '';
         let currentTimeRange = 24;
-        
+        // Whether a Plotly figure is currently rendered. Drives newPlot (first
+        // render / after a placeholder) vs react (in-place update that preserves
+        // the viewer's zoom/pan across the 30s auto-refresh).
+        let chartReady = false;
+
         // Load hosts on page load
         loadHosts();
-        
+        loadJobs();
+
         // Event listeners
-        document.getElementById('hostSelect').addEventListener('change', function() {
+        document.getElementById('hostSelect').addEventListener('change', function () {
             currentHost = this.value;
+            chartReady = false;  // new host -> fresh plot
             if (currentHost) {
-                loadData();
+                loadData(true);
             } else {
                 document.getElementById('statsContainer').style.display = 'none';
-                document.getElementById('chartContainer').innerHTML = '<div class="loading">Select a host to view ping data</div>';
+                setChartMessage('empty', 'Select a host to view ping data');
             }
         });
-        
-        document.getElementById('timeRange').addEventListener('change', function() {
-            currentTimeRange = parseInt(this.value);
+
+        document.getElementById('timeRange').addEventListener('change', function () {
+            currentTimeRange = parseInt(this.value, 10);
+            chartReady = false;  // different window -> fresh plot
             if (currentHost) {
-                loadData();
+                loadData(true);
             }
         });
-        
+
+        // Build a query string with every value URL-encoded so hosts containing
+        // '&', spaces or other reserved characters don't truncate the parameters.
+        function buildQuery(host, hours) {
+            return 'host=' + encodeURIComponent(host) + '&hours=' + encodeURIComponent(hours);
+        }
+
+        function setChartMessage(cls, msg) {
+            chartReady = false;
+            document.getElementById('chartContainer').innerHTML =
+                '<div class="' + cls + '"></div>';
+            document.querySelector('#chartContainer > div').textContent = msg;
+        }
+
         function loadHosts() {
             fetch('/api/hosts')
-                .then(response => response.json())
+                .then(response => {
+                    if (!response.ok) return Promise.reject(new Error('hosts ' + response.status));
+                    return response.json();
+                })
                 .then(data => {
                     const select = document.getElementById('hostSelect');
                     select.innerHTML = '<option value="">Select a host...</option>';
-                    
                     data.forEach(host => {
                         const option = document.createElement('option');
                         option.value = host;
                         option.textContent = host;
+                        if (host === currentHost) option.selected = true;
                         select.appendChild(option);
                     });
                 })
@@ -205,70 +294,186 @@
                     showError('Failed to load hosts');
                 });
         }
-        
-        function loadData() {
+
+        function loadData(showLoading) {
             if (!currentHost) return;
-            
-            document.getElementById('chartContainer').innerHTML = '<div class="loading">Loading...</div>';
-            
-            // Load statistics
-            fetch(`/api/stats?host=${currentHost}&hours=${currentTimeRange}`)
-                .then(response => response.json())
-                .then(data => {
-                    updateStats(data);
+            if (showLoading || !chartReady) {
+                setChartMessage('loading', 'Loading...');
+            }
+            const q = buildQuery(currentHost, currentTimeRange);
+
+            // Statistics: check response.ok so a 4xx/5xx body (which lacks the
+            // stat keys) can't slip into updateStats and throw on .toFixed().
+            fetch('/api/stats?' + q)
+                .then(response => {
+                    if (!response.ok) {
+                        return response.json().catch(() => ({})).then(e => Promise.reject(e));
+                    }
+                    return response.json();
                 })
+                .then(updateStats)
                 .catch(error => {
                     console.error('Error loading stats:', error);
+                    clearStats();
+                    showError(error && error.error ? error.error : 'Failed to load statistics');
                 });
-            
-            // Load chart
-            fetch(`/api/ping_chart?host=${currentHost}&hours=${currentTimeRange}`)
-                .then(response => response.json())
-                .then(data => {
-                    if (data.error) {
-                        document.getElementById('chartContainer').innerHTML = `<div class="error">${data.error}</div>`;
-                    } else {
-                        Plotly.newPlot('chartContainer', data.data, data.layout, {responsive: true});
+
+            // Chart: 404 means "no data for this period" -- a normal empty state,
+            // shown neutrally. Only real failures (5xx / network) get the red box.
+            fetch('/api/ping_chart?' + q)
+                .then(response => {
+                    if (response.status === 404) {
+                        return response.json().catch(() => ({})).then(d => {
+                            setChartMessage('empty', d.error || 'No data for this period yet');
+                            return null;
+                        });
                     }
+                    if (!response.ok) {
+                        return response.json().catch(() => ({})).then(e => Promise.reject(e));
+                    }
+                    return response.json();
+                })
+                .then(fig => {
+                    if (fig) renderChart(fig);
                 })
                 .catch(error => {
                     console.error('Error loading chart:', error);
-                    document.getElementById('chartContainer').innerHTML = '<div class="error">Failed to load chart data</div>';
+                    setChartMessage('error', error && error.error ? error.error : 'Failed to load chart data');
                 });
         }
-        
+
+        function renderChart(fig) {
+            const el = document.getElementById('chartContainer');
+            if (!chartReady) {
+                el.innerHTML = '';  // drop the loading/empty placeholder
+                Plotly.newPlot(el, fig.data, fig.layout, { responsive: true });
+                chartReady = true;
+            } else {
+                // react() diffs the figure and keeps the current zoom/pan.
+                Plotly.react(el, fig.data, fig.layout, { responsive: true });
+            }
+        }
+
         function updateStats(data) {
+            if (!data || typeof data.total_pings !== 'number') {
+                clearStats();
+                return;
+            }
             document.getElementById('totalPings').textContent = data.total_pings;
-            document.getElementById('successRate').textContent = `${(100 - data.packet_loss_rate).toFixed(1)}%`;
-            document.getElementById('avgResponseTime').textContent = `${data.avg_response_time.toFixed(1)}ms`;
-            document.getElementById('packetLossRate').textContent = `${data.packet_loss_rate.toFixed(1)}%`;
-            
+            document.getElementById('avgResponseTime').textContent =
+                (data.avg_response_time || 0).toFixed(1) + 'ms';
+            const mn = (data.min_response_time || 0).toFixed(1);
+            const mx = (data.max_response_time || 0).toFixed(1);
+            document.getElementById('minMaxResponseTime').textContent = mn + ' / ' + mx + 'ms';
+            document.getElementById('packetLossRate').textContent =
+                (data.packet_loss_rate || 0).toFixed(1) + '%';
             document.getElementById('statsContainer').style.display = 'grid';
         }
-        
+
+        function clearStats() {
+            ['totalPings', 'avgResponseTime', 'minMaxResponseTime', 'packetLossRate']
+                .forEach(id => { document.getElementById(id).textContent = '—'; });
+            document.getElementById('statsContainer').style.display = 'grid';
+        }
+
         function refreshData() {
             if (currentHost) {
-                loadData();
+                loadData(true);
             }
             loadHosts();
+            loadJobs();
         }
-        
+
+        // --- Host management (F4) --------------------------------------------
+        // Reveal the Monitoring panel only when the scheduler API answers; a 503
+        // (read-only deployment / public bind) leaves it hidden.
+        function loadJobs() {
+            fetch('/api/jobs')
+                .then(response => (response.ok ? response.json() : null))
+                .then(jobs => {
+                    if (jobs === null) return;  // scheduler not running -> stay hidden
+                    document.getElementById('monitorSection').style.display = 'block';
+                    renderJobs(jobs);
+                })
+                .catch(error => console.error('Error loading jobs:', error));
+        }
+
+        function renderJobs(jobs) {
+            const body = document.getElementById('jobsBody');
+            body.innerHTML = '';
+            if (!jobs.length) {
+                const tr = document.createElement('tr');
+                const td = document.createElement('td');
+                td.colSpan = 3;
+                td.textContent = 'No hosts monitored yet.';
+                td.style.color = 'var(--neutral-fg)';
+                tr.appendChild(td);
+                body.appendChild(tr);
+                return;
+            }
+            jobs.forEach(job => {
+                const tr = document.createElement('tr');
+                const hostCell = document.createElement('td');
+                hostCell.textContent = job.host;
+                const nextCell = document.createElement('td');
+                nextCell.textContent = job.next_run_time || '-';
+                const actionCell = document.createElement('td');
+                const btn = document.createElement('button');
+                btn.type = 'button';
+                btn.textContent = 'Remove';
+                btn.onclick = () => removeHost(job.host);
+                actionCell.appendChild(btn);
+                tr.appendChild(hostCell);
+                tr.appendChild(nextCell);
+                tr.appendChild(actionCell);
+                body.appendChild(tr);
+            });
+        }
+
+        function addHost() {
+            const host = document.getElementById('newHost').value.trim();
+            const interval = parseInt(document.getElementById('newInterval').value, 10) || 60;
+            if (!host) return;
+            fetch('/api/hosts', {
+                method: 'POST',
+                headers: { 'Content-Type': 'application/json' },
+                body: JSON.stringify({ host: host, interval: interval }),
+            })
+                .then(response => {
+                    if (!response.ok) {
+                        return response.json().catch(() => ({})).then(e => Promise.reject(e));
+                    }
+                    document.getElementById('newHost').value = '';
+                    loadJobs();
+                    loadHosts();
+                })
+                .catch(error => showError(error && error.error ? error.error : 'Failed to add host'));
+        }
+
+        function removeHost(host) {
+            fetch('/api/hosts/' + encodeURIComponent(host), { method: 'DELETE' })
+                .then(response => {
+                    if (!response.ok) return Promise.reject();
+                    loadJobs();
+                })
+                .catch(() => showError('Failed to remove host'));
+        }
+
         function showError(message) {
             const container = document.querySelector('.container');
             const errorDiv = document.createElement('div');
             errorDiv.className = 'error';
+            errorDiv.setAttribute('role', 'alert');
             errorDiv.textContent = message;
             container.insertBefore(errorDiv, container.firstChild.nextSibling);
-            
-            setTimeout(() => {
-                errorDiv.remove();
-            }, 5000);
+            setTimeout(() => { errorDiv.remove(); }, 5000);
         }
-        
-        // Auto-refresh every 30 seconds if a host is selected
+
+        // Auto-refresh every 30s. No loading flash and react() keeps the zoom,
+        // so an interactive chart isn't yanked back to its default view.
         setInterval(() => {
             if (currentHost) {
-                loadData();
+                loadData(false);
             }
         }, 30000);
     </script>
