@@ -1,8 +1,10 @@
-import click
 import os
+
+import click
+
 from .app import create_app
-from .services import SchedulerService
 from .config.config import Config
+from .services import SchedulerService
 
 
 @click.group()
@@ -141,8 +143,9 @@ def status(host, limit):
     app = create_app()
 
     with app.app_context():
-        from .models import PingResult
         from sqlalchemy import desc
+
+        from .models import PingResult
 
         query = PingResult.query
 
@@ -193,7 +196,7 @@ def clear():
     app = create_app()
 
     with app.app_context():
-        from .models import db, PingResult
+        from .models import PingResult, db
 
         db.session.query(PingResult).delete()
         db.session.commit()

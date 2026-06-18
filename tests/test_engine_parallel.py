@@ -11,7 +11,7 @@ import time
 import pytest
 
 from netdiag.cli import cli
-from netdiag.core import CheckResult, Status, Probe
+from netdiag.core import CheckResult, Probe, Status
 from netdiag.core.probe import _REGISTRY
 from netdiag.diagnosis import Engine
 from netdiag.diagnosis.engine import _dependency_tiers

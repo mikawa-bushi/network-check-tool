@@ -10,7 +10,6 @@ from netdiag.core.util import CommandResult
 from netdiag.probes import icmp
 from netdiag.probes.traceroute import _parse_hops
 
-
 # ---------------------------------------------------------------- traceroute
 
 

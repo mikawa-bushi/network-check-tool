@@ -1,14 +1,14 @@
 """Framework-independent core: results, probes, and shared helpers."""
 
-from .result import CheckResult, Status
 from .probe import (
     Context,
     Probe,
-    register,
-    get_probe,
     all_probes,
+    get_probe,
+    register,
     registry_names,
 )
+from .result import CheckResult, Status
 
 __all__ = [
     "CheckResult",

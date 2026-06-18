@@ -15,18 +15,18 @@ from typing import List, Optional
 
 import click
 
+from . import __version__
 from . import probes as _probes  # noqa: F401  -- registers built-in probes
+from . import report as report_mod
 from .core import Status, all_probes, get_probe
 from .diagnosis import (
     Engine,
-    compute_baseline,
     classify,
+    compute_baseline,
     detect_changepoint,
     detect_flapping,
 )
 from .plugins import load_plugins
-from . import report as report_mod
-from . import __version__
 from .storage import Storage
 
 logger = logging.getLogger(__name__)
@@ -63,7 +63,7 @@ def _resolve_version() -> str:
     source checkout (where the distribution metadata isn't present).
     """
     try:
-        from importlib.metadata import version, PackageNotFoundError
+        from importlib.metadata import PackageNotFoundError, version
 
         try:
             return version("network-check-tool")
@@ -460,8 +460,9 @@ def watch(
     file. Recoveries are logged too, with how long the outage lasted.
     """
     from pathlib import Path
+
     from .alerting import FileAlertSink
-    from .watch import Watcher, LIGHT_PROBES
+    from .watch import LIGHT_PROBES, Watcher
 
     probes = (
         [s.strip() for s in light_probes.split(",")]

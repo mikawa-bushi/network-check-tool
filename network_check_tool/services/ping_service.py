@@ -3,7 +3,7 @@ from typing import Dict
 from netdiag.core.util import have
 from netdiag.probes.icmp import ping as _measure_ping
 
-from ..models import db, PingResult
+from ..models import PingResult, db
 from ..utils import utcnow
 
 

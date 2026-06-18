@@ -6,18 +6,18 @@ External probes can be added via entry points — see :mod:`netdiag.plugins`.
 """
 
 from . import (  # noqa: F401  (imported for registration side effects)
-    interface,
-    neighbor,
-    gateway,
-    icmp,
-    traceroute,
     dns,
     dualstack,
-    tcp,
     firewall,
+    gateway,
     http,
-    tls,
+    icmp,
+    interface,
+    neighbor,
     system,
+    tcp,
+    tls,
+    traceroute,
     wifi,
 )
 

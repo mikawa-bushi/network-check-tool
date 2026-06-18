@@ -4,8 +4,8 @@ from .loader import (
     Scenario,
     ScenarioCheck,
     load_scenario,
-    parse_scenario,
     merged_config,
+    parse_scenario,
 )
 
 __all__ = [

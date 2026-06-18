@@ -9,7 +9,7 @@ only hard dependency; everything else is optional).
 
 import logging
 
-from .core import CheckResult, Status, Probe, Context, register
+from .core import CheckResult, Context, Probe, Status, register
 
 # Library-friendly logging: attach a NullHandler so netdiag stays silent by
 # default (no "lastResort" stderr output) until an application/CLI configures

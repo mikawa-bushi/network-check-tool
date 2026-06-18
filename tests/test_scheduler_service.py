@@ -12,7 +12,7 @@ import time
 
 from flask import Flask
 
-from network_check_tool.models import db, PingResult
+from network_check_tool.models import PingResult, db
 from network_check_tool.services import SchedulerService
 
 

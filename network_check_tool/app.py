@@ -1,10 +1,12 @@
+import os
+
 from flask import Flask
 from flask_cors import CORS
 from sqlalchemy import event
-from .models import db
+
 from .config.config import config
+from .models import db
 from .views.dashboard import dashboard_bp
-import os
 
 
 def _register_sqlite_pragmas(engine, busy_timeout_ms):

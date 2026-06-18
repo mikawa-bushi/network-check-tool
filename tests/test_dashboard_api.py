@@ -14,8 +14,8 @@ import pytest
 
 from network_check_tool.app import create_app
 from network_check_tool.config.config import Config, DevelopmentConfig
+from network_check_tool.models import PingResult, db
 from network_check_tool.utils import utcnow
-from network_check_tool.models import db, PingResult
 
 
 @pytest.fixture

@@ -54,12 +54,20 @@ netdiag = "netdiag.cli:main"
 [tool.poetry.group.dev.dependencies]
 pytest = "^8.3.4"
 black = "^24.0.0"
+pre-commit = "^4.6.0"
 
 [tool.black]
 line-length = 88
 target-version = ['py310']
 include = '\.pyi?$'
 skip-string-normalization = false
+
+[tool.ruff.lint]
+# CI enforces Black only; Ruff is wired into the pre-commit gate purely for import
+# sorting. Scope it to the isort ("I") rules so `ruff-check --fix` never trips on the
+# broader default set (F-codes such as F401/F821, E-codes) that this repo has no
+# policy for. Widen this `select` only alongside a matching CI policy.
+select = ["I"]
 
 [tool.pytest.ini_options]
 # Only collect the project's own tests (keeps CI from scanning .venv etc.).

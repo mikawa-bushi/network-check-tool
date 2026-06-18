@@ -1,12 +1,14 @@
-from flask import Blueprint, render_template, jsonify, request, Response
-from datetime import timedelta
+import json
 import threading
-from sqlalchemy import func
+from datetime import timedelta
+
 import plotly
 import plotly.graph_objects as go
 import plotly.utils
-import json
-from ..models import db, PingResult
+from flask import Blueprint, Response, jsonify, render_template, request
+from sqlalchemy import func
+
+from ..models import PingResult, db
 from ..utils import utcnow
 
 dashboard_bp = Blueprint("dashboard", __name__, url_prefix="/")

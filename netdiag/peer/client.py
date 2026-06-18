@@ -12,7 +12,7 @@ import time
 from dataclasses import dataclass
 from typing import List, Optional
 
-from .server import DEFAULT_PORT, _CHUNK
+from .server import _CHUNK, DEFAULT_PORT
 
 
 @dataclass

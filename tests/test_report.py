@@ -8,7 +8,7 @@ import json
 
 import pytest
 
-from netdiag.core import CheckResult, Status, Probe
+from netdiag.core import CheckResult, Probe, Status
 from netdiag.core.probe import _REGISTRY
 from netdiag.diagnosis import Engine
 from netdiag.report import render_html, render_json, render_terminal
