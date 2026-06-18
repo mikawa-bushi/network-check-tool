@@ -60,10 +60,61 @@ def run_server(host, port, debug):
 
 
 @cli.command()
-@click.argument("hosts", nargs=-1, required=True)
+@click.argument("hosts", nargs=-1, required=False)
 @click.option("--interval", "-i", default=60, help="Ping interval in seconds")
-def start_monitoring(hosts, interval):
-    """Start monitoring specified hosts"""
+@click.option(
+    "--config",
+    "config_path",
+    type=click.Path(exists=True, dir_okay=False),
+    default=None,
+    help="TOML/JSON file declaring hosts with per-host interval/thresholds.",
+)
+@click.option(
+    "--alert-file",
+    "alert_file",
+    type=click.Path(dir_okay=False),
+    default=None,
+    help="Write threshold alerts (DEGRADED/RECOVERED) as JSONL to this path.",
+)
+@click.option(
+    "--diagnose",
+    is_flag=True,
+    default=False,
+    help="On a confirmed degradation, run netdiag once and attach the root cause.",
+)
+def start_monitoring(hosts, interval, config_path, alert_file, diagnose):
+    """Start monitoring hosts (positional args, or a --config file).
+
+    Without --config, each positional host shares the single --interval. With
+    --config, each host carries its own interval and warning thresholds
+    (rtt_warn_ms / loss_warn_pct), which raise DEGRADED/RECOVERED alerts.
+    """
+    # Resolve the host list: a --config file (per-host interval) takes precedence
+    # over positional args (shared --interval). One or the other is required.
+    if config_path:
+        from .config.hosts import load_hosts
+
+        try:
+            host_configs = load_hosts(config_path, default_interval=interval)
+        except (ValueError, OSError) as e:
+            # Fail loudly rather than start up monitoring nothing.
+            click.echo(f"Error: invalid --config {config_path}: {e}", err=True)
+            raise SystemExit(1)
+    elif hosts:
+        from .config.hosts import HostConfig
+
+        host_configs = [HostConfig(name=h, interval=interval) for h in hosts]
+    else:
+        raise click.UsageError("provide one or more HOSTS or --config PATH")
+
+    # Threshold alerts (DEGRADED/RECOVERED) are written to a JSONL sink; per-host
+    # thresholds come from the config file. The default path lives under ~/.netdiag.
+    from pathlib import Path
+
+    from netdiag.alerting import FileAlertSink
+
+    sink = FileAlertSink(jsonl_path=Path(alert_file) if alert_file else None)
+
     app = create_app()
 
     with app.app_context():
@@ -75,6 +126,8 @@ def start_monitoring(hosts, interval):
             app=app,
             timeout=Config.PING_TIMEOUT,
             max_workers=Config.SCHEDULER_MAX_WORKERS,
+            sink=sink,
+            diagnose=diagnose,
         )
 
         # Startup must fail loudly: a job-registration or scheduler error here used
@@ -82,18 +135,25 @@ def start_monitoring(hosts, interval):
         # were ever recorded. Report it and exit non-zero instead.
         try:
             scheduler.start()
-            click.echo(f"Starting ping monitoring for: {', '.join(hosts)}")
-            click.echo(f"Ping interval: {interval} seconds")
+            names = ", ".join(hc.name for hc in host_configs)
+            click.echo(f"Starting ping monitoring for: {names}")
 
-            for host in hosts:
-                scheduler.add_ping_job(host, interval)
-                click.echo(f"Added ping job for {host}")
+            for hc in host_configs:
+                scheduler.add_ping_job(
+                    hc.name,
+                    hc.interval,
+                    rtt_warn_ms=hc.rtt_warn_ms,
+                    loss_warn_pct=hc.loss_warn_pct,
+                )
+                click.echo(f"Added ping job for {hc.name} (every {hc.interval}s)")
         except Exception as e:
             click.echo(f"Error: {e}", err=True)
             scheduler.shutdown()
             raise SystemExit(1)
 
-        click.echo("Monitoring started. Press Ctrl+C to stop.")
+        click.echo(
+            f"Monitoring started (alerts → {sink.jsonl_path}). Press Ctrl+C to stop."
+        )
 
         # Keep the process running until the user interrupts (a clean exit 0).
         import time
