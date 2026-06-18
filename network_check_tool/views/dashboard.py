@@ -12,6 +12,7 @@ import plotly.utils
 from flask import (
     Blueprint,
     Response,
+    current_app,
     jsonify,
     render_template,
     request,
@@ -449,3 +450,67 @@ def metrics():
 
     body = "\n".join(up_lines + loss_lines + rtt_lines) + "\n"
     return Response(body, mimetype="text/plain; version=0.0.4; charset=utf-8")
+
+
+# --- Host management (F4) ---------------------------------------------------
+# These routes manage the in-process monitoring scheduler. They only function
+# when one is attached (run-server on a loopback bind); otherwise they return
+# 503, which is how the write API stays disabled on public/multi-worker setups.
+
+DEFAULT_MONITOR_INTERVAL = 60
+
+
+def _scheduler():
+    """The in-process monitoring scheduler, or ``None`` if not running."""
+    return current_app.extensions.get("scheduler")
+
+
+@dashboard_bp.route("/api/jobs")
+def get_jobs():
+    """List the currently scheduled monitoring jobs."""
+    scheduler = _scheduler()
+    if scheduler is None:
+        return jsonify({"error": "monitoring scheduler not running"}), 503
+    jobs = []
+    for job in scheduler.list_jobs():
+        host = job.id[len("ping_") :] if job.id.startswith("ping_") else job.id
+        jobs.append(
+            {
+                "job_id": job.id,
+                "host": host,
+                "next_run_time": (
+                    job.next_run_time.isoformat() if job.next_run_time else None
+                ),
+            }
+        )
+    return jsonify(jobs)
+
+
+@dashboard_bp.route("/api/hosts", methods=["POST"])
+def add_host():
+    """Add (or replace) a monitoring job for a host."""
+    scheduler = _scheduler()
+    if scheduler is None:
+        return jsonify({"error": "monitoring scheduler not running"}), 503
+    data = request.get_json(silent=True) or {}
+    host = (data.get("host") or "").strip()
+    if not host:
+        return jsonify({"error": "host is required"}), 400
+    try:
+        interval = int(data.get("interval", DEFAULT_MONITOR_INTERVAL))
+    except (TypeError, ValueError):
+        return jsonify({"error": "interval must be an integer"}), 400
+    if interval < 1:
+        return jsonify({"error": "interval must be >= 1 second"}), 400
+    scheduler.add_ping_job(host, interval)
+    return jsonify({"host": host, "interval": interval}), 201
+
+
+@dashboard_bp.route("/api/hosts/<host>", methods=["DELETE"])
+def remove_host(host):
+    """Stop monitoring a host."""
+    scheduler = _scheduler()
+    if scheduler is None:
+        return jsonify({"error": "monitoring scheduler not running"}), 503
+    scheduler.remove_ping_job(f"ping_{host}")
+    return jsonify({"removed": host})

@@ -137,6 +137,18 @@
             margin-bottom: 20px;
         }
 
+        .jobs-table {
+            width: 100%;
+            border-collapse: collapse;
+        }
+
+        .jobs-table th, .jobs-table td {
+            text-align: left;
+            padding: 8px 6px;
+            border-bottom: 1px solid var(--border);
+            font-size: 0.9em;
+        }
+
         @media (max-width: 600px) {
             body { padding: 10px; }
             .stat-value { font-size: 1.6em; }
@@ -166,6 +178,25 @@
             </select>
 
             <button type="button" onclick="refreshData()">Refresh</button>
+        </div>
+
+        <!-- Host management (F4). Hidden unless the server exposes the scheduler
+             API (run-server on a loopback bind); stays hidden in read-only mode. -->
+        <div id="monitorSection" class="chart-container" style="display: none;">
+            <h2 style="margin-top: 0; font-size: 1.1em;">Monitoring</h2>
+            <div class="controls">
+                <input id="newHost" type="text" placeholder="host to monitor"
+                       aria-label="Host to monitor">
+                <input id="newInterval" type="number" min="1" value="60"
+                       style="width: 90px;" aria-label="Ping interval (seconds)">
+                <button type="button" onclick="addHost()">Add host</button>
+            </div>
+            <table class="jobs-table">
+                <thead>
+                    <tr><th>Host</th><th>Next run</th><th></th></tr>
+                </thead>
+                <tbody id="jobsBody" aria-live="polite"></tbody>
+            </table>
         </div>
 
         <div id="statsContainer" class="stats-grid" style="display: none;" aria-live="polite">
@@ -206,6 +237,7 @@
 
         // Load hosts on page load
         loadHosts();
+        loadJobs();
 
         // Event listeners
         document.getElementById('hostSelect').addEventListener('change', function () {
@@ -349,6 +381,82 @@
                 loadData(true);
             }
             loadHosts();
+            loadJobs();
+        }
+
+        // --- Host management (F4) --------------------------------------------
+        // Reveal the Monitoring panel only when the scheduler API answers; a 503
+        // (read-only deployment / public bind) leaves it hidden.
+        function loadJobs() {
+            fetch('/api/jobs')
+                .then(response => (response.ok ? response.json() : null))
+                .then(jobs => {
+                    if (jobs === null) return;  // scheduler not running -> stay hidden
+                    document.getElementById('monitorSection').style.display = 'block';
+                    renderJobs(jobs);
+                })
+                .catch(error => console.error('Error loading jobs:', error));
+        }
+
+        function renderJobs(jobs) {
+            const body = document.getElementById('jobsBody');
+            body.innerHTML = '';
+            if (!jobs.length) {
+                const tr = document.createElement('tr');
+                const td = document.createElement('td');
+                td.colSpan = 3;
+                td.textContent = 'No hosts monitored yet.';
+                td.style.color = 'var(--neutral-fg)';
+                tr.appendChild(td);
+                body.appendChild(tr);
+                return;
+            }
+            jobs.forEach(job => {
+                const tr = document.createElement('tr');
+                const hostCell = document.createElement('td');
+                hostCell.textContent = job.host;
+                const nextCell = document.createElement('td');
+                nextCell.textContent = job.next_run_time || '-';
+                const actionCell = document.createElement('td');
+                const btn = document.createElement('button');
+                btn.type = 'button';
+                btn.textContent = 'Remove';
+                btn.onclick = () => removeHost(job.host);
+                actionCell.appendChild(btn);
+                tr.appendChild(hostCell);
+                tr.appendChild(nextCell);
+                tr.appendChild(actionCell);
+                body.appendChild(tr);
+            });
+        }
+
+        function addHost() {
+            const host = document.getElementById('newHost').value.trim();
+            const interval = parseInt(document.getElementById('newInterval').value, 10) || 60;
+            if (!host) return;
+            fetch('/api/hosts', {
+                method: 'POST',
+                headers: { 'Content-Type': 'application/json' },
+                body: JSON.stringify({ host: host, interval: interval }),
+            })
+                .then(response => {
+                    if (!response.ok) {
+                        return response.json().catch(() => ({})).then(e => Promise.reject(e));
+                    }
+                    document.getElementById('newHost').value = '';
+                    loadJobs();
+                    loadHosts();
+                })
+                .catch(error => showError(error && error.error ? error.error : 'Failed to add host'));
+        }
+
+        function removeHost(host) {
+            fetch('/api/hosts/' + encodeURIComponent(host), { method: 'DELETE' })
+                .then(response => {
+                    if (!response.ok) return Promise.reject();
+                    loadJobs();
+                })
+                .catch(() => showError('Failed to remove host'));
         }
 
         function showError(message) {

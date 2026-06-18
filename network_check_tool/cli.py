@@ -55,7 +55,16 @@ def run_server(host, port, debug):
             "control, and do not use --debug.",
             err=True,
         )
-    app = create_app("development" if debug else "production")
+    # Enable the in-process monitoring scheduler (host-management API) only on a
+    # loopback bind and outside debug mode: the write API has no auth, and the
+    # debug reloader would otherwise spawn a second scheduler in the child process.
+    enable_scheduler = _is_loopback(host) and not debug
+    app = create_app(
+        "development" if debug else "production",
+        register_scheduler=enable_scheduler,
+    )
+    if enable_scheduler:
+        click.echo("Host-management API enabled (POST/DELETE /api/hosts).", err=True)
     app.run(host=host, port=port, debug=debug)
 
 

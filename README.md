@@ -218,6 +218,53 @@ Get raw ping data for visualization
 curl "http://localhost:9991/api/ping_data?host=google.com&hours=1"
 ```
 
+### GET `/api/export?host=<host>&hours=<hours>&format=csv`
+Stream the raw ping rows as CSV (UTC timestamps) for spreadsheets/analysis.
+```bash
+curl "http://localhost:9991/api/export?host=google.com&hours=24" -o pings.csv
+```
+
+### GET `/metrics`
+Prometheus exposition of per-host health over a window (default last hour;
+`?hours=` to widen). Exposes `network_ping_up`, `network_ping_loss_ratio` and
+`network_ping_rtt_ms`, labelled by `host` — point Prometheus/Grafana at it.
+
+### Host management (loopback only)
+When the server is started with the scheduler enabled (`run-server` on a loopback
+bind), the dashboard can add/remove monitored hosts in-process:
+```bash
+curl http://localhost:9991/api/jobs                                   # list jobs
+curl -X POST http://localhost:9991/api/hosts \
+     -H 'Content-Type: application/json' -d '{"host":"google.com","interval":60}'
+curl -X DELETE http://localhost:9991/api/hosts/google.com
+```
+These write routes return **503** unless an in-process scheduler is attached, so
+they stay disabled on public (`--host 0.0.0.0`) and multi-worker deployments.
+
+## 🚦 Threshold alerts & auto-diagnosis
+
+Declare hosts (with per-host interval and warning thresholds) in a TOML/JSON file
+and let the monitor raise `DEGRADED`/`RECOVERED` alerts; with `--diagnose` a
+confirmed degradation also runs `netdiag` once and attaches the root cause.
+
+```toml
+# hosts.toml
+[[host]]
+name = "google.com"
+interval = 30
+rtt_warn_ms = 200
+loss_warn_pct = 5
+```
+```bash
+network-checker start-monitoring --config hosts.toml --diagnose
+# alerts are appended as JSONL (see the path printed at startup, or --alert-file)
+```
+
+`netdiag watch` can also push alerts to external channels:
+```bash
+netdiag watch --webhook-url https://example/hook --slack-url https://hooks.slack/... --desktop
+```
+
 ## ⚙️ Configuration
 
 ### Environment Variables
