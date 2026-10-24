@@ -1,7 +1,5 @@
 """Tests for baseline learning, change-point and flapping detection, and storage."""
 
-import time
-
 from netdiag.core import CheckResult, Status
 from netdiag.diagnosis import (
     classify,

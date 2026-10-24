@@ -13,7 +13,7 @@ from __future__ import annotations
 
 import statistics
 from dataclasses import dataclass
-from typing import List, Optional, Sequence, Tuple
+from typing import Optional, Sequence, Tuple
 
 
 @dataclass

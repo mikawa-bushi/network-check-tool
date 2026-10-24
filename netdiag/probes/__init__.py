@@ -13,6 +13,8 @@ from . import (  # noqa: F401  (imported for registration side effects)
     http,
     icmp,
     interface,
+    ipconfig,
+    link,
     neighbor,
     system,
     tcp,
@@ -23,6 +25,8 @@ from . import (  # noqa: F401  (imported for registration side effects)
 
 __all__ = [
     "interface",
+    "link",
+    "ipconfig",
     "neighbor",
     "gateway",
     "icmp",

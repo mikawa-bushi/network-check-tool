@@ -47,6 +47,9 @@ class CheckResult:
     that baselining and change-point detection consume. ``detail`` holds richer
     structured evidence for the report. ``raw_command`` is the equivalent manual
     command, surfaced by ``netdiag explain`` so users learn to diagnose by hand.
+    ``summary`` is human text in the active display language; ``code`` is the
+    stable, language-independent outcome key (``gateway.unreachable`` ...) that
+    scripts should match on instead of the wording.
     """
 
     name: str
@@ -61,6 +64,7 @@ class CheckResult:
     error: Optional[str] = None
     duration_ms: float = 0.0
     timestamp: float = field(default_factory=time.time)
+    code: str = ""
 
     # convenience constructors -------------------------------------------------
     @classmethod
@@ -82,4 +86,5 @@ class CheckResult:
     def to_dict(self) -> Dict[str, Any]:
         d = asdict(self)
         d["status"] = self.status.value
+        d["title"] = str(self.title)
         return d

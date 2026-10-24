@@ -17,6 +17,7 @@ from dataclasses import dataclass, field
 from typing import Callable, Dict, List, Optional, Tuple, Type
 
 from ..core import CheckResult, Context, Probe, Status, all_probes, get_probe
+from ..i18n import tr
 
 # Upper bound on probe concurrency. Active probes (gateway/external/dualstack)
 # spawn subprocess pings; running too many at once would have them contend for
@@ -31,6 +32,11 @@ class Hypothesis:
     summary: str  # human explanation
     evidence: List[str] = field(default_factory=list)
     consequences: List[str] = field(default_factory=list)  # failures explained by this
+    runbook: List[str] = field(
+        default_factory=list
+    )  # next steps, built from the result
+    title: str = ""  # the cause probe's display title
+    code: str = ""  # the cause result's stable outcome code
 
 
 @dataclass
@@ -124,16 +130,27 @@ class Engine:
     def select(
         self, only: Optional[List[str]] = None, skip: Optional[List[str]] = None
     ) -> List[str]:
-        names = list(all_probes())
-        # Opt-in probes, excluded from the default sweep:
-        #   icmp       — ad-hoc single-target ping (use `netdiag ping`)
-        #   traceroute — slow, and noisy against hosts that filter it; most useful
-        #                on demand or when reachability already failed.
-        default_excluded = {"icmp", "traceroute"}
-        if not only:
-            names = [n for n in names if n not in default_excluded]
+        """Probe names to run: ``only`` if given, else the default host sweep.
+
+        The default sweep is every ``host``-scoped probe that is not opt-in
+        (``default = False``, e.g. traceroute) and, unless the config says the
+        network should reach the internet (``internet``, default True for library
+        use), none of the internet-only probes. Target-scoped probes need a
+        device and only run when named explicitly (see :mod:`netdiag.runner`).
+        """
+        probes = all_probes()
         if only:
-            names = [n for n in names if n in set(only)]
+            wanted = set(only)
+            names = [n for n in probes if n in wanted]
+        else:
+            internet = bool(self.config.get("internet", True))
+            names = [
+                n
+                for n, cls in probes.items()
+                if getattr(cls, "scope", "host") == "host"
+                and getattr(cls, "default", True)
+                and (internet or not getattr(cls, "requires_internet", False))
+            ]
         if skip:
             names = [n for n in names if n not in set(skip)]
         return names
@@ -156,18 +173,29 @@ class Engine:
             return None, None
         probe = cls()
 
+        # A dependency that FAILED, or that was itself skipped because *its*
+        # dependency failed, gates this probe: either way any failure here would
+        # be a symptom of the same root cause (transitively down the chain).
         failed_deps = [
             d
             for d in probe.depends_on
-            if d in ctx.results and ctx.results[d].status == Status.FAIL
+            if d in ctx.results
+            and (
+                ctx.results[d].status == Status.FAIL
+                or ctx.results[d].code == f"{d}.not_evaluated"
+            )
         ]
         if failed_deps:
             res = CheckResult.skip(
                 name,
-                f"not evaluated: upstream {', '.join(failed_deps)} failed",
+                tr(
+                    f"未評価: 前提の {', '.join(failed_deps)} が失敗",
+                    f"not evaluated: upstream {', '.join(failed_deps)} failed",
+                ),
                 depends_on=list(probe.depends_on),
+                code=f"{name}.not_evaluated",
             )
-            res.title = cls.title or name
+            res.title = str(cls.title or name)
             res.layer = cls.layer
             reason = (
                 f"skip {name}: its dependency {failed_deps[0]} already failed, "
@@ -257,6 +285,17 @@ class Engine:
                 if reason is not None:
                     reasoning.append(reason)
 
+        return self.diagnose(results, reasoning)
+
+    def diagnose(
+        self, results: List[CheckResult], reasoning: Optional[List[str]] = None
+    ) -> Diagnosis:
+        """Build a :class:`Diagnosis` from already-collected results.
+
+        Public so callers that add evidence after a run (e.g. NIC error counters
+        sampled over a whole device sweep) can re-derive the verdict.
+        """
+        reasoning = list(reasoning or [])
         hypotheses = self._diagnose(results, reasoning)
         healthy = not any(r.status == Status.FAIL for r in results) and not hypotheses
         return Diagnosis(
@@ -267,20 +306,28 @@ class Engine:
     def _diagnose(
         self, results: List[CheckResult], reasoning: List[str]
     ) -> List[Hypothesis]:
+        from .rules import advice_for, explain_failure
+
         by_name = {r.name: r for r in results}
         failed = [r for r in results if r.status == Status.FAIL]
         if not failed:
             # No hard failure: surface warnings as low-confidence advisories.
             warns = [r for r in results if r.status == Status.WARN]
-            return [
-                Hypothesis(
-                    cause=w.name,
-                    confidence="low",
-                    summary=f"{w.title}: {w.summary}",
-                    evidence=[w.summary],
+            out = []
+            for w in warns:
+                means, steps = advice_for(w, by_name)
+                out.append(
+                    Hypothesis(
+                        cause=w.name,
+                        confidence="low",
+                        summary=means or f"{w.title}: {w.summary}",
+                        evidence=[w.summary],
+                        runbook=steps,
+                        title=str(w.title),
+                        code=w.code,
+                    )
                 )
-                for w in warns
-            ]
+            return out
 
         # A failure is a *root* if none of its dependencies failed.
         roots: List[CheckResult] = []
@@ -305,8 +352,6 @@ class Engine:
             consequences = self._downstream_failures(root.name, by_name)
             explained.update(consequences)
             conf = "high" if len(roots) == 1 else "medium"
-            from .rules import explain_failure
-
             summary, evidence = explain_failure(root, by_name)
             hypotheses.append(
                 Hypothesis(
@@ -315,6 +360,9 @@ class Engine:
                     summary=summary,
                     evidence=evidence,
                     consequences=[c for c in consequences if c != root.name],
+                    runbook=advice_for(root, by_name)[1],
+                    title=str(root.title),
+                    code=root.code,
                 )
             )
             if self.verbose:

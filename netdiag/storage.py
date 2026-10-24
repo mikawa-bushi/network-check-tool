@@ -8,12 +8,11 @@ just ping RTT) means change-point detection works for DNS latency, TTFB, etc.
 from __future__ import annotations
 
 import functools
-import json
 import sqlite3
 import threading
 import time
 from pathlib import Path
-from typing import Dict, Iterable, List, Optional, Tuple
+from typing import List, Optional, Tuple
 
 DEFAULT_DB = Path.home() / ".netdiag" / "history.db"
 

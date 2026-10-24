@@ -15,6 +15,7 @@ from typing import Dict, Optional
 from urllib.parse import urlparse
 
 from ..core import CheckResult, Context, Probe, register
+from ..i18n import Text, tr
 from .dns import _resolve
 
 
@@ -86,14 +87,32 @@ def _timed_get(url: str, timeout: float = 5.0) -> Dict:
 @register
 class HttpProbe(Probe):
     name = "http"
-    title = "HTTP service"
+    title = Text("HTTPサービス", "HTTP service")
     layer = "L7"
     depends_on = ["dns", "tcp"]
-    what = "Fetches a URL and times DNS, TCP, TLS and first-byte separately."
-    why = (
-        "Turns 'the site is slow/down' into a phase breakdown so you can tell a "
-        "network problem from a slow or erroring server."
+    what = Text(
+        "URLを取得し、DNS・TCP接続・TLS・最初の応答までの時間を分けて測ります。",
+        "Fetches a URL and times DNS, TCP, TLS and first-byte separately.",
     )
+    why = Text(
+        "『Webが遅い/つながらない』を段階ごとに分解し、ネットワークの問題かサーバーの問題かを切り分けます。",
+        "Turns 'the site is slow/down' into a phase breakdown so you can tell a "
+        "network problem from a slow or erroring server.",
+    )
+    means = Text(
+        "サーバーまでは届いていますが、HTTPリクエストが失敗またはエラー(5xx)になりました。",
+        "Network reaches the server but the HTTP request failed or 5xx'd.",
+    )
+    runbook = [
+        Text(
+            "段階別の時間を見る: connect が速く ttfb が遅いならサーバー側の処理が遅い",
+            "Read the phase timing: a slow `ttfb` with fast `connect` is a slow server.",
+        ),
+        Text(
+            "サーバーのログ/ヘルスチェックを確認する",
+            "Check the server's own logs / health endpoint.",
+        ),
+    ]
     manual_commands = [
         "curl -o /dev/null -s -w "
         "'dns:%{time_namelookup} conn:%{time_connect} tls:%{time_appconnect} "
@@ -103,7 +122,11 @@ class HttpProbe(Probe):
     def check(self, ctx: Context) -> CheckResult:
         url = ctx.get("http_url")
         if not url:
-            return CheckResult.skip(self.name, "no http_url configured")
+            return CheckResult.skip(
+                self.name,
+                tr("URLが指定されていません", "no http_url configured"),
+                code="http.none",
+            )
         info = _timed_get(url, timeout=float(ctx.get("http_timeout", 5.0)))
         phases = info.get("phases", {})
         metrics = {k: v for k, v in phases.items() if v is not None}
@@ -116,6 +139,7 @@ class HttpProbe(Probe):
                 f"{url}: {info['error']}",
                 metrics=metrics,
                 detail=info,
+                code="http.failed",
             )
         code = info.get("status_code", 0)
         phase_str = " ".join(
@@ -124,9 +148,13 @@ class HttpProbe(Probe):
         if code >= 500:
             return CheckResult.fail(
                 self.name,
-                f"{url}: HTTP {code} (server error) [{phase_str}]",
+                tr(
+                    f"{url}: HTTP {code}（サーバーエラー） [{phase_str}]",
+                    f"{url}: HTTP {code} (server error) [{phase_str}]",
+                ),
                 metrics=metrics,
                 detail=info,
+                code="http.server_error",
             )
         if code >= 400:
             return CheckResult.warn(
@@ -134,10 +162,12 @@ class HttpProbe(Probe):
                 f"{url}: HTTP {code} [{phase_str}]",
                 metrics=metrics,
                 detail=info,
+                code="http.client_error",
             )
         return CheckResult.ok(
             self.name,
             f"{url}: HTTP {code} [{phase_str}]",
             metrics=metrics,
             detail=info,
+            code="http.ok",
         )
