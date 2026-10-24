@@ -1,8 +1,12 @@
 """Declarative, shareable diagnosis scenarios.
 
-A network admin can encode 'how to triage our environment' as a YAML/JSON file
-and hand it to users, who then run ``netdiag scenario office.yaml`` without
-knowing the internal probe names or target addresses.
+A production-engineering or network team can encode 'how to check this line'
+as a YAML/JSON file and hand it out; users then run ``netdiag scenario
+line1.yaml`` without knowing probe names or addresses. A scenario may contain:
+
+* ``checks`` — host-side probes with their parameters (gateway, tcp, dns ...),
+* ``devices`` — the line's devices (same format as a device list file),
+* ``config`` — scenario-wide settings (``count``, ``internet`` ...).
 
 YAML is optional (loaded only if PyYAML is installed); JSON always works via the
 standard library, keeping the core dependency-free.
@@ -29,6 +33,7 @@ class Scenario:
     description: str
     checks: List[ScenarioCheck]
     config: Dict[str, Any] = field(default_factory=dict)  # scenario-wide defaults
+    devices: List[Any] = field(default_factory=list)  # netdiag.inventory.Device
 
     @property
     def probe_names(self) -> List[str]:
@@ -36,14 +41,14 @@ class Scenario:
 
 
 def _load_raw(path: Path) -> Dict[str, Any]:
-    text = path.read_text()
+    text = path.read_text(encoding="utf-8-sig")
     if path.suffix in (".yaml", ".yml"):
         try:
             import yaml  # optional dependency
         except ImportError as e:  # pragma: no cover
             raise RuntimeError(
                 "PyYAML is required for .yaml scenarios "
-                "(install netdiag[scenario]); or use a .json scenario."
+                "(pip install 'network-check-tool[yaml]'); or use a .json scenario."
             ) from e
         return yaml.safe_load(text)
     return json.loads(text)
@@ -51,16 +56,26 @@ def _load_raw(path: Path) -> Dict[str, Any]:
 
 # Map a scenario check's free-form fields onto the engine's config keys.
 _FIELD_TO_CONFIG = {
-    "target": {"icmp": "target", "tcp": "tcp_targets", "traceroute": "trace_target"},
+    "target": {
+        "icmp": "target",
+        "tcp": "tcp_targets",
+        "traceroute": "trace_target",
+        "external": "external_ip",
+    },
     "resolver": {"dns": "_resolver"},
     "expect": {"dns": "dns_name"},
+    "name": {"dns": "dns_name"},
     "url": {"http": "http_url", "tls": "tls_target"},
 }
+
+# Probes that only make sense when the network should reach the internet; a
+# scenario that lists one of them turns internet checks on.
+_INTERNET_PROBES = {"external", "dns", "dualstack"}
 
 
 def parse_scenario(raw: Dict[str, Any]) -> Scenario:
     checks: List[ScenarioCheck] = []
-    for item in raw.get("checks", []):
+    for item in raw.get("checks", []) or []:
         if isinstance(item, str):
             checks.append(ScenarioCheck(probe=item))
             continue
@@ -80,11 +95,22 @@ def parse_scenario(raw: Dict[str, Any]) -> Scenario:
                 value = [value]
             cfg[key] = value
         checks.append(ScenarioCheck(probe=probe, label=item.get("label"), config=cfg))
+    devices: List[Any] = []
+    if raw.get("devices"):
+        from ..inventory import parse_structured
+
+        devices = parse_structured(
+            {"devices": raw["devices"], "defaults": raw.get("defaults") or {}}
+        )
+    config = dict(raw.get("config", {}) or {})
+    if any(c.probe in _INTERNET_PROBES for c in checks):
+        config.setdefault("internet", True)
     return Scenario(
         name=raw.get("name", "scenario"),
         description=raw.get("description", ""),
         checks=checks,
-        config=raw.get("config", {}),
+        config=config,
+        devices=devices,
     )
 
 
