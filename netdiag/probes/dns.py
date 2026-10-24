@@ -3,61 +3,31 @@
 Deliberately separated from reachability (``external`` pings an IP). When
 ``external`` is OK but ``dns`` FAILs, the engine can state with confidence that
 the resolver — not the network path — is the problem.
+
+Besides the system resolver, every configured DNS server is queried directly
+(stdlib UDP client), so "one of the two DNS servers is dead" is visible instead
+of hiding behind a slow fallback.
 """
 
 from __future__ import annotations
 
-import re
 import socket
 import threading
 import time
-from pathlib import Path
 from typing import List, Optional
 
 from ..core import CheckResult, Context, Probe, register
-from ..core.util import have, is_linux, run
+from ..i18n import Text, tr
+from ..measure.dns import DnsAnswer, query
+from ._common import fmt_ms, oscmd
 
-_NSLOOKUP_ADDR_RE = re.compile(r"^Address:\s*(\S+)", re.MULTILINE)
-
-
-def _parse_nslookup_addresses(text: str) -> List[str]:
-    """Extract the answer addresses from ``nslookup`` output.
-
-    Answer lines look like ``Address: 93.184.216.34``; the queried server's own
-    line looks like ``Address: 8.8.8.8#53`` (with a ``#port`` suffix). We keep the
-    values without a ``#`` — that drops the server line and keeps A/AAAA answers.
-    Returns sorted unique addresses.
-    """
-    addrs = [m for m in _NSLOOKUP_ADDR_RE.findall(text) if "#" not in m]
-    return sorted(set(addrs))
-
-
-def _resolve_via_server(
-    name: str, server: str, timeout: float = 3.0
-) -> Optional[List[str]]:
-    """Resolve ``name`` against a specific DNS ``server`` via ``nslookup``.
-
-    Returns the answer addresses, or ``None`` if the query produced none.
-    """
-    res = run(["nslookup", name, server], timeout=timeout)
-    addrs = _parse_nslookup_addresses(res.stdout or res.stderr or "")
-    return addrs or None
+SLOW_MS = 1000.0
 
 
 def configured_resolvers() -> List[str]:
-    servers: List[str] = []
-    resolv = Path("/etc/resolv.conf")
-    if resolv.exists():
-        try:
-            for line in resolv.read_text().splitlines():
-                line = line.strip()
-                if line.startswith("nameserver"):
-                    parts = line.split()
-                    if len(parts) > 1:
-                        servers.append(parts[1])
-        except OSError:
-            pass
-    return servers
+    from .. import netinfo
+
+    return list(netinfo.snapshot().resolvers)
 
 
 def _resolve(name: str, timeout: float = 3.0) -> Optional[List[str]]:
@@ -75,7 +45,7 @@ def _resolve(name: str, timeout: float = 3.0) -> Optional[List[str]]:
         try:
             infos = socket.getaddrinfo(name, None)
             result[0] = sorted({i[4][0] for i in infos})
-        except (socket.gaierror, OSError):
+        except (socket.gaierror, OSError, UnicodeError):
             result[0] = None
 
     worker = threading.Thread(target=_lookup, daemon=True)
@@ -86,22 +56,31 @@ def _resolve(name: str, timeout: float = 3.0) -> Optional[List[str]]:
     return result[0]
 
 
+def _server_line(a: DnsAnswer) -> str:
+    if a.ok:
+        return f"{a.server} {fmt_ms(a.elapsed_ms)}"
+    if a.error:
+        return f"{a.server} " + tr(f"応答なし({a.error})", f"no answer ({a.error})")
+    return f"{a.server} {a.rcode}"
+
+
 @register
 class DnsProbe(Probe):
     name = "dns"
-    title = "DNS resolution"
+    title = Text("名前解決 (DNS)", "DNS resolution")
     layer = "L7"
     depends_on = ["external"]
-    what = "Reads the configured resolvers and resolves a known-good name."
-    why = (
-        "Isolates name-resolution faults. If reachability (external) is fine but "
-        "this fails, the resolver is at fault, not connectivity."
+    requires_internet = True
+    what = Text(
+        "設定されたDNSサーバーで既知の名前を解決し、サーバーごとの応答も確認します。",
+        "Resolves a known-good name and queries each configured resolver directly.",
     )
-    manual_commands = [
-        "cat /etc/resolv.conf",
-        "getent hosts example.com",
-        "nslookup example.com",
-    ]
+    why = Text(
+        "名前解決の問題を切り分けます。到達性(external)がOKでこれがNGなら、原因は通信経路ではなくDNSです。",
+        "Isolates name-resolution faults. If reachability (external) is fine but "
+        "this fails, the resolver is at fault, not connectivity.",
+    )
+    manual_commands = ["nslookup example.com", "nslookup example.com <dns-server>"]
 
     def check(self, ctx: Context) -> CheckResult:
         name = ctx.get("dns_name", "example.com")
@@ -109,50 +88,123 @@ class DnsProbe(Probe):
         resolver = ctx.get("_resolver")
 
         if resolver:
-            # A scenario asked for a specific resolver. Honor it via nslookup and
-            # never silently fall back to the system resolver (the M5 defect).
-            if not have("nslookup"):
-                return CheckResult.warn(
+            # A scenario asked for a specific resolver: query exactly that server
+            # and never silently fall back to the system configuration.
+            a = query(name, resolver, timeout=timeout)
+            detail = {
+                "resolver": resolver,
+                "query": name,
+                "answers": a.addresses or None,
+                "server": a.to_dict(),
+            }
+            if not a.ok:
+                why = a.error or a.rcode or "no answer"
+                return CheckResult.fail(
                     self.name,
-                    f"custom resolver {resolver} requested but 'nslookup' is "
-                    f"unavailable to query it",
+                    tr(
+                        f"{name} の名前解決に失敗（resolver {resolver}: {why}）",
+                        f"resolution of {name} failed (resolver {resolver}: {why})",
+                    ),
                     metrics={"resolved": 0.0},
-                    detail={"resolver": resolver, "query": name},
+                    detail=detail,
+                    code="dns.failed",
                 )
-            start = time.perf_counter()
-            addrs = _resolve_via_server(name, resolver, timeout=timeout)
-            elapsed = (time.perf_counter() - start) * 1000.0
-            detail = {"resolver": resolver, "query": name, "answers": addrs}
-            target_desc = f"resolver {resolver}"
-        else:
-            resolvers = configured_resolvers()
-            start = time.perf_counter()
-            addrs = _resolve(name, timeout=timeout)
-            elapsed = (time.perf_counter() - start) * 1000.0
-            detail = {"resolvers": resolvers, "query": name, "answers": addrs}
-            target_desc = (
-                f"resolvers: {', '.join(resolvers) if resolvers else 'none configured'}"
+            return self._ok_or_slow(
+                name, a.addresses, a.elapsed_ms or 0.0, detail, via=resolver
             )
 
+        resolvers = configured_resolvers()
+        start = time.perf_counter()
+        addrs = _resolve(name, timeout=timeout)
+        elapsed = (time.perf_counter() - start) * 1000.0
+        per_server = [query(name, s, timeout=min(timeout, 2.0)) for s in resolvers[:4]]
+        detail = {
+            "resolvers": resolvers,
+            "query": name,
+            "answers": addrs,
+            "servers": [a.to_dict() for a in per_server],
+        }
         if addrs is None:
+            target_desc = (
+                tr("DNSサーバー: ", "resolvers: ")
+                + ", ".join(_server_line(a) for a in per_server)
+                if per_server
+                else tr("DNSサーバー未設定", "resolvers: none configured")
+            )
             return CheckResult.fail(
                 self.name,
-                f"resolution of {name} failed ({target_desc})",
+                tr(
+                    f"{name} の名前解決に失敗（{target_desc}）",
+                    f"resolution of {name} failed ({target_desc})",
+                ),
                 metrics={"resolved": 0.0},
                 detail=detail,
+                code="dns.failed" if resolvers else "dns.no_resolver",
             )
-        metrics = {"resolved": 1.0, "resolve_ms": elapsed}
-        suffix = f" via {resolver}" if resolver else ""
-        if elapsed > 1000:
+        dead = [a for a in per_server if a.error]
+        if dead and len(dead) < len(per_server):
             return CheckResult.warn(
                 self.name,
-                f"{name} → {addrs[0]} but slow ({elapsed:.0f}ms){suffix}",
+                tr(
+                    f"{name} は解決できますが応答しないDNSサーバーがあります: "
+                    + ", ".join(_server_line(a) for a in per_server),
+                    f"{name} resolves but a DNS server is not answering: "
+                    + ", ".join(_server_line(a) for a in per_server),
+                ),
+                metrics={"resolved": 1.0, "resolve_ms": elapsed},
+                detail=detail,
+                code="dns.server_down",
+            )
+        return self._ok_or_slow(name, addrs, elapsed, detail)
+
+    def _ok_or_slow(
+        self, name, addrs, elapsed, detail, via: Optional[str] = None
+    ) -> CheckResult:
+        metrics = {"resolved": 1.0, "resolve_ms": elapsed}
+        suffix = f" via {via}" if via else ""
+        if elapsed > SLOW_MS:
+            return CheckResult.warn(
+                self.name,
+                tr(
+                    f"{name} → {addrs[0]} ですが遅い ({elapsed:.0f}ms){suffix}",
+                    f"{name} → {addrs[0]} but slow ({elapsed:.0f}ms){suffix}",
+                ),
                 metrics=metrics,
                 detail=detail,
+                code="dns.slow",
             )
         return CheckResult.ok(
             self.name,
             f"{name} → {', '.join(addrs[:3])} ({elapsed:.0f}ms){suffix}",
             metrics=metrics,
             detail=detail,
+            code="dns.ok",
+        )
+
+    def advice(self, result, results=None):
+        servers = ""
+        if result is not None:
+            servers = ", ".join(result.detail.get("resolvers") or []) or str(
+                result.detail.get("resolver") or ""
+            )
+        servers = servers or tr("<DNSサーバー>", "<resolver-ip>")
+        return (
+            tr(
+                "通信はできていますが名前解決ができません — DNSサーバーの問題です。",
+                "Connectivity is fine but names don't resolve — a DNS/resolver fault.",
+            ),
+            [
+                tr(
+                    f"DNSサーバーに直接問い合わせる: nslookup example.com {servers.split(',')[0]}",
+                    f"Test the resolver directly: nslookup example.com {servers.split(',')[0]}",
+                ),
+                tr(
+                    "設備ネットワークではIPアドレスで直接指定すると確実です",
+                    "On equipment networks, addressing devices by IP avoids DNS entirely.",
+                ),
+                tr(
+                    f"DNS設定を確認: {oscmd('resolvectl status / cat /etc/resolv.conf', 'ipconfig /all', 'scutil --dns')}",
+                    f"Inspect the DNS settings: {oscmd('resolvectl status / cat /etc/resolv.conf', 'ipconfig /all', 'scutil --dns')}",
+                ),
+            ],
         )

@@ -7,7 +7,7 @@ that depends on it into 'consequences' — the property the whole tool rests on.
 
 import pytest
 
-from netdiag.core import CheckResult, Context, Probe, Status, all_probes
+from netdiag.core import CheckResult, Probe, Status
 from netdiag.core.probe import _REGISTRY
 from netdiag.diagnosis import Engine
 

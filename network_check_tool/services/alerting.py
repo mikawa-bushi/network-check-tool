@@ -37,8 +37,8 @@ class HostAlerter:
         # Reserved for a future windowed loss% check; a single ping sample only
         # exposes a boolean loss, so per-sample classification uses packet_loss.
         self.loss_warn_pct = loss_warn_pct
-        # F1: when set, run a netdiag sweep of the LOCAL network stack on a
-        # confirmed degradation and attach the root cause to the alert.
+        # F1: when set, diagnose this host with netdiag on a confirmed
+        # degradation and attach the root cause to the alert.
         self.diagnose = diagnose
         self.engine_config = engine_config or {}
         self._sm = StateMachine(
@@ -75,25 +75,28 @@ class HostAlerter:
         return transition
 
     def _attach_diagnosis(self, transition: Transition) -> None:
-        """Run netdiag once and fold its root cause into the degradation alert.
+        """Diagnose *this* host once and fold the root cause into the alert.
 
         Triggered only on a confirmed DEGRADED transition, so the state machine
-        rate-limits it to once per outage episode. netdiag diagnoses the local
-        network stack (which layer is broken), answering *why* the host is
-        unreachable. Any failure here is logged, never propagated.
+        rate-limits it to once per outage episode. netdiag first checks this
+        PC's own network (a broken local link explains every host at once), then
+        the host itself: route/subnet, ARP presence, ping statistics. Any failure
+        here is logged, never propagated.
         """
         try:
-            from netdiag.diagnosis import Engine, runbook_steps
+            from netdiag.diagnosis import runbook_steps
+            from netdiag.runner import diagnose_target
 
-            diag = Engine(config=self.engine_config).run()
-            primary = diag.primary
+            primary = diagnose_target(self.host, config=self.engine_config)
             if primary is not None:
                 transition.cause = primary.cause
                 transition.confidence = primary.confidence
                 transition.evidence = list(transition.evidence) + [
                     f"netdiag root cause: {primary.cause} — {primary.summary}"
                 ]
-                transition.runbook = runbook_steps(primary.cause)
+                transition.runbook = list(
+                    getattr(primary, "runbook", None) or runbook_steps(primary.cause)
+                )
                 logger.warning(
                     "auto-netdiag for %s: root cause = %s (%s)",
                     self.host,

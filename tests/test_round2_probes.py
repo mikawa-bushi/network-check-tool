@@ -1,136 +1,86 @@
-"""Round-2 review fixes (2026-06-17): ping-probe consolidation.
+"""Ping-based probe classification and the dual-stack probe.
 
-* M9  -- ``classify_ping`` owns the shared loss-threshold cascade and metric/
-  detail assembly; the warn/ok messages are evaluated lazily so the failure
-  branch never needs an RTT.
-* M10 -- ``icmp.ping`` gained a ``family`` flag; ``dualstack`` delegates to it
-  (one parser, no brittle substring match) and propagates ``count``.
+* ``result_from_ping`` is the single OK/WARN/FAIL/SKIP cascade shared by the
+  host ping probes (external / icmp): any reply with no loss is OK, partial loss
+  or latency is WARN, no reply is FAIL, and "could not measure" is SKIP — never
+  a false FAIL.
+* ``dualstack`` pings over each family through the shared system-ping parser.
 """
 
 from netdiag.core import Context, Status
-from netdiag.probes import dualstack, icmp
-from netdiag.probes.icmp import classify_ping
+from netdiag.measure import PingStats
+from netdiag.probes import dualstack
+from netdiag.probes.icmp import result_from_ping
 
-# ------------------------------------------------------------------ M9
 
-
-def test_classify_ping_ok_records_metrics_and_detail():
-    r = classify_ping(
-        "p",
-        12.3,
-        0.0,
-        "raw",
-        fail_msg="f",
-        warn_msg=lambda: "w",
-        ok_msg=lambda: "ok 12.3",
+def _stats(received, sent=10, rtts=None, error=None, dups=0):
+    return PingStats(
+        target="h",
+        sent=sent,
+        received=received,
+        rtts_ms=rtts if rtts is not None else [0.5] * received,
+        error=error,
+        duplicates=dups,
     )
+
+
+def test_all_replies_is_ok_with_statistics():
+    r = result_from_ping("external", "h", _stats(10))
     assert r.status is Status.OK
-    assert r.summary == "ok 12.3"
+    assert r.code == "external.ok"
     assert r.metrics["loss_pct"] == 0.0
-    assert r.metrics["rtt_ms"] == 12.3
-    assert r.detail["output"] == "raw"
+    assert r.metrics["rtt_median_ms"] == 0.5
+    assert "loss_upper_pct" in r.metrics  # the honest 95% bound is recorded
 
 
-def test_classify_ping_warns_on_partial_loss():
-    r = classify_ping(
-        "p",
-        12.3,
-        25.0,
-        "raw",
-        fail_msg="f",
-        warn_msg=lambda: "w",
-        ok_msg=lambda: "ok",
-    )
+def test_partial_loss_warns():
+    r = result_from_ping("external", "h", _stats(7))
     assert r.status is Status.WARN
-    assert r.summary == "w"
+    assert r.code == "external.degraded"
 
 
-def test_classify_ping_fail_is_lazy_and_omits_missing_rtt():
-    # rtt is None on total loss; the warn/ok messages must NOT be evaluated
-    # (this one would raise), proving only the chosen branch runs.
-    def boom():
-        raise AssertionError("warn/ok message evaluated on the fail path")
-
-    r = classify_ping(
-        "p", None, 100.0, "raw", fail_msg="down", warn_msg=boom, ok_msg=boom
-    )
+def test_no_reply_fails():
+    r = result_from_ping("external", "h", _stats(0))
     assert r.status is Status.FAIL
-    assert r.summary == "down"
-    assert "rtt_ms" not in r.metrics  # None RTT is not recorded
+    assert r.code == "external.unreachable"
+    assert "rtt_ms" not in r.metrics
 
 
-def test_classify_ping_merges_extra_metrics_and_detail():
-    r = classify_ping(
-        "gw",
-        5.0,
-        0.0,
-        "raw",
-        fail_msg="f",
-        warn_msg=lambda: "w",
-        ok_msg=lambda: "ok",
-        extra_metrics={"has_gateway": 1.0},
-        extra_detail={"gateway": "10.0.0.1"},
-    )
-    assert r.metrics["has_gateway"] == 1.0
-    assert r.detail["gateway"] == "10.0.0.1"
+def test_measurement_error_is_skip_not_fail():
+    r = result_from_ping("external", "h", _stats(0, error="ping command not available"))
+    assert r.status is Status.SKIP
 
 
-# ------------------------------------------------------------------ M10: ping family
+def test_slow_wan_reply_warns():
+    r = result_from_ping("external", "h", _stats(10, rtts=[400.0] * 10))
+    assert r.status is Status.WARN
 
 
-class _FakeRun:
-    def __init__(self, args):
-        self.args = args
-
-    stdout = "rtt min/avg/max = 1.0/2.0/3.0 ms\n0% packet loss"
-    stderr = ""
+# ------------------------------------------------------------------ dualstack
 
 
-def test_ping_injects_family_flag(monkeypatch):
-    captured = {}
-
-    def fake_run(args, timeout=None):
-        captured["args"] = args
-        return _FakeRun(args)
-
-    monkeypatch.setattr(icmp, "run", fake_run)
-    monkeypatch.setattr(icmp, "is_windows", lambda: False)
-
-    icmp.ping("h", count=2, family=6)
-    assert "-6" in captured["args"]
-    icmp.ping("h", count=2, family=4)
-    assert "-4" in captured["args"]
-    icmp.ping("h", count=2)
-    assert "-4" not in captured["args"] and "-6" not in captured["args"]
-
-
-# ------------------------------------------------------------------ M10: dualstack
-
-
-def test_ping_family_reachable_unreachable_and_propagates_count(monkeypatch):
-    monkeypatch.setattr(dualstack, "have", lambda cmd: True)
+def test_ping_family_uses_system_ping_with_family_and_count(monkeypatch):
     calls = {}
 
-    def fake_ping(host, count=2, family=None):
+    def fake_system_ping(host, count=2, family=None, **kw):
         calls["family"], calls["count"] = family, count
-        if family == 4:
-            return (10.0, 0.0, "0% packet loss")
-        return (None, 100.0, "100% packet loss")
+        st = PingStats(target=host, sent=count, raw="out")
+        st.received = count if family == 4 else 0
+        return st
 
-    monkeypatch.setattr(dualstack, "ping", fake_ping)
-
+    monkeypatch.setattr(dualstack, "system_ping", fake_system_ping)
     assert dualstack._ping_family("h", v6=False, count=3) is True
     assert calls == {"family": 4, "count": 3}
     assert dualstack._ping_family("h", v6=True) is False
 
 
-def test_ping_family_none_without_ping_or_output(monkeypatch):
-    monkeypatch.setattr(dualstack, "have", lambda cmd: False)
-    assert dualstack._ping_family("h", v6=False) is None
-
-    monkeypatch.setattr(dualstack, "have", lambda cmd: True)
+def test_ping_family_none_when_ping_cannot_run(monkeypatch):
     monkeypatch.setattr(
-        dualstack, "ping", lambda host, count=2, family=None: (None, 100.0, "")
+        dualstack,
+        "system_ping",
+        lambda host, count=2, family=None: PingStats(
+            target=host, error="ping command not available"
+        ),
     )
     assert dualstack._ping_family("h", v6=False) is None
 
@@ -141,7 +91,7 @@ def test_dualstack_v4_ok_v6_down_warns(monkeypatch):
     def fake_pf(host, v6, count=2):
         return False if v6 else True
 
-    monkeypatch.setattr(dualstack, "_ping_family", fake_pf)
+    monkeypatch.setattr(dualstack, "_family_ok", fake_pf)
     res = dualstack.DualStackProbe().check(Context({"dns_name": "h"}))
     assert res.status is Status.WARN
     assert "IPv6 unreachable" in res.summary
@@ -156,6 +106,28 @@ def test_dualstack_check_propagates_count(monkeypatch):
         seen.append(count)
         return True
 
-    monkeypatch.setattr(dualstack, "_ping_family", fake_pf)
+    monkeypatch.setattr(dualstack, "_family_ok", fake_pf)
     dualstack.DualStackProbe().check(Context({"dns_name": "h", "count": 5}))
     assert seen == [5, 5]
+
+
+def test_ipv4_only_network_is_not_a_failure(monkeypatch):
+    # IPv6 "Network is unreachable" on this PC = single-stack, not broken.
+    monkeypatch.setattr(dualstack, "_has_family", lambda host, fam: True)
+    monkeypatch.setattr(
+        dualstack, "_family_ok", lambda host, v6, count=2: None if v6 else True
+    )
+    res = dualstack.DualStackProbe().check(Context({"dns_name": "h"}))
+    assert res.status is Status.OK
+    assert res.code == "dualstack.single_stack"
+
+
+def test_tcp_second_opinion_when_ping_is_filtered(monkeypatch):
+    monkeypatch.setattr(dualstack, "_ping_family", lambda host, v6, count=2: False)
+    monkeypatch.setattr(dualstack, "_tcp_family", lambda host, family, **kw: True)
+    assert dualstack._family_ok("h", v6=False, count=2) is True
+    monkeypatch.setattr(dualstack, "_tcp_family", lambda host, family, **kw: False)
+    assert dualstack._family_ok("h", v6=False, count=2) is False
+    monkeypatch.setattr(dualstack, "_ping_family", lambda host, v6, count=2: None)
+    monkeypatch.setattr(dualstack, "_tcp_family", lambda host, family, **kw: None)
+    assert dualstack._family_ok("h", v6=True, count=2) is None

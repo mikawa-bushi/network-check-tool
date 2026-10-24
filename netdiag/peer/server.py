@@ -11,7 +11,6 @@ from __future__ import annotations
 import socket
 import threading
 import time
-from typing import Optional
 
 DEFAULT_PORT = 47600
 _CHUNK = 65536

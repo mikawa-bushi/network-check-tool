@@ -4,14 +4,22 @@ A probe answers one narrow question about one layer (is the NIC up? does the
 gateway reply? does DNS resolve?). It declares which lower-layer probes it
 ``depends_on`` so the diagnosis engine can tell a *cause* from a *consequence*:
 if the gateway is unreachable, a failing DNS probe is a symptom, not the root.
+
+Probes come in two scopes:
+
+* ``host`` probes describe *this* computer (NICs, gateway, DNS ...) and form the
+  default sweep of ``netdiag check``.
+* ``target`` probes describe one remote device (a PLC, HMI, robot controller)
+  and run once per device, with the device in ``ctx.config["target"]``.
 """
 
 from __future__ import annotations
 
 import time
-from typing import Any, Callable, Dict, List, Optional, Type
+from typing import Any, Dict, List, Optional, Tuple, Type
 
-from .result import CheckResult, Status
+from ..i18n import TextLike, render, render_list
+from .result import CheckResult
 
 
 class Context:
@@ -32,6 +40,16 @@ class Context:
     def get(self, key: str, default: Any = None) -> Any:
         return self.config.get(key, default)
 
+    def network(self):
+        """This host's network snapshot (shared, collected once per run)."""
+        hn = self.config.get("_netinfo")
+        if hn is None:
+            from .. import netinfo
+
+            hn = netinfo.snapshot()
+            self.config["_netinfo"] = hn
+        return hn
+
 
 class Probe:
     """Base class. Subclasses set the class attributes and implement ``check``.
@@ -39,28 +57,50 @@ class Probe:
     ``check`` returns a :class:`CheckResult`. The base ``run`` wraps it with
     timing and a catch-all so a buggy or permission-denied probe degrades to a
     SKIP/FAIL result instead of aborting the whole diagnosis.
+
+    Text attributes (``title``, ``what``, ``why``, ``means``, ``runbook``) may be
+    plain strings or :class:`netdiag.i18n.Text` (bilingual, resolved lazily).
     """
 
     name: str = "probe"
-    title: str = ""
+    title: TextLike = ""
     layer: str = "?"  # L1, L2, L3, L4, L7, SYSTEM
     depends_on: List[str] = []
     requires_root: bool = False
+    #: ``host`` (this computer) or ``target`` (one remote device).
+    scope: str = "host"
+    #: Included in the default sweep? Opt-in probes (traceroute ...) say False.
+    default: bool = True
+    #: Only meaningful when the network is expected to reach the internet.
+    requires_internet: bool = False
     # What/why the probe checks and the manual commands that do the same thing.
     # Surfaced verbatim by ``netdiag explain`` so users can learn to do it by hand.
-    what: str = ""
-    why: str = ""
-    manual_commands: List[str] = []
-    # Diagnosis narrative for when THIS probe is the root cause. Built-in probes
-    # are described in diagnosis/rules.py::RUNBOOKS; plugin probes (not in that
-    # table) supply their own here so they still get a "what it means / next
-    # steps" report. ``means`` falls back to ``why`` and ``runbook`` to
-    # ``manual_commands`` when left unset.
-    means: str = ""
-    runbook: List[str] = []
+    what: TextLike = ""
+    why: TextLike = ""
+    manual_commands: List[TextLike] = []
+    # Diagnosis narrative for when THIS probe is the root cause: what it means
+    # and what to do next. ``advice()`` may override this with steps built from
+    # the actual result (the real gateway IP, the device name ...). ``means``
+    # falls back to ``why`` and ``runbook`` to ``manual_commands`` when unset.
+    means: TextLike = ""
+    runbook: List[TextLike] = []
 
     def check(self, ctx: Context) -> CheckResult:  # pragma: no cover - abstract
         raise NotImplementedError
+
+    def advice(
+        self,
+        result: Optional[CheckResult],
+        results: Optional[Dict[str, CheckResult]] = None,
+    ) -> Tuple[str, List[str]]:
+        """``(what it means, next steps)`` when this probe is the root cause.
+
+        ``result`` is None when asked statically (``netdiag explain``, runbook
+        lookups without a run); overrides must handle that.
+        """
+        means = render(self.means) or render(self.why)
+        steps = render_list(self.runbook) or render_list(self.manual_commands)
+        return means, steps
 
     def run(self, ctx: Context) -> CheckResult:
         start = time.perf_counter()
@@ -71,13 +111,16 @@ class Probe:
                 self.name,
                 f"probe error: {e}",
                 error=str(e),
+                code=f"{self.name}.error",
             )
         res.layer = res.layer if res.layer != "?" else self.layer
-        res.title = res.title or self.title or self.name
+        res.title = render(res.title) or render(self.title) or self.name
         if not res.depends_on:
             res.depends_on = list(self.depends_on)
         if res.raw_command is None and self.manual_commands:
-            res.raw_command = " ; ".join(self.manual_commands)
+            res.raw_command = " ; ".join(render_list(self.manual_commands))
+        if not res.code:
+            res.code = f"{self.name}.{res.status.value}"
         res.duration_ms = (time.perf_counter() - start) * 1000.0
         return res
 

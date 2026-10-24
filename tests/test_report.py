@@ -88,7 +88,7 @@ def test_render_json_healthy(isolated_registry):
 # --------------------------------------------------------------------- terminal
 
 
-def test_render_terminal_lists_probes_and_cause(isolated_registry):
+def test_render_terminal_lists_probes_and_cause(isolated_registry, ja):
     diag = _failing_diag(isolated_registry)
     out = render_terminal(diag, color=False)
 
@@ -99,6 +99,18 @@ def test_render_terminal_lists_probes_and_cause(isolated_registry):
     assert "推定原因: a" in out
 
 
+def test_render_terminal_english(isolated_registry):
+    out = render_terminal(_failing_diag(isolated_registry), color=False)
+    assert "Likely cause: a" in out
+    assert "推定原因" not in out
+
+
+def test_render_terminal_ascii_symbols_for_legacy_consoles(isolated_registry):
+    # A cp932 console cannot encode ✔/✘ — the renderer must fall back.
+    out = render_terminal(_failing_diag(isolated_registry), color=False, unicode=False)
+    assert "✘" not in out and "NG" in out
+
+
 def test_render_terminal_color_toggle(isolated_registry):
     diag = _failing_diag(isolated_registry)
 
@@ -106,7 +118,7 @@ def test_render_terminal_color_toggle(isolated_registry):
     assert "\033[" in render_terminal(diag, color=True)
 
 
-def test_render_terminal_verbose_adds_reasoning(isolated_registry):
+def test_render_terminal_verbose_adds_reasoning(isolated_registry, ja):
     # Two-sided: the Engine must run with verbose=True to populate diag.reasoning,
     # AND render_terminal must be called with verbose=True to emit the section.
     diag = _failing_diag(isolated_registry, verbose=True)
@@ -115,7 +127,7 @@ def test_render_terminal_verbose_adds_reasoning(isolated_registry):
     assert "推論過程" in out
 
 
-def test_render_terminal_failures_without_hypotheses():
+def test_render_terminal_failures_without_hypotheses(ja):
     # Not reachable via Engine (failures always yield hypotheses), but Diagnosis is
     # public API — pin the "failures but no hypotheses" branch via direct construction.
     from netdiag.diagnosis import Diagnosis
@@ -134,7 +146,14 @@ def test_render_terminal_healthy_verdict(isolated_registry):
     _register(isolated_registry, _make_probe("a", "L2", [], Status.OK))
     out = render_terminal(Engine().run(), color=False)
 
-    assert "All checks passed" in out
+    assert "all checks passed" in out
+
+
+def test_render_terminal_healthy_verdict_japanese(isolated_registry, ja):
+    _register(isolated_registry, _make_probe("a", "L2", [], Status.OK))
+    out = render_terminal(Engine().run(), color=False)
+
+    assert "異常は見つかりませんでした" in out
 
 
 # ------------------------------------------------------------------------- HTML

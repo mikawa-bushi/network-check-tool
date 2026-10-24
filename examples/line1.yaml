@@ -1,0 +1,20 @@
+# 1ラインの点検シナリオ。実行:  netdiag scenario examples/line1.yaml
+# （YAMLには PyYAML が必要: pip install "network-check-tool[yaml]"。
+#   機器だけなら examples/devices.csv を netdiag check -f で使えます）
+name: 1ライン ネットワーク点検
+description: このPCの設定と、1ラインの機器（PLC・HMI・ロボット）への到達性・ポートを確認します。
+
+config:
+  count: 50            # 1台あたりのping回数（断続的な不調を拾うなら 100〜300）
+
+checks:                # このPC側の確認項目
+  - interface
+  - link
+  - ipconfig
+  - neighbor
+
+devices:               # 台帳と同じ書式（名前・IP・ポート・しきい値）
+  - {name: PLC-1, host: 192.168.3.39, ports: melsoft}
+  - {name: HMI-1, host: 192.168.3.40, ports: vnc}
+  - {name: ロボット-1, host: 192.168.3.41, rtt_warn_ms: 5}
+  - {name: IoTゲートウェイ, host: 192.168.3.50, ports: [modbus, opcua], loss_warn_pct: 1}

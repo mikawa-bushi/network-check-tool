@@ -1,461 +1,261 @@
-# Network Check Tool
-
-This package ships **two command-line tools**:
-
-- **`netdiag`** — *local-first network & OS trouble isolation.* Runs a layered set
-  of probes and a dependency-graph engine that reports **which layer is broken,
-  why, and what to check next** — offline, without root. ([docs](docs/netdiag.md))
-- **`network-checker`** — *ping monitoring with a web dashboard.* Periodic ping
-  tests across multiple hosts, stored in SQLite and visualized with Plotly.
-
-In short: `network-checker` tells you *that* something is down; `netdiag` tells
-you *why*.
+# network-check-tool — 生産技術者のためのネットワーク点検ツール
 
 ![Python Version](https://img.shields.io/badge/Python-3.10%2B-blue)
 ![License](https://img.shields.io/badge/License-MIT-yellow)
 ![PyPI](https://img.shields.io/pypi/v/network-check-tool)
 
-## 🚀 Quick Start
-
-### Installation from PyPI (Recommended)
-
-Install the package directly from PyPI:
+ノートPCをラインのスイッチにつないで、機器の一覧（台帳）を渡すだけ。
+**このPCのネットワーク**と**ラインの全機器（PLC・HMI・ロボット・センサ）**を数秒で点検し、
+異常があれば「どこが・なぜ・次に何を確認するか」を日本語で示します。
 
 ```bash
 pip install network-check-tool
+netdiag check -f 台帳.csv          # このPC + 台帳の全機器を点検
 ```
 
-### Installation from Source
-
-If you want to contribute or modify the code:
-
-```bash
-# Clone the repository
-git clone https://github.com/mikawa-bushi/network-check-tool.git
-cd network-check-tool
-
-# Install with Poetry (recommended for development)
-poetry install
-
-# Or install with pip
-pip install -e .
-```
-
-### First Steps
-
-1. **Initialize the database:**
-```bash
-network-checker init
-```
-
-2. **Test a single host:**
-```bash
-network-checker ping google.com
-```
-
-3. **Start the web dashboard:**
-```bash
-network-checker run-server
-```
-Then open http://localhost:9991 in your browser.
-
-## 🩺 `netdiag` — local-first trouble isolation (new)
-
-The package now also ships **`netdiag`**, a *diagnosis* companion to the
-monitoring tool. Where `network-checker` answers *"is the host reachable?"*,
-`netdiag` answers **"which layer is broken, why, and what do I check next?"** —
-fully offline, without root, on the standard library alone.
-
-```bash
-netdiag check                      # full layered sweep → root cause + next steps
-netdiag watch                      # always-on: alert (file/JSONL) only when the verdict changes
-netdiag explain dns                # learn what a check does + the manual commands
-netdiag snapshot save ok           # later: netdiag snapshot diff ok → "what changed?"
-```
-
-It runs a dependency-ordered set of probes (L1 Wi-Fi → L2 ARP → L3 routing/
-reachability → L4 ports/firewall → L7 DNS/HTTP/TLS, plus host/OS), then a
-dependency-graph engine reports the **lowest failing layer** as the root cause
-and folds everything above it into "consequences". Exit codes (`0` healthy / `1`
-cause found / `2` warnings) make it script- and CI-friendly.
-
-See **[docs/netdiag.md](docs/netdiag.md)** for the full design and command
-reference.
-
-## 📖 What is Network Check Tool?
-
-Network Check Tool is a Python application designed for continuous network monitoring. It helps you:
-
-- **Monitor network connectivity** to multiple hosts simultaneously
-- **Track response times and packet loss** over time
-- **Visualize network performance** through an interactive web dashboard
-- **Set up automated monitoring** with customizable intervals
-- **Access historical data** through CLI commands or REST API
-
-Perfect for system administrators, DevOps engineers, and anyone who needs to monitor network reliability.
-
-## ✨ Features
-
-### 🎯 **Core Functionality**
-- **Periodic Ping Monitoring**: Automated ping tests at configurable intervals
-- **SQLite Database**: Persistent storage of ping results with timestamps
-- **Web Dashboard**: Interactive visualization using Plotly charts
-- **CLI Interface**: Comprehensive command-line tools for management
-- **RESTful API**: JSON endpoints for data access and integration
-
-### 📊 **Dashboard Features**
-- Real-time response time charts
-- Packet loss visualization
-- Success rate statistics
-- Multiple host monitoring
-- Time range filtering (1 hour to 1 week)
-- Auto-refresh every 30 seconds
-
-### ⚡ **Advanced Features**
-- Background scheduling with APScheduler
-- Configurable ping timeouts and intervals
-- Database indexing for performance
-- Error handling and logging
-- Development and production configurations
-
-## 🛠️ Usage Examples
-
-### Basic Monitoring
-
-```bash
-# Monitor a single host
-network-checker ping google.com --count 5
-
-# Start continuous monitoring of multiple hosts
-network-checker start-monitoring google.com cloudflare.com 8.8.8.8 --interval 30
-
-# Check recent results
-network-checker status --host google.com --limit 10
-```
-
-### Web Dashboard
-
-```bash
-# Start the web server (default: binds to localhost only — http://localhost:9991)
-network-checker run-server
-
-# Expose on the network (opt-in). The dashboard and data API have NO built-in
-# authentication, so only do this behind a reverse proxy that adds access control.
-network-checker run-server --host 0.0.0.0 --port 8080
-```
-
-> **Security note**
-> - `run-server` binds to `127.0.0.1` by default; `--host 0.0.0.0` (or any non-loopback
->   address) is an explicit opt-in and prints a warning.
-> - There is no authentication on the dashboard or `/api/*`. For remote access, run behind a
->   reverse proxy (e.g. nginx) that handles TLS and authentication; do not expose the Flask
->   development server directly in production.
-> - `--debug` (the Werkzeug interactive debugger) is refused on non-loopback hosts because it
->   allows arbitrary code execution. Debug only on `--host 127.0.0.1`.
-> - Cross-origin access to `/api/*` is disabled unless you set `CORS_ORIGINS` (comma-separated
->   allowed origins).
-
-### Data Management
-
-```bash
-# View all monitored hosts
-network-checker status
-
-# Clear all data (with confirmation)
-network-checker clear
-```
-
-## 📋 CLI Commands Reference
-
-| Command | Description | Example |
-|---------|-------------|---------|
-| `network-checker ping <host>` | Send ping tests to a specific host | `network-checker ping example.com --count 4` |
-| `network-checker start-monitoring <hosts>` | Start continuous monitoring | `network-checker start-monitoring google.com --interval 60` |
-| `network-checker run-server` | Start the web dashboard server | `network-checker run-server --port 9991` |
-| `network-checker status` | Display recent ping results | `network-checker status --host google.com` |
-| `network-checker init` | Initialize the database | `network-checker init` |
-| `network-checker clear` | Clear all ping data | `network-checker clear` |
-
-> **`network-checker` vs `netdiag` — same words, different jobs.** Both ship a
-> `ping` and a `status` command, but they are not interchangeable:
-> - `network-checker ping`/`status` are about the **monitoring database** —
->   `ping` records samples to SQLite, `status` lists recently stored results.
-> - `netdiag ping`/`status` are about **ad-hoc diagnosis** — `ping` is a
->   one-shot ICMP check that stores nothing, `status` reports the netdiag
->   history DB. Reach for `netdiag` to answer *why* something is down.
-
-## 🌐 Web Dashboard
-
-After starting the server with `network-checker run-server`, access the dashboard at http://localhost:9991.
-
-### Dashboard Features
-- **Host Selection**: Choose from monitored hosts
-- **Time Range**: View data from 1 hour to 1 week
-- **Statistics Cards**: Total pings, success rate, average response time, packet loss rate
-- **Interactive Charts**: Response time trends with packet loss indicators
-- **Auto-refresh**: Updates every 30 seconds
-
-## 🔌 API Endpoints
-
-The tool provides a REST API for integration with other tools:
-
-### GET `/api/hosts`
-Get list of monitored hosts
-```bash
-curl http://localhost:9991/api/hosts
-# Returns: ["google.com", "cloudflare.com"]
-```
-
-### GET `/api/stats?host=<host>&hours=<hours>`
-Get statistics for a specific host
-```bash
-curl "http://localhost:9991/api/stats?host=google.com&hours=24"
-```
-
-### GET `/api/ping_data?host=<host>&hours=<hours>`
-Get raw ping data for visualization
-```bash
-curl "http://localhost:9991/api/ping_data?host=google.com&hours=1"
-```
-
-### GET `/api/export?host=<host>&hours=<hours>&format=csv`
-Stream the raw ping rows as CSV (UTC timestamps) for spreadsheets/analysis.
-```bash
-curl "http://localhost:9991/api/export?host=google.com&hours=24" -o pings.csv
-```
-
-### GET `/metrics`
-Prometheus exposition of per-host health over a window (default last hour;
-`?hours=` to widen). Exposes `network_ping_up`, `network_ping_loss_ratio` and
-`network_ping_rtt_ms`, labelled by `host` — point Prometheus/Grafana at it.
-
-### Host management (loopback only)
-When the server is started with the scheduler enabled (`run-server` on a loopback
-bind), the dashboard can add/remove monitored hosts in-process:
-```bash
-curl http://localhost:9991/api/jobs                                   # list jobs
-curl -X POST http://localhost:9991/api/hosts \
-     -H 'Content-Type: application/json' -d '{"host":"google.com","interval":60}'
-curl -X DELETE http://localhost:9991/api/hosts/google.com
-```
-These write routes return **503** unless an in-process scheduler is attached, so
-they stay disabled on public (`--host 0.0.0.0`) and multi-worker deployments.
-
-## 🚦 Threshold alerts & auto-diagnosis
-
-Declare hosts (with per-host interval and warning thresholds) in a TOML/JSON file
-and let the monitor raise `DEGRADED`/`RECOVERED` alerts; with `--diagnose` a
-confirmed degradation also runs `netdiag` once and attaches the root cause.
-
-```toml
-# hosts.toml
-[[host]]
-name = "google.com"
-interval = 30
-rtt_warn_ms = 200
-loss_warn_pct = 5
-```
-```bash
-network-checker start-monitoring --config hosts.toml --diagnose
-# alerts are appended as JSONL (see the path printed at startup, or --alert-file)
-```
-
-`netdiag watch` can also push alerts to external channels:
-```bash
-netdiag watch --webhook-url https://example/hook --slack-url https://hooks.slack/... --desktop
-```
-
-## ⚙️ Configuration
-
-### Environment Variables
-
-Customize behavior with environment variables:
-
-```bash
-# Database configuration
-DATABASE_URL=sqlite:///network_check_tool.db
-# SQLite-only: busy timeout (ms) applied alongside WAL journal mode. Ignored for
-# non-SQLite backends. Raise it on slow/contended filesystems.
-SQLITE_BUSY_TIMEOUT_MS=5000
-
-# Ping settings
-PING_TIMEOUT=4.0
-DEFAULT_PING_INTERVAL=60
-
-# Monitoring scheduler: worker-pool size. The default suits a handful of hosts;
-# raise it when monitoring many hosts.
-SCHEDULER_MAX_WORKERS=4
-
-# Default hosts to monitor
-DEFAULT_HOSTS=google.com,cloudflare.com
-
-# Flask configuration
-SECRET_KEY=your-secret-key
-```
-
-### Configuration Profiles
-
-The application supports different configuration profiles:
-
-- **Development**: Debug mode enabled, SQL logging
-- **Production**: Optimized for production deployment
-
-## 🏗️ Project Structure
-
-```
-network_check_tool/
-├── __init__.py              # Package initialization
-├── app.py                   # Flask application factory
-├── cli.py                   # Command-line interface
-├── models/
-│   ├── __init__.py
-│   └── ping_result.py       # SQLAlchemy model
-├── services/
-│   ├── __init__.py
-│   ├── ping_service.py      # Ping execution service
-│   └── scheduler_service.py # Background scheduling
-├── views/
-│   ├── __init__.py
-│   └── dashboard.py         # Web API endpoints
-├── templates/
-│   └── dashboard.html       # Web dashboard UI
-└── config/
-    ├── __init__.py
-    └── config.py            # Application configuration
-```
-
-## 📊 Database Schema
-
-### ping_results table
-- `id`: Primary key (INTEGER)
-- `target_host`: Target hostname (VARCHAR(255), indexed)
-- `timestamp`: Ping timestamp (DATETIME, indexed)
-- `response_time`: Response time in milliseconds (FLOAT, nullable)
-- `packet_loss`: Boolean indicating packet loss (BOOLEAN)
-- `error_message`: Error details if ping failed (TEXT, nullable)
-
-## 🔧 Development
-
-### Development Setup
-
-```bash
-# Clone the repository
-git clone https://github.com/mikawa-bushi/network-check-tool.git
-cd network-check-tool
-
-# Install with Poetry (recommended)
-poetry install
-
-# Or create a virtual environment and install with pip
-python -m venv venv
-source venv/bin/activate  # On Windows: venv\Scripts\activate
-pip install -e .
-```
-
-### Running Tests
-
-```bash
-poetry run pytest
-# or
-python -m pytest
-```
-
-### Code Formatting
-
-```bash
-poetry run black network_check_tool/
-# or
-black network_check_tool/
-```
-
-### Development Server
-
-```bash
-# Run with auto-reload for development
-poetry run network-checker run-server --debug
-```
-
-## 🚀 Production Deployment
-
-### With Docker (Recommended)
-
-```dockerfile
-# Dockerfile example
-FROM python:3.10-slim
-WORKDIR /app
-COPY . .
-RUN pip install network-check-tool
-EXPOSE 9991
-CMD ["network-checker", "run-server", "--host", "0.0.0.0", "--port", "9991"]
-```
-
-```bash
-docker build -t network-check-tool .
-docker run -p 9991:9991 network-check-tool
-```
-
-### Manual Deployment
-
-```bash
-# Install the package
-pip install network-check-tool
-
-# Initialize database
-network-checker init
-
-# Run with a production WSGI server
-pip install gunicorn
-gunicorn -w 4 -b 0.0.0.0:9991 "network_check_tool.app:create_app('production')"
-```
-
-## 📦 Dependencies
-
-**Runtime Dependencies:**
-- `flask` - Web framework
-- `flask-sqlalchemy` - Database ORM
-- `ping3` - Ping functionality
-- `apscheduler` - Background scheduling
-- `plotly` - Data visualization
-- `pandas` - Data manipulation
-- `flask-cors` - CORS support
-- `click` - CLI framework
-- `toml` - Configuration parsing
-
-**Development Dependencies:**
-- `pytest` - Testing framework
-- `black` - Code formatting
-
-## 🤝 Contributing
-
-We welcome contributions! Please follow these steps:
-
-1. Fork the repository
-2. Create a feature branch (`git checkout -b feature/amazing-feature`)
-3. Make your changes
-4. Run tests (`pytest`)
-5. Format code (`black .`)
-6. Commit your changes (`git commit -m 'Add amazing feature'`)
-7. Push to the branch (`git push origin feature/amazing-feature`)
-8. Open a Pull Request
-
-## 📄 License
-
-This project is licensed under the MIT License - see the [LICENSE](LICENSE) file for details.
-
-## 🆘 Support
-
-- 📖 [Documentation](docs/)
-- 🐛 [Issue Tracker](https://github.com/mikawa-bushi/network-check-tool/issues)
-- 💬 [Discussions](https://github.com/mikawa-bushi/network-check-tool/discussions)
-
-## 🌟 Why Network Check Tool?
-
-- **Easy to Use**: Simple CLI commands and intuitive web interface
-- **Lightweight**: Minimal resource usage with SQLite database
-- **Flexible**: Configurable monitoring intervals and multiple output formats
-- **Reliable**: Robust error handling and comprehensive logging
-- **Open Source**: MIT licensed and community-driven
+- **気軽に** — 管理者権限不要・設定ファイル不要・オフラインで動作。Excelで作ったCSVの台帳をそのまま読めます。
+  Windows / Linux / macOS 対応（日本語版Windowsの `ping` 表示もそのまま解析）。
+- **高精度** — 応答時間はマイクロ秒精度、損失率は「95%上限」付きで表示（10回中0件のロスでも
+  「28%以下」としか言えない、という事実を正直に示します）。遅延は中央値・p95・最大・ジッタで評価。
+- **網羅的** — LANリンク品質（速度・全二重/半二重・CRCエラー）、IP設定の矛盾、ゲートウェイ、ARP、
+  機器ごとの経路・応答・ARP・サービスポート、ネットワーク上の機器発見、長期監視まで1つのパッケージで。
+
+同梱のコマンドは2つです。
+
+| コマンド | 役割 |
+|---|---|
+| **`netdiag`** | その場の点検・原因の切り分け（標準ライブラリ + click のみ、オフライン） |
+| **`network-checker`** | 長期監視（定期ping・Webダッシュボード・しきい値アラート・劣化時の自動診断） |
 
 ---
 
-**Network Check Tool** - Keep your network monitoring simple and effective! 🚀
+## インストール
+
+```bash
+pip install network-check-tool
+# Windows で netdiag にパスが通っていない場合:
+py -m pip install network-check-tool
+py -m netdiag check
+```
+
+インターネットに出られない工場PCには、別のPCで部品をダウンロードして持ち込みます。
+
+```bash
+pip download network-check-tool -d wheels          # ネットにつながるPCで
+pip install --no-index --find-links wheels network-check-tool   # 工場PCで
+```
+
+YAML形式の台帳・シナリオを使う場合のみ `pip install "network-check-tool[yaml]"`（CSV/JSON/TOMLは不要）。
+
+## 使い方
+
+### 1. このPCのネットワークを点検
+
+```bash
+netdiag check
+```
+
+LANケーブルのリンク速度・全二重/半二重・エラー、IPアドレス（169.254.x.x になっていないか、
+同じネットワークが2つのNICにないか、ゲートウェイが複数ないか、IP重複していないか、マスクの誤り）、
+ゲートウェイ、ARP表、PCのリソースを確認します。
+
+> 設備ネットワークはインターネットにつながっていないのが普通なので、**インターネット接続の確認は既定では行いません**。
+> 必要なときは `--internet` を付けてください（外部到達・DNS・IPv6を確認）。
+
+### 2. 機器を点検
+
+```bash
+netdiag check 192.168.3.39                 # ping・ARP・経路
+netdiag check 192.168.3.39:502             # + Modbus/TCP のポート
+netdiag check PLC1=192.168.3.39:melsoft    # 名前付き・プロトコル名で指定
+netdiag ping 192.168.3.39                  # pingの精密統計だけ
+```
+
+### 3. 台帳で一括点検（おすすめ）
+
+```bash
+netdiag scan --save 台帳.csv      # 同じネットワーク上の機器を一覧して台帳の下書きを作る
+#   → Excelで開いて名前・ポートを書き足す
+netdiag check -f 台帳.csv          # 全機器を一括点検
+netdiag check -f 台帳.csv -o 点検結果.html   # 保存用レポート（.csv / .json も可）
+```
+
+台帳はExcelで「CSV（コンマ区切り）」保存したファイルがそのまま使えます（Shift_JIS / UTF-8 / UTF-16 対応）。
+例: [`examples/devices.csv`](examples/devices.csv)
+
+```csv
+名前,IPアドレス,ポート,グループ,MACアドレス,備考
+PLC-1,192.168.3.39,melsoft,1ライン,,メインPLC
+HMI-1,192.168.3.40,vnc,1ライン,,
+ロボット-1,192.168.3.41,,1ライン,,pingのみ確認
+IoTゲートウェイ,192.168.3.50,modbus;opcua,共通,,
+```
+
+| 列（見出しは日本語・英語どちらでも） | 内容 |
+|---|---|
+| 名前 / 機器名 / name | 表示名 |
+| IPアドレス / ホスト / host | IPアドレス（推奨）またはホスト名。`192.168.3.39:502` の形も可 |
+| ポート / port | 確認するTCPポート。番号か名前を `;` 区切りで：`modbus`(502) `enip`(44818) `opcua`(4840) `s7`(102) `melsoft`(5007) `fins`(9600) `http` `https` `ssh` `telnet` `ftp` `vnc` `rdp` `smb` `mqtt` `iec104` `dnp3` |
+| グループ / ライン | まとめ表示用 |
+| MACアドレス / mac | 書いておくと、別の機器が応答したとき（機器交換・IP重複）に検出 |
+| 遅延上限 / rtt_warn_ms、ロス上限 / loss_warn_pct | 機器ごとの判定しきい値 |
+| 監視間隔 / interval | `network-checker` で監視するときの間隔[秒] |
+| 備考 / note | メモ |
+
+見出し行が無い単純なIPの一覧も読めます。YAML/JSON/TOML（`devices:` のリスト）も使えます。
+
+### 4. 断続的な不調（ときどき通信エラーが出る）を調べる
+
+```bash
+netdiag check -f 台帳.csv --count 300        # 1台あたり300回（約1分）
+netdiag check 192.168.3.39 --duration 600    # 10分間測り続ける
+```
+
+回数を増やすほど損失率の「95%上限」が下がり、「本当にロスが無い」と言える精度が上がります
+（例: ロス0件で 1% 未満と言うには約380回）。測定中にPCのNICエラー（CRC等）が増えた場合は、
+ケーブル・コネクタ・ノイズの問題として報告します。
+
+### 表示例
+
+```text
+━━━ netdiag ネットワーク診断 ━━━  2026-10-21 14:03:12  PC: LINE1-ENG01
+✘ 結論: 異常 — 機器 4台中 1台に異常（ロボット-1）
+
+■ このPCのネットワーク
+  ✔ [L2]     ネットワークアダプタ  イーサネット 192.168.3.100/24 (1 Gbps 全二重)
+  …
+
+■ 機器 4台
+     名前             アドレス      応答   損失  95%上限  RTT中央/p95/最大(ms)  ポート           所見
+  ✔  PLC-1            192.168.3.39  10/10  0%    ≤28%     0.40/1.06/1.20        5007 開
+  ✔  HMI-1            192.168.3.40  0/10   100%           —                     5900 開          ping無応答・ポート正常
+  ✘  ロボット-1       192.168.3.41  0/10   100%           —                     —                ARP応答なし
+  ✔  IoTゲートウェイ  192.168.3.50  10/10  0%    ≤28%     0.35/0.56/0.61        502 開, 4840 開
+
+■ 診断と次の確認
+  ✘ ロボット-1 (192.168.3.41) — 192.168.3.41 の機器がネットワーク上に見つかりません（ARP応答なし）。  [確信度: 高]
+      根拠: ping・ARPとも応答なし（応答 0/10・損失 100%）— 電源・ケーブル・機器のIP設定を確認
+      1. 機器の電源とLANポートのリンクランプ、スイッチ側のランプを確認する
+      2. LANケーブル・コネクタを挿し直す／交換する
+      3. 機器側のIP設定が本当に 192.168.3.41 か確認する（機器のパネル/設定ツール）
+      4. 同じスイッチにつながる他の機器に届くか確認し、スイッチ/VLANの問題を切り分ける
+```
+
+終了コードは `0` = 正常、`1` = 異常あり、`2` = 注意のみ。バッチやタスクスケジューラからも使えます。
+英語で表示するには `--lang en`（または環境変数 `NETDIAG_LANG=en`）。
+
+## 診断の考え方
+
+- **下の層から順に**確認し、最も下で失敗した項目を「原因」、それより上で連動して失敗した項目を
+  「結果」としてまとめます。機器ごとには **経路 → 応答（ping/ARP）→ ポート** の順です。
+- **PCと機器のサブネット不一致**（例: PCが 192.168.1.x、PLCが 192.168.3.x）は、ケーブルや機器の
+  故障ではなく設定の問題としてはっきり示し、設定すべきアドレスの例を出します。
+- **ARP（同じLAN内で機器が必ず応答する仕組み）**で、「電源断・配線不良・IP誤り（ARP応答なし）」と
+  「機器は存在するがpingに応答しない設定（ARP応答あり）」を区別します。判定には**測定中に得た新しい
+  ARP情報だけ**を使い、PCに残っている古い記録で「存在する」と誤判定しないようにしています。
+- **IP重複**は、1回のpingに複数の応答が返る・台帳のMACと違う機器が応答する・WindowsがIP競合を
+  検出している、のいずれかで報告します。
+- ポートは「開」「閉（機器は生きているが待ち受けていない）」「無応答（ファイアウォール/機器停止）」を区別します。
+  pingにもTCPにも全く応答が無い場合は、ポートの問題ではなく機器・経路の問題として報告します。
+
+## 設備への配慮
+
+- pingの送信は全体で毎秒200回までに制限しています。
+- TCPポートは、台帳や `-p` で**指定したものだけ**に接続し、すぐ切断します（接続数に上限のあるPLCを考慮）。
+  `netdiag scan` は ping と ARP だけを使い、指定しない限りポートには触れません。
+- 管理者権限は不要です。ping は OS が許可していれば権限不要のICMPソケット（マイクロ秒精度）、
+  そうでなければ OS の `ping` コマンドで測定します。
+
+## netdiag コマンド一覧
+
+| コマンド | 内容 |
+|---|---|
+| `netdiag check [機器...] [-f 台帳] [-p ポート]` | このPCと機器を点検（`--count` `--duration` `--internet` `-o` `--format text/json/html/csv` `--all`） |
+| `netdiag scan [ネットワーク]` | 同じネットワーク上の機器を一覧（`--save 台帳.csv`、`-p` でポートも確認） |
+| `netdiag ping <host>` | pingの精密統計（損失の95%上限・中央値/p95/最大・ジッタ） |
+| `netdiag explain [項目]` | 各チェックの内容と、同じことを手で確かめるコマンド |
+| `netdiag scenario <file>` | YAML/JSONのシナリオ（このPCの確認項目 + 機器）で点検。例: [`examples/line1.yaml`](examples/line1.yaml) |
+| `netdiag snapshot save/diff` | 正常時のネットワーク設定を保存し、「何が変わったか」を比較 |
+| `netdiag peer serve/test` | 2台のPC間でLAN品質（ロス・ジッタ・スループット）を測定 |
+| `netdiag watch` | 常時監視し、状態が変わったときだけ通知（閉じたネットワークでは `--no-internet`） |
+| `netdiag status / history / prune / monitor / service` | 監視状態・履歴分析・履歴整理・systemdサービス化 |
+
+詳しい設計と全オプションは [docs/netdiag.md](docs/netdiag.md) を参照してください。
+
+---
+
+## network-checker — 長期監視とダッシュボード
+
+夜間だけ通信が切れる、といった問題には常設の監視が有効です。`netdiag` と同じ台帳がそのまま使えます。
+
+```bash
+network-checker start-monitoring --config 台帳.csv --diagnose   # 定期ping + 劣化時に自動診断
+network-checker run-server                                       # http://localhost:9991
+```
+
+- 機器ごとの間隔・しきい値（台帳の `監視間隔` `遅延上限` `ロス上限`）で `DEGRADED`/`RECOVERED` アラートを
+  JSONLに記録します。`--diagnose` を付けると、劣化した**その機器**について netdiag が原因
+  （このPCのリンク断・サブネット不一致・ARP応答なし など）を調べてアラートに添付します。
+- ダッシュボードは応答時間とパケットロスの推移を表示し、CSVエクスポート（`/api/export`）と
+  Prometheus 形式（`/metrics`）も提供します。
+- Docker での常設例: [docker/README.md](docker/README.md)
+
+| コマンド | 内容 |
+|---|---|
+| `network-checker start-monitoring [hosts...] [--config FILE] [--diagnose] [--alert-file F]` | 監視を開始 |
+| `network-checker run-server [--host H] [--port P]` | ダッシュボード（既定 127.0.0.1:9991） |
+| `network-checker ping <host> [--count N] [--json]` | pingして監視DBに記録 |
+| `network-checker status [--host H] [--json]` | 監視DBの最近の結果 |
+| `network-checker init` / `clear` | DBの初期化 / 全削除 |
+
+> **セキュリティ**: ダッシュボードとAPIには認証がありません。`run-server` は既定でこのPC（127.0.0.1）だけで
+> 待ち受けます。ネットワークに公開する（`--host 0.0.0.0`）場合は、認証付きのリバースプロキシを前段に置いてください。
+> `--debug` は 127.0.0.1 以外では起動を拒否します。他オリジンからの `/api/*` 利用は `CORS_ORIGINS` で明示的に許可した場合のみです。
+
+主な環境変数: `DATABASE_URL`（既定 `sqlite:///network_check_tool.db`）、`PING_TIMEOUT`（4.0秒）、
+`DEFAULT_PING_INTERVAL`（60秒）、`SCHEDULER_MAX_WORKERS`（4）、`SQLITE_BUSY_TIMEOUT_MS`（5000）、`CORS_ORIGINS`。
+
+API: `GET /api/hosts`, `/api/stats?host=&hours=`, `/api/ping_data?host=&hours=`, `/api/export?host=&hours=&format=csv`,
+`/metrics`、ホスト管理（ループバック起動時のみ）`GET /api/jobs`, `POST /api/hosts`, `DELETE /api/hosts/<host>`。
+
+---
+
+## English summary
+
+**network-check-tool** helps production engineers check plant networks quickly and precisely:
+
+- `netdiag check -f devices.csv` checks **this PC** (link speed/duplex/errors, IP-setting conflicts,
+  gateway, ARP) and **every device on the line** (subnet/route, ping statistics with a 95 % upper
+  bound on loss, median/p95/max latency and jitter, fresh ARP evidence that separates "device off"
+  from "device ignores ping", IP conflicts, and service ports: open / closed / silent), then names
+  the root cause and the next steps.
+- Device lists are plain CSV saved from Excel (Japanese or English headers, Shift_JIS/UTF-8/UTF-16),
+  YAML, JSON or TOML; ports can be numbers or protocol names (`modbus`, `enip`, `opcua`, `s7` …).
+- Works offline and unprivileged on Windows (including Japanese-locale output), Linux and macOS;
+  `netdiag` needs only the standard library and `click`. Closed networks are the default — add
+  `--internet` to also check external reachability and DNS. Output in Japanese by default;
+  `--lang en` or `NETDIAG_LANG=en` for English. Reports: text, JSON, self-contained HTML, CSV.
+- `netdiag scan` discovers devices on a subnet (ICMP + ARP only); `network-checker` adds long-term
+  monitoring with a dashboard, threshold alerts and automatic per-device diagnosis.
+
+Exit codes: `0` healthy, `1` problem found, `2` warnings only. See [docs/netdiag.md](docs/netdiag.md).
+
+## 開発 / Development
+
+```bash
+git clone https://github.com/mikawa-bushi/network-check-tool.git
+cd network-check-tool
+poetry install --all-extras
+poetry run pytest
+```
+
+貢献の手順は [CONTRIBUTING.md](CONTRIBUTING.md) を参照してください。
+
+## License
+
+MIT — see [LICENSE](LICENSE).
+
+## Support
+
+- 🐛 [Issue Tracker](https://github.com/mikawa-bushi/network-check-tool/issues)
+- 💬 [Discussions](https://github.com/mikawa-bushi/network-check-tool/discussions)

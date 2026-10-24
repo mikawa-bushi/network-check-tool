@@ -1,10 +1,11 @@
-"""netdiag — local-first network & OS trouble isolation.
+"""netdiag — network checks for production engineers.
 
-A diagnosis tool, not just a monitor: it runs a layered set of probes (L1→L7 plus
-host/OS), then a dependency-graph engine separates the *root cause* from its
-*consequences* and tells the user what to check next. Designed to run fully
-offline, as an unprivileged user, on the standard library alone (``click`` is the
-only hard dependency; everything else is optional).
+Checks this PC's network (link quality, IP settings, gateway, ARP) and every
+device on the line (PLCs, HMIs, robot controllers: route, ping statistics, ARP
+presence, service ports), then a dependency-graph engine separates the *root
+cause* from its *consequences* and says what to check next — in Japanese or
+English. Runs fully offline, as an unprivileged user, on Windows, Linux and
+macOS, on the standard library alone (``click`` is the only hard dependency).
 """
 
 import logging
@@ -16,6 +17,6 @@ from .core import CheckResult, Context, Probe, Status, register
 # the "netdiag" logger. The library itself never calls basicConfig.
 logging.getLogger(__name__).addHandler(logging.NullHandler())
 
-__version__ = "0.1.7"
+__version__ = "0.2.0"
 
 __all__ = ["CheckResult", "Status", "Probe", "Context", "register", "__version__"]

@@ -2,6 +2,44 @@
 
 All notable changes to this project are documented in this file.
 
+## [0.3.0] - 2026-10-21
+
+Refocused on production engineers: check this PC **and every device on the line**
+quickly, precisely and comprehensively. netdiag 0.2.0 (see `netdiag/CHANGELOG.md`).
+
+### Added
+- `netdiag check` takes devices (`192.168.3.39:502`, `PLC1=192.168.3.39:modbus`) and
+  device lists (`-f`: Excel CSV in Shift_JIS/UTF-8/UTF-16, YAML, JSON, TOML; Japanese
+  or English headers; protocol names for ports). Each device gets a route → reach →
+  ports diagnosis with a root cause and numbered next steps.
+- `netdiag scan` discovers devices on a subnet (ICMP + ARP only) and can save a
+  device-list CSV.
+- Reports in text, JSON (stable result codes), self-contained HTML and CSV for Excel;
+  Japanese by default, English with `--lang en` / `NETDIAG_LANG=en`.
+- `network-checker start-monitoring --config` accepts the same device lists; with
+  `--diagnose`, a degraded host is diagnosed specifically (this PC's link, subnet,
+  ARP presence, ping statistics) instead of a generic internet sweep.
+- Windows support for netdiag's host checks (PowerShell / `route print` / `arp -a`,
+  language-independent), `python -m netdiag`.
+- `examples/devices.csv`, `examples/line1.yaml`; a working `docker/` setup for the
+  dashboard and monitor.
+
+### Changed
+- **`netdiag check` no longer assumes internet access**: external reachability,
+  DNS and IPv6 checks run only with `--internet` (or `--external-ip`/`--dns-name`),
+  and a missing default gateway is reported as normal on a closed network.
+- Human-facing output is Japanese by default.
+- Ping measurements use an unprivileged ICMP socket where permitted (microsecond
+  timing, no `ping` binary needed) and report loss with a 95 % upper bound and
+  median/p95/max/jitter; `network-checker`'s samples use the same core.
+
+### Removed
+- The unused `pandas` dependency (and its transitive packages).
+- Material copied from an unrelated project: `docs/qiita_usage_guide.md`, the old
+  Monitor App Docker files and contributing guide (rewritten for this project).
+- Internal issue-plan notes moved from the package directories to `docs/archive/`
+  (they were shipped inside the wheel).
+
 ## [0.2.5] - 2026-06-15
 
 ### Changed (network_check_tool, issue #37)

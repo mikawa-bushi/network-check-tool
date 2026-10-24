@@ -3,9 +3,13 @@
 Each module decorates its probe classes with ``@register`` (see
 :mod:`netdiag.core.probe`), so importing them here populates the global registry.
 External probes can be added via entry points — see :mod:`netdiag.plugins`.
+
+Host-scoped probes describe this PC; ``device`` holds the target-scoped probes
+(``route`` → ``reach`` → ``ports``) that run once per PLC/HMI/controller.
 """
 
 from . import (  # noqa: F401  (imported for registration side effects)
+    device,
     dns,
     dualstack,
     firewall,
@@ -13,6 +17,8 @@ from . import (  # noqa: F401  (imported for registration side effects)
     http,
     icmp,
     interface,
+    ipconfig,
+    link,
     neighbor,
     system,
     tcp,
@@ -23,6 +29,8 @@ from . import (  # noqa: F401  (imported for registration side effects)
 
 __all__ = [
     "interface",
+    "link",
+    "ipconfig",
     "neighbor",
     "gateway",
     "icmp",
@@ -35,4 +43,5 @@ __all__ = [
     "tls",
     "system",
     "wifi",
+    "device",
 ]

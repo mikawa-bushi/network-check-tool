@@ -14,7 +14,7 @@ import time
 from pathlib import Path
 from typing import Dict, List, Optional
 
-from ..core.util import have, is_linux, run
+from ..core.util import is_linux, run
 
 DEFAULT_DIR = Path.home() / ".netdiag" / "snapshots"
 
