@@ -1,6 +1,7 @@
 from typing import Dict
 
 from netdiag.core.util import have
+from netdiag.measure import icmp_socket_available
 from netdiag.probes.icmp import ping as _measure_ping
 
 from ..models import PingResult, db
@@ -14,15 +15,18 @@ class PingService:
     def ping_host(self, host: str) -> Dict:
         """Measure one ping to ``host`` and return a result dict.
 
-        The measurement comes from netdiag's shared ``ping`` core (M1) rather than
-        a separate implementation. The returned dict has the keys
+        The measurement comes from netdiag's shared ping core (microsecond timing
+        via an ICMP socket when permitted, else the system ``ping``). The
+        returned dict has the keys
         ``host``, ``timestamp``, ``response_time`` (milliseconds, or ``None`` on
         failure), ``packet_loss`` (``True`` when no reply was received), and
         ``error_message``.
         """
         timestamp = utcnow()
 
-        if not have("ping"):
+        # netdiag measures with an unprivileged ICMP socket where the OS allows
+        # it (no ping binary needed) and falls back to the system ping command.
+        if not (icmp_socket_available() or have("ping")):
             return {
                 "host": host,
                 "timestamp": timestamp,

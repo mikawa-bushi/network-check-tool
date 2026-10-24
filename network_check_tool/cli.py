@@ -1,5 +1,4 @@
 import json
-import os
 
 import click
 
@@ -76,7 +75,10 @@ def run_server(host, port, debug):
     "config_path",
     type=click.Path(exists=True, dir_okay=False),
     default=None,
-    help="TOML/JSON file declaring hosts with per-host interval/thresholds.",
+    help=(
+        "Hosts file: TOML/JSON [[host]] entries with per-host interval/thresholds, "
+        "or a netdiag device list (CSV saved from Excel, YAML, JSON)."
+    ),
 )
 @click.option(
     "--alert-file",
@@ -96,7 +98,8 @@ def start_monitoring(hosts, interval, config_path, alert_file, diagnose):
 
     Without --config, each positional host shares the single --interval. With
     --config, each host carries its own interval and warning thresholds
-    (rtt_warn_ms / loss_warn_pct), which raise DEGRADED/RECOVERED alerts.
+    (rtt_warn_ms / loss_warn_pct), which raise DEGRADED/RECOVERED alerts. The
+    same device list used by ``netdiag check -f`` works here.
     """
     # Resolve the host list: a --config file (per-host interval) takes precedence
     # over positional args (shared --interval). One or the other is required.
@@ -154,7 +157,10 @@ def start_monitoring(hosts, interval, config_path, alert_file, diagnose):
                     rtt_warn_ms=hc.rtt_warn_ms,
                     loss_warn_pct=hc.loss_warn_pct,
                 )
-                click.echo(f"Added ping job for {hc.name} (every {hc.interval}s)")
+                label = f" ({hc.label})" if getattr(hc, "label", "") else ""
+                click.echo(
+                    f"Added ping job for {hc.name}{label} (every {hc.interval}s)"
+                )
         except Exception as e:
             click.echo(f"Error: {e}", err=True)
             scheduler.shutdown()

@@ -80,6 +80,7 @@ def test_missing_ping_command_does_not_measure(monkeypatch):
 
     monkeypatch.setattr(ps, "_measure_ping", spy)
     monkeypatch.setattr(ps, "have", lambda cmd: False)
+    monkeypatch.setattr(ps, "icmp_socket_available", lambda: False)
 
     out = PingService().ping_host("example.com")
 

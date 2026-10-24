@@ -343,6 +343,7 @@ def test_scheduler_without_sink_has_no_alerting(tmp_path):
 
 def _patch_fake_netdiag(monkeypatch, cause="gateway"):
     import netdiag.diagnosis as nd
+    import netdiag.runner as runner
 
     class _Hyp:
         def __init__(self):
@@ -351,43 +352,39 @@ def _patch_fake_netdiag(monkeypatch, cause="gateway"):
             self.summary = f"{cause} down"
             self.evidence = []
 
-    class _Diag:
-        @property
-        def primary(self):
-            return _Hyp()
+    seen = {}
 
-    class _FakeEngine:
-        def __init__(self, config=None):
-            pass
+    def fake_diagnose_target(host, ports=None, config=None):
+        seen["host"] = host
+        return _Hyp()
 
-        def run(self):
-            return _Diag()
-
-    monkeypatch.setattr(nd, "Engine", _FakeEngine)
+    monkeypatch.setattr(runner, "diagnose_target", fake_diagnose_target)
     monkeypatch.setattr(nd, "runbook_steps", lambda c: [f"fix {c}"])
+    return seen
 
 
 def test_diagnose_attaches_root_cause_on_degraded(monkeypatch):
     from network_check_tool.services.alerting import HostAlerter
 
-    _patch_fake_netdiag(monkeypatch, cause="gateway")
+    seen = _patch_fake_netdiag(monkeypatch, cause="gateway")
     sink = _RecordingSink()
     alerter = HostAlerter("h", sink, fail_threshold=1, diagnose=True)
     t = alerter.observe(packet_loss=True, response_time=None)
     assert t.event == "degraded"
+    assert seen["host"] == "h"  # the degraded host itself is diagnosed
     assert t.cause == "gateway"
     assert any("netdiag root cause: gateway" in e for e in t.evidence)
     assert t.runbook == ["fix gateway"]
 
 
 def test_diagnose_off_does_not_run_netdiag(monkeypatch):
-    import netdiag.diagnosis as nd
+    import netdiag.runner as runner
     from network_check_tool.services.alerting import HostAlerter
 
     def _boom(*a, **k):
-        raise AssertionError("netdiag Engine must not run when diagnose is off")
+        raise AssertionError("netdiag must not run when diagnose is off")
 
-    monkeypatch.setattr(nd, "Engine", _boom)
+    monkeypatch.setattr(runner, "diagnose_target", _boom)
     sink = _RecordingSink()
     alerter = HostAlerter("h", sink, fail_threshold=1, diagnose=False)
     t = alerter.observe(packet_loss=True, response_time=None)
@@ -399,3 +396,23 @@ def test_start_monitoring_help_lists_diagnose():
     assert "--diagnose" in out
     assert "--config" in out
     assert "--alert-file" in out
+
+
+def test_load_hosts_accepts_a_netdiag_device_list(tmp_path):
+    p = tmp_path / "line1.csv"
+    p.write_bytes(
+        "名前,IPアドレス,監視間隔,遅延上限\r\nPLC-1,192.168.3.39,10,5\r\nHMI,192.168.3.40,,\r\n".encode(
+            "cp932"
+        )
+    )
+    hosts = load_hosts(p, default_interval=60)
+    assert [(h.name, h.label, h.interval, h.rtt_warn_ms) for h in hosts] == [
+        ("192.168.3.39", "PLC-1", 10, 5.0),
+        ("192.168.3.40", "HMI", 60, None),
+    ]
+
+
+def test_load_hosts_json_devices_key(tmp_path):
+    p = tmp_path / "line1.json"
+    p.write_text('{"devices": [{"name": "PLC", "host": "10.0.0.5"}]}', encoding="utf-8")
+    assert load_hosts(p)[0].name == "10.0.0.5"
