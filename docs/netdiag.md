@@ -1,216 +1,176 @@
-# netdiag — local-first network & OS trouble isolation
+# netdiag — design and command reference
 
-`netdiag` is a **diagnosis** tool, not just a monitor. Where the original
-`network-checker` answers *"is the host reachable?"*, `netdiag` answers
-**"which layer is broken, why, and what should I check next?"** — so a user can
-isolate network and OS problems entirely on their own machine, offline, without
-root.
+`netdiag` is a **diagnosis** tool for production engineers. Where a monitor
+answers *"is it reachable?"*, netdiag answers **"what is broken, why, and what
+should I check next?"** — for this PC and for every device on the line (PLCs,
+HMIs, robot controllers, sensors, gateways). It runs offline, unprivileged, on
+Windows, Linux and macOS, with the standard library and `click` only.
 
-It ships in the same package as `network-check-tool`; installing the package
-gives you both the `network-checker` and the `netdiag` commands.
+It ships in the same package as `network-checker`; installing the package gives
+you both commands. For a task-oriented introduction (in Japanese) see the
+[README](../README.md).
 
 ## Design in one picture
 
 ```
-probes/            diagnosis/              report/
-  (collect facts)    (interpret)             (present)
-  interface  ─┐
-  gateway   ──┤    dependency-graph         conclusion-first text
-  dns       ──┼──▶ engine: lowest      ──▶  JSON  (scripts/CI, exit codes)
-  tcp/http  ──┤    failing layer = root      self-contained HTML (offline)
-  system    ──┘    cause; everything
-                   above it = consequence
+ collect facts                  measure precisely               interpret                    present
+ netinfo/ (per OS)              measure/                        diagnosis/                   report/
+  NICs, speed/duplex,  ─┐        ICMP socket / system ping ─┐    dependency-graph engine:     conclusion-first text (ja/en)
+  error counters,       │        TCP ports (open/closed/     │    lowest failing layer =  ──▶ JSON (stable codes)
+  IPs + flags, routes,  ├──▶     silent), DNS client,        ├──▶ root cause; the rest are    self-contained HTML
+  ARP, DNS servers      │        loss CI, percentiles, jitter│    consequences                 CSV for Excel
+ inventory.py (devices) ┘                                    ┘    probes give contextual advice
 ```
 
-The three layers are deliberately decoupled:
+- **`netinfo/`** collects this host's network configuration once per run into
+  one OS-neutral model (`HostNetwork`: interfaces, addresses with flags such as
+  *duplicate*, routes, ARP, resolvers). Linux uses `ip -j` + sysfs, Windows one
+  PowerShell call with `ConvertTo-Json` (falling back to `route print`/`arp -a`,
+  parsed language-independently), macOS `ifconfig`/`netstat`/`arp`/`scutil`.
+- **`measure/`** holds the measurement primitives every probe shares:
+  - `icmp.py` — an fping-style pinger on an unprivileged ICMP datagram socket
+    (one thread, many targets, paced at ≤200 packets/s, microsecond timing,
+    duplicate-reply detection), falling back to the system `ping`, whose output
+    is parsed per reply line in any language (Japanese/English Windows,
+    iputils, BusyBox, macOS). Windows' own statistics count "destination host
+    unreachable" replies as received; netdiag does not.
+  - `tcp.py` — TCP connect checks with an honest three-way verdict.
+  - `dns.py` — a minimal UDP DNS client to query each resolver directly.
+  - `stats.py` — Wilson 95 % interval for loss, percentiles, jitter.
+- **`probes/`** each answer one question about one layer and only record *what*
+  they saw (plus a stable `code` such as `reach.no_arp`). Every probe degrades to
+  `SKIP` with a reason when a tool or permission is missing — "could not
+  measure" never reads as "device down".
+- **`diagnosis/`** runs probes in dependency order. A probe whose dependency
+  failed — directly or transitively — is recorded as a consequence instead of
+  being measured as a competing failure; the lowest failing probe is the root
+  cause. The cause probe's `advice()` turns the evidence into a plain-language
+  explanation and numbered next steps (with the real addresses and names).
+- **`runner.py`** runs one complete check: the host sweep, one ping sweep for all
+  devices with ARP read before and after, a `route → reach → ports` diagnosis per
+  device (in parallel), and a final look at NIC error counters that grew during
+  the measurement.
+- **`report/`** renders conclusion-first; all human text is Japanese or English
+  (`i18n.py`), machine output stays English.
 
-- **Probes** (`netdiag/probes/`) each answer one narrow question about one layer
-  (L1 Wi-Fi → L2 ARP → L3 routing/reachability → L4 ports/firewall → L7
-  DNS/HTTP/TLS, plus a SYSTEM layer for host resources/clock). A probe only
-  records *what* it saw; it never decides *why*. Every probe degrades to a
-  `SKIP` (with a reason) when its tool is missing or it lacks permission, so a
-  diagnosis on a locked-down host is still useful.
-- **Diagnosis** (`netdiag/diagnosis/`) evaluates probes in dependency order. A
-  probe runs only after its dependencies pass; if a dependency failed, the
-  dependent is recorded as a *consequence*, not re-measured as a competing
-  failure. The lowest failing layer is the root cause.
-- **Report** (`netdiag/report.py`) renders the result leading with the cause and
-  the next steps. HTML output is fully self-contained (no CDN/JS) for offline use.
+## Checks
 
-Everything runs on the **standard library**; `click` is the only hard
-dependency. `pyyaml` is optional and only used for YAML scenarios.
+### This PC (default sweep of `netdiag check`)
 
-## Quick start
+| Probe | Layer | What it finds |
+|---|---|---|
+| `interface` | L2 | No link, no IPv4, only 169.254.x.x (no DHCP on an equipment network), address unusable because of an IP conflict |
+| `link` | L1 | Half duplex (auto-negotiation mismatch), 10 Mbps links, NIC error ratio (CRC/collisions) |
+| `link_errors` | L1 | NIC errors that **increased during the test** (cable/connector/noise/port) |
+| `ipconfig` | L3 | Duplicate IP flagged by the OS, the same subnet on two NICs, default gateways on several NICs, masks broader than the private block |
+| `gateway` | L3 | Default gateway reachability with full ping statistics; "no gateway" is *not applicable* on a closed network |
+| `neighbor` | L2 | ARP table: duplicate IPs, unresolved/failed gateway MAC |
+| `firewall` | L4 | Local drop/reject rules (nftables/iptables) or Windows Firewall profiles |
+| `system`, `clock` | SYSTEM | Memory/CPU/conntrack exhaustion; NTP synchronisation |
+| `wifi` | L1 | Signal, SSID, rate (`iw` on Linux, `netsh wlan` on Windows, any language) |
+| `tcp`, `http`, `tls` | L4/L7 | Only when `--tcp` / `--http-url` are given |
+| `external`, `dns`, `dualstack` | L3/L7 | Only with `--internet` (or `--external-ip` / `--dns-name`) |
+| `traceroute`, `icmp` | L3 | Opt-in (`--only traceroute`); `icmp` backs ad-hoc pings |
 
-```bash
-# Full layered sweep — prints the root cause and what to do next.
-netdiag check
+Closed equipment networks are the default: without `--internet`, no internet
+reachability or DNS is expected, and a missing default gateway is normal.
 
-# Add service-level checks.
-netdiag check --tcp api.internal:443 --http-url https://api.internal/health
+### Each device (`route → reach → ports`)
 
-# Learn how a check works and the manual commands that do the same thing.
-netdiag explain gateway
-```
+| Probe | What it decides |
+|---|---|
+| `route` | Is the device in one of this PC's subnets (which NIC), behind a gateway, or unreachable by design (**subnet mismatch** — with the address range to configure)? Also: link-down NIC for that subnet, the PC's own address, network/broadcast addresses, overlapping NICs, unresolvable names |
+| `reach` | Ping statistics (loss with a 95 % upper bound, median/p95/max, jitter) plus **fresh ARP evidence**: no ARP answer = powered off / miswired / wrong IP; ARP answer without ping = alive but ICMP disabled. Duplicate replies or a MAC different from the device list = IP conflict or replaced device. Per-device `rtt_warn_ms` / `loss_warn_pct` |
+| `ports` | Each listed TCP port: open, closed (alive, nothing listening) or no answer; flaky ports. With no sign of life at all (no ping, no ARP, no TCP answer) the verdict is "no response", not "port blocked". Open ports settle a device that merely ignores ping |
 
-`netdiag check` exits **0** when healthy, **1** when a cause was found, **2** for
-warnings only — so it drops straight into scripts and CI.
-
-## Worked example
-
-When DNS is the problem but the network is fine, the engine says so and folds the
-symptoms away:
-
-```
-✔ [L3]     external    1.1.1.1 reachable (16.0ms, 0% loss)
-✘ [L7]     dns         resolution of intranet.corp failed (resolvers: 10.0.0.53)
-— [L3]     dualstack   not evaluated: upstream dns failed
-— [L7]     http        not evaluated: upstream dns failed
-
-━━━ 診断 (Diagnosis) ━━━
-1. 推定原因: dns — Connectivity is fine but names don't resolve. [確信度: 高]
-     根拠: External reachability is OK, so the fault is above it.
-     次の確認手順:
-       - Test the resolver directly: nslookup example.com <resolver-ip>
-       - Try a public resolver: nslookup example.com 1.1.1.1
-     これに連動して失敗した項目 (原因ではなく結果): dualstack, http
-```
-
-## Always-on watching (`netdiag watch`)
-
-`netdiag check` is a *spot* diagnosis. For continuous operation, `netdiag watch`
-runs as a low-overhead daemon built on a **two-tier** model:
-
-- **Tier 1 — every tick, cheap:** only a small probe set
-  (`interface, gateway, external, dns`) runs, so it is safe to run continuously
-  even on a busy/closed network. No heavy or intrusive probes in the steady state.
-- **Tier 2 — on confirmed degradation, once:** the moment a *debounced* state
-  machine flips to `DEGRADED`, the **full** diagnosis runs a single time to
-  capture the root cause, which is attached to the alert. You pay the heavy cost
-  only when something is actually wrong.
-
-It alerts **only when the verdict changes** (healthy → degraded, degraded →
-recovered), not every tick — so it is quiet until it has something to say.
-
-```bash
-netdiag watch --interval 30 --external-ip 10.0.0.1 --dns-name intranet.corp
-# alerts → ~/.netdiag/alerts.jsonl  (+ human-readable ~/.netdiag/alerts.log)
-# current state → ~/.netdiag/state.json
-```
-
-**Flap damping.** A single dropped ping never fires an alert. `--fail-threshold`
-(default 2) consecutive bad ticks are required to declare `DEGRADED`, and
-`--recover-threshold` (default 2) good ticks to call it recovered — so a flapping
-link does not produce an alert storm.
-
-**Alert format (file/JSONL).** Zero dependencies, offline, easy to tail or ship.
-One self-contained JSON object per transition:
-
-```json
-{"event":"degraded","cause":"dns","confidence":"high",
- "summary":"Connectivity is fine but names don't resolve — a DNS/resolver fault.",
- "evidence":["External reachability is OK, so the fault is above it."],
- "consequences":["http","tls"],
- "runbook":["Test the resolver directly: nslookup ..."],
- "iso":"2026-06-10 20:36:17"}
-```
-
-A recovery event records how long the outage lasted (`duration_s`). The sink is
-pluggable (`AlertSink`), so webhook / syslog / email delivery can be added later
-without touching the watcher.
-
-Run a single tick (for testing or cron-style use) with `--once`; disable the
-Tier-2 escalation with `--no-escalate`.
-
-### Running it as a service, checking status, bounding disk
-
-```bash
-# Install a user systemd unit and enable it (commands are printed, not run for you).
-netdiag service install --external-ip 10.0.0.1 --dns-name intranet.corp
-systemctl --user daemon-reload && systemctl --user enable --now netdiag-watch
-
-# See the current state and recent alerts from any process.
-netdiag status            # ✔/✘ current state, since when, last alerts
-netdiag status --format json
-```
-
-A long-running watcher manages its own disk: every hour it **downsamples** raw
-samples older than 7 days into hourly rollups (count/avg/min/max) and drops
-rollups older than 90 days, so full-resolution recent data stays available for
-baselining while history stays bounded over months. Run it by hand any time with
-`netdiag prune --raw-days 7 --rollup-days 90`.
+ARP evidence counts only if it is fresh: an entry that appeared during the test,
+or one Linux reports as confirmed within the test window. A cache entry left over
+from before proves nothing — the device may have died seconds ago.
 
 ## Command reference
 
 | Command | Purpose |
 |---|---|
-| `netdiag check` | Run the full layered diagnosis; report root cause + runbook. |
-| `netdiag ping <host>` | Ad-hoc ICMP ping (system `ping`, no root). |
-| `netdiag explain [probe]` | Teaching mode: what/why each check does + manual commands. |
-| `netdiag list-probes` | List registered probes (incl. plugins) by layer. |
-| `netdiag snapshot save [name]` | Save current network config (routes/DNS/firewall/...). |
-| `netdiag snapshot diff [name]` | Diff current config vs a saved snapshot — *"what changed?"*. |
-| `netdiag peer serve` / `peer test <addr>` | Two-host LAN quality test (loss/jitter/throughput), offline. |
-| `netdiag scenario <file>` | Run a declarative YAML/JSON diagnosis scenario. |
-| `netdiag watch` | **Always-on**: light loop + alert (file/JSONL) only when the verdict changes. |
-| `netdiag status` | Live view of the watcher: current state + recent alerts (text/JSON). |
-| `netdiag prune` | Retention: downsample old raw samples to hourly rollups. |
-| `netdiag service print/install` | Generate a systemd unit to run `watch` as a service. |
-| `netdiag monitor` | Periodically run the diagnosis and record metrics to history. |
-| `netdiag history` | Baseline (median/MAD), change-point and flapping analysis. |
+| `netdiag check [TARGET...] [-f FILE] [-p PORT]` | Check this PC and devices. `TARGET` = `192.168.3.39`, `192.168.3.39:502`, `PLC1=192.168.3.39:modbus,4840` |
+| `netdiag scan [NETWORK...] [--save FILE]` | Discover devices (ICMP + ARP; ports only with `-p`). `NETWORK` = CIDR, `a.b.c.d-e`, or the PC's own subnets |
+| `netdiag ping HOST [-c N] [-i S] [--json]` | Precise ping statistics |
+| `netdiag explain [PROBE]` / `list-probes` | What each check does, the manual commands, and the next steps |
+| `netdiag scenario FILE` | A YAML/JSON scenario: `checks` (host probes), `devices` (device list), `config` |
+| `netdiag snapshot save/list/diff [NAME]` | Save the network configuration while it works; diff later ("what changed?") |
+| `netdiag peer serve` / `peer test ADDR` | Two-host LAN quality (loss/jitter/throughput) for closed networks |
+| `netdiag watch` | Always-on: light loop, alerts only on state change (`--no-internet` on closed networks), webhook/Slack/desktop sinks |
+| `netdiag status` / `history` / `prune` / `monitor` | Watcher state, baseline & change-point analysis, retention, periodic recording |
+| `netdiag service print/install` | systemd unit for `watch` |
 
-### Useful flags on `check`
+Global options: `--lang ja|en` (default: `NETDIAG_LANG`, then the locale, else
+Japanese), `-v/--verbose`, `--log-file`. `python -m netdiag` works where the
+`netdiag` script is not on `PATH`.
 
-- `--only a,b,c` / `--skip a,b` — restrict the probe set.
-- `--format text|json|html` and `--output FILE`.
-- `--reasoning` — show the engine's step-by-step reasoning in the report.
-  (The global `-v`/`--verbose` is separate: it controls netdiag's logging.)
-- `--save` — record every metric to the history DB for baselining.
+### Useful `check` options
 
-## Key features, and what they isolate
+- `-f/--file` (repeatable): device list — CSV saved from Excel (Shift_JIS,
+  UTF-8 with/without BOM, UTF-16; comma/tab/semicolon), YAML, JSON or TOML.
+  Japanese or English headers; header-less IP lists work too.
+- `-p/--port` (repeatable): port added to every device; numbers or names
+  (`modbus` 502, `enip` 44818, `opcua` 4840, `s7` 102, `melsoft` 5007,
+  `fins` 9600, `iec104` 2404, `dnp3` 20000, `mqtt`, `http`, `https`, `ssh`,
+  `telnet`, `ftp`, `vnc`, `rdp`, `smb`).
+- `--count N` / `--interval S` / `--timeout S` / `--duration S`: sampling.
+  Loss-free samples needed for a 95 % bound below 5 % / 1 % / 0.1 %:
+  ~73 / ~380 / ~3,800.
+- `--format text|json|html|csv` and `-o/--output FILE` (format inferred from
+  the extension; CSV is written with a BOM for Excel).
+- `--all` shows not-applicable checks; `--reasoning` shows the engine's steps;
+  `--save` records metrics (per device, keyed by address) for `history`;
+  `--no-host` checks devices only; `--jobs N` parallelises the host sweep.
 
-- **Dependency-graph diagnosis** — names the *one* layer at fault instead of a
-  wall of red, and lists the consequent failures separately.
-- **Path trace** (`--only traceroute`) — *where* the path breaks (your router vs
-  the ISP's third hop), which decides who you call.
-- **HTTP phase timing** — splits "slow web" into DNS / connect / TLS / first byte,
-  so you can tell a network problem from a slow server.
-- **TLS/clock checks** — catch expired certs and clock skew that masquerade as
-  network failures.
-- **Dual-stack parity** — finds the common "IPv6 broken, IPv4 fine" asymmetry.
-- **Firewall correlation** — attributes a filtered port to the host's own rules
-  vs the remote side.
-- **System layer** — memory/conntrack/load/NTP problems that present as network
-  faults but aren't.
-- **Snapshot diff** — surfaces the *config change* (a VPN rewriting the default
-  route, an overwritten `resolv.conf`) behind a "suddenly broke" incident.
-- **Baseline + change-point** — judges latency against *this host's* normal, and
-  reports *when* it degraded; distinguishes flapping from a clean outage.
-- **Peer mode** — measures LAN quality between two of your own machines, the only
-  way to assess the network in a fully closed environment.
-- **`explain` teaching mode** — shows the manual commands so users learn to
-  isolate faults by hand, not just read a verdict.
+Exit codes: **0** healthy, **1** a failure was found, **2** warnings only.
 
-## Scenarios
+### Machine-readable output
 
-Encode an environment's triage steps once and hand them out:
+`--format json` returns `status`, `exit_code`, `host` (results + hypotheses),
+`devices[]` (device, status, diagnosis) and `device_counts`. Every result has a
+stable English `code` (`route.no_route`, `reach.no_arp`, `ports.closed`,
+`ipconfig.duplicate_ip`, `link.half_duplex`, …); match on codes, not on the
+localised `summary`.
 
-```yaml
-# office.yaml  (run: netdiag scenario office.yaml)
-name: 社内ネットワーク診断
-description: Office network checks
-checks:
-  - probe: gateway
-  - probe: tcp
-    target: proxy.corp.local:8080
-    label: 社内プロキシ
-  - probe: dns
-    resolver: 10.0.0.53
-    expect: intranet.corp.local
+## Device lists and scenarios
+
+```csv
+名前,IPアドレス,ポート,グループ,MACアドレス,備考
+PLC-1,192.168.3.39,melsoft,1ライン,,
 ```
 
-JSON works with no extra dependency; `.yaml`/`.yml` needs the `scenario` extra
-(`pip install network-check-tool[scenario]`).
+```yaml
+# netdiag scenario line1.yaml
+name: 1ライン ネットワーク点検
+config: {count: 50}
+checks: [interface, link, ipconfig, neighbor]
+devices:
+  - {name: PLC-1, host: 192.168.3.39, ports: melsoft}
+  - {name: IoTゲートウェイ, host: 192.168.3.50, ports: [modbus, opcua], loss_warn_pct: 1}
+```
+
+Recognised columns/keys: name, host, ports, group, note, mac, rtt_warn_ms,
+loss_warn_pct, interval (Japanese aliases such as 名前・IPアドレス・ポート・
+ライン・備考・MACアドレス・遅延上限・ロス上限・監視間隔 are accepted). The same
+files drive `network-checker start-monitoring --config`.
+
+## Always-on watching (`netdiag watch`)
+
+- **Tier 1 — every tick, cheap:** `interface, gateway, external, dns` (or
+  `interface, gateway, neighbor` with `--no-internet`).
+- **Tier 2 — on confirmed degradation, once:** the full sweep runs a single time
+  and its root cause is attached to the alert.
+- **Flap damping:** `--fail-threshold` / `--recover-threshold` consecutive ticks.
+- Alerts: `~/.netdiag/alerts.jsonl` (+ `.log`), optional `--webhook-url`,
+  `--slack-url`, `--desktop`; state in `~/.netdiag/state.json`.
+- History is downsampled hourly after 7 days and kept 90 days (`prune`).
+
+For per-device long-term monitoring with a dashboard, use
+`network-checker start-monitoring --config devices.csv --diagnose`: when a
+device degrades, `netdiag.runner.diagnose_target()` checks this PC's network
+first and then that device, and the root cause is attached to the alert.
 
 ## Extending with plugins
 
@@ -221,26 +181,28 @@ A separate package can add probes via an entry point — no fork required:
 my_probe = "mypkg.probes"
 ```
 
-The named module's `@register`-decorated probe classes join the registry exactly
-like the built-ins.
+The module's `@register`-decorated `Probe` subclasses join the registry. Set
+`scope = "target"` for a per-device probe, `default = False` for opt-in,
+`requires_internet = True` for internet-only checks, and override
+`advice(result, results)` (or set `means` / `runbook`) to supply the diagnosis
+narrative. Use `netdiag.i18n.Text(ja, en)` / `tr(ja, en)` for bilingual text.
 
 ## Architecture map
 
 ```
 netdiag/
-├── core/            CheckResult, Status, Probe base, registry, safe subprocess util
-├── probes/          interface, neighbor, gateway, icmp, traceroute, dns, dualstack,
-│                    tcp, firewall, http, tls, system, wifi
-├── diagnosis/       engine (dep-graph), rules/runbook, baseline, changepoint
-├── snapshot/        capture + diff of network configuration
-├── peer/            UDP/TCP responder + client (loss/jitter/throughput)
-├── scenario/        YAML/JSON scenario loader
-├── alerting.py      debounced state machine + file/JSONL alert sinks
-├── watch.py         always-on watcher: tier-1 loop + diagnose-on-event escalation
-├── storage.py       stdlib sqlite3 time-series + retention (downsample/rollup)
-├── scheduler.py     threading-based periodic monitor
-├── report.py        text / JSON / self-contained HTML
-├── plugins.py       entry-point probe discovery
-└── cli.py           click CLI (check/ping/explain/snapshot/peer/scenario/
-                     watch/status/prune/service/monitor/history)
+├── core/          CheckResult (+ stable code), Status, Probe (scope/default/advice), registry, safe subprocess
+├── netinfo/       model.py + linux.py / windows.py / macos.py collectors, snapshot cache
+├── measure/       icmp.py (socket + system ping), tcp.py, dns.py, stats.py
+├── probes/        interface, link, ipconfig, gateway, neighbor, icmp/external, dns, dualstack,
+│                  tcp, firewall, http, tls, system/clock, wifi, traceroute, device (route/reach/ports)
+├── diagnosis/     engine (dep-graph, transitive gating), rules (advice), baseline, changepoint
+├── runner.py      run_check(), diagnose_target(), live NIC-error probe
+├── inventory.py   device lists (CSV/YAML/JSON/TOML), port presets
+├── scan.py        subnet discovery
+├── oui.py         MAC vendor lookup from an OUI database already on the system
+├── report/        text / JSON / HTML / CSV
+├── i18n.py        ja / en
+├── cli/           click commands (check, scan, ping, explain, scenario, snapshot, peer, watch …)
+├── snapshot/ peer/ scenario/ alerting.py watch.py storage.py scheduler.py plugins.py
 ```

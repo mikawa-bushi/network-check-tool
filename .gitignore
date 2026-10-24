@@ -180,3 +180,5 @@ Temporary Items
 .aider*
 .continue/
 .windsurf/
+# Site-specific device lists for the Docker monitor (IP plans may be confidential)
+docker/devices.csv

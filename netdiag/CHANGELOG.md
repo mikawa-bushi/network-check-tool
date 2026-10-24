@@ -2,6 +2,62 @@
 
 All notable changes to the `netdiag` package are documented in this file.
 
+## [0.2.0] - 2026-10-21
+
+### Added
+- **Device checks**: target-scoped probes `route` (subnet mismatch, link-down NIC,
+  special addresses, overlapping NICs), `reach` (ping statistics + fresh ARP
+  evidence: device absent vs ICMP disabled; duplicate replies / MAC mismatch = IP
+  conflict) and `ports` (open / closed / no answer / no response at all), run by
+  `netdiag.runner.run_check()` for many devices with one paced ping sweep.
+- **Host checks**: `link` (speed, half duplex, NIC error ratio), `ipconfig` (OS-
+  detected duplicate IP, overlapping subnets, multiple default gateways, broad
+  masks), `link_errors` (NIC errors that grew during the test); `interface`
+  explains APIPA (169.254.x.x) and IP-conflict states.
+- `netdiag.netinfo`: OS-neutral host network model with Linux (`ip -j` + sysfs),
+  Windows (one PowerShell call; `route print`/`arp -a` fallbacks parsed
+  language-independently) and macOS collectors.
+- `netdiag.measure`: unprivileged ICMP socket pinger (fping-style, duplicate
+  detection, ≤200 pps), locale-independent system-ping parsers (Japanese/English
+  Windows, iputils, BusyBox, macOS), TCP checks, a stdlib DNS client, and loss
+  confidence intervals / percentiles / jitter.
+- `netdiag.inventory` (device lists), `netdiag.scan` + `netdiag scan`,
+  `netdiag.oui` (vendor names from an OUI database already on the system),
+  `netdiag.i18n` (Japanese/English), result `code`s, `Hypothesis.runbook`,
+  `Probe.advice()` / `scope` / `default` / `requires_internet`.
+- `netdiag scenario` accepts `devices:`; JSON/HTML/CSV output and `-o` for
+  `check`/`scenario`; `netdiag ping` precise statistics; `watch --no-internet`.
+
+### Changed
+- `check` defaults to a closed network (internet probes need `--internet`).
+- Engine gating is transitive: a probe whose dependency was itself skipped as a
+  consequence is skipped too (previously it ran and could be reported as a second,
+  unrelated cause).
+- The DNS probe queries each configured resolver directly (a dead secondary DNS is
+  a warning) instead of shelling out to `nslookup`.
+- Command output is decoded robustly (UTF-8, then the console code page) and
+  POSIX tools run under `LC_ALL=C`.
+- `cli.py` and `report.py` became packages (`netdiag.cli`, `netdiag.report`);
+  public names are re-exported.
+- Scenario fix: `external` checks' `target` now sets `external_ip`.
+
+### Fixed
+- `dualstack` reported "neither IPv4 nor IPv6 reachable" (FAIL) on IPv4-only PCs,
+  where IPv6 is simply unrouted; that is now OK ("single stack"), and a host that
+  only drops ICMP gets a TCP 443 second opinion before anything is called broken.
+- Windows `ping` replies such as "宛先ホストに到達できません" / "Destination host
+  unreachable" were counted by ping.exe (and the old parser) as received; Japanese
+  Windows output was not parsed at all (every ping read as 100 % loss).
+- The Windows `netstat -rn` fallback could return the netmask `0.0.0.0` as the
+  default gateway (replaced by PowerShell / `route print` parsing).
+- `--duration` on Windows used a 0.2 s cadence although `ping.exe` sends one
+  request per second (a 10-minute test would have taken 50 minutes).
+
+### Removed
+- `diagnosis.rules.RUNBOOKS` (narratives now live on the probes; `runbook_steps()`
+  and `explain_failure()` remain) and `probes.icmp.classify_ping`
+  (`probes.icmp.ping()` is kept as a compatibility wrapper).
+
 ## [0.1.7] - 2026-06-15
 
 ### Fixed (issue #35)
