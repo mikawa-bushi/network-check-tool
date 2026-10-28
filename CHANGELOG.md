@@ -2,6 +2,50 @@
 
 All notable changes to this project are documented in this file.
 
+## [0.4.0] - 2026-10-28
+
+Field readiness: verified on every OS in CI, precise on Windows, a single exe for
+PCs without Python, hours-long drop hunting, and a line board in the dashboard.
+netdiag 0.3.0 (see `netdiag/CHANGELOG.md`).
+
+### Added
+- **`netdiag soak`**: continuous measurement for hours — outage timeline, outages
+  correlated across devices (all / some / one → this PC's side / a shared switch /
+  that device), NIC errors (and link drops on Linux), live start/end lines,
+  text/JSON/CSV/HTML heatmap reports.
+- **`netdiag collect`**: zips the raw output of the OS commands netdiag parses plus
+  its own interpretation, with IPs/MACs/host names/SSIDs/domains masked while
+  keeping subnet structure and MAC vendors.
+- **Windows `netdiag.exe`** (PyInstaller, no Python needed): double-click checks this
+  PC, dropping a device list on it checks the line; the HTML report is saved and
+  opened. Built and smoke-tested by `.github/workflows/windows-exe.yml`, attached
+  to `v*` releases with a Japanese/English README and a sample device list.
+- **Dashboard line board** (`network-checker`): every device as a tile by name and
+  group with OK/Warning/Down/Unknown (icon + word), loss, RTT, last reply, why it
+  is amber, and the netdiag-diagnosed cause of an outage; recent alerts with the
+  outage length and next steps. Japanese UI (English by browser or switch).
+  `network-checker run-server --devices FILE` monitors a device list and serves the
+  board in one command; `start-monitoring --config` labels the board too.
+  New API: `GET /api/overview`, `GET /api/alerts`; `POST /api/hosts` takes
+  `name`/`group`/`note`. Alerts are stored in the DB (`alert_events`), device names
+  in `monitored_hosts` (both created automatically).
+- CI: the test suite plus live smoke runs (`check`, `ping`, `soak`, `collect`) on
+  Ubuntu, Windows and macOS; the `collect` zips are kept as artifacts.
+
+### Changed
+- Precise pings on Windows without admin rights (Windows ICMP API) — `check`,
+  `soak` and `network-checker` no longer fall back to `ping.exe`'s 1 request/s.
+- Monitor alert summaries follow the display language (Japanese by default).
+- `network-checker clear` also clears stored alerts (device names are kept).
+- Dependencies: flask 3.1.3, flask-cors 6.0, werkzeug 3.1.9, pytest 9, black 26,
+  virtualenv/filelock/Pygments updated for published advisories. (filelock stays at
+  4.1.0 on Python 3.10 dev environments: the fixed release needs Python 3.11+.)
+
+### Fixed
+- CI ran only on branches without a `/` in their name (`'*'` → `'**'`).
+- Output redirected to a file or pipe on a Japanese/English Windows console no
+  longer crashes on characters the code page cannot encode.
+
 ## [0.3.0] - 2026-10-21
 
 Refocused on production engineers: check this PC **and every device on the line**
