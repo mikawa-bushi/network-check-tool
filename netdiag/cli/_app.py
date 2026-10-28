@@ -128,6 +128,77 @@ def color_wanted(no_color: bool) -> bool:
     return sys.stdout.isatty() and not no_color
 
 
+# Typographic characters netdiag prints, with stand-ins for encodings that
+# lack them (redirected output on Windows uses the ANSI code page, e.g. cp932,
+# which has no "—", "≤" or "✔"). The first candidate the encoding can
+# represent wins; anything else becomes "?". Never raise on output.
+_SUBSTITUTES = {
+    "—": ("―", "-"),
+    "–": ("-",),
+    "·": ("・", "."),
+    "≤": ("≦", "<="),
+    "≥": ("≧", ">="),
+    "⇄": ("<->",),
+    "✔": ("○", "OK"),
+    "✘": ("×", "NG"),
+    "⚠": ("!",),
+    "━": ("─", "="),
+    "■": ("#",),
+    "…": ("...",),
+    "〜": ("～", "~"),
+    "・": (".",),
+    "（": ("(",),
+    "）": (")",),
+    "\ufeff": ("",),
+}
+
+
+def _substitute(exc: UnicodeError):
+    if not isinstance(exc, UnicodeEncodeError):
+        raise exc
+    out = []
+    for ch in exc.object[exc.start : exc.end]:
+        for cand in _SUBSTITUTES.get(ch, ()):
+            try:
+                cand.encode(exc.encoding)
+            except (UnicodeEncodeError, LookupError):
+                continue
+            out.append(cand)
+            break
+        else:
+            out.append("?")
+    return "".join(out), exc.end
+
+
+def harden_streams() -> None:
+    """Make stdout/stderr substitute instead of crash on unencodable text."""
+    import codecs
+
+    try:
+        codecs.lookup_error("netdiag")
+    except LookupError:
+        codecs.register_error("netdiag", _substitute)
+    for stream in (sys.stdout, sys.stderr):
+        enc = (getattr(stream, "encoding", "") or "").lower().replace("-", "")
+        reconfigure = getattr(stream, "reconfigure", None)
+        if enc and enc not in ("utf8", "utf8sig") and reconfigure is not None:
+            try:
+                reconfigure(errors="netdiag")
+            except (ValueError, OSError):
+                pass
+
+
+def setup(
+    lang: Optional[str] = None, verbose: bool = False, log_file: Optional[str] = None
+) -> None:
+    """Per-run setup shared by the ``netdiag`` group and the exe launcher."""
+    from ..plugins import load_plugins
+
+    set_language(lang)
+    _setup_logging(verbose=verbose, log_file=log_file)
+    load_plugins()
+
+
 class Progress:
     """One overwriting status line on stderr (only on an interactive terminal)."""
 
@@ -183,8 +254,4 @@ def cli(lang: Optional[str], verbose: bool, log_file: Optional[str]) -> None:
     netdiag check -f devices.csv   台帳の全機器をまとめて診断
     netdiag scan                   同じネットワーク上の機器を一覧
     """
-    from ..plugins import load_plugins
-
-    set_language(lang)
-    _setup_logging(verbose=verbose, log_file=log_file)
-    load_plugins()
+    setup(lang, verbose, log_file)

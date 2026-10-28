@@ -107,8 +107,16 @@ class LinkStats:
     tx_dropped: Optional[int] = None
     rx_crc_errors: Optional[int] = None
     collisions: Optional[int] = None
+    # Times the link went down/up (Linux sysfs carrier_changes counts both
+    # edges, so one drop-and-return adds 2). A change during a measurement means
+    # this PC's own cable/port/NIC flapped.
+    carrier_changes: Optional[int] = None
 
     ERROR_FIELDS = ("rx_errors", "tx_errors", "rx_crc_errors", "collisions")
+
+    def link_drops(self) -> int:
+        """Down-and-up events implied by ``carrier_changes`` (rounded up)."""
+        return ((self.carrier_changes or 0) + 1) // 2
 
     def errors_total(self) -> int:
         return sum(getattr(self, f) or 0 for f in self.ERROR_FIELDS)

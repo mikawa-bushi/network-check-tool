@@ -102,12 +102,12 @@ def test_check_duration_sets_count(monkeypatch):
 
 
 def test_duration_uses_windows_ping_cadence(monkeypatch):
-    import netdiag.core.util as util
     import netdiag.measure as measure
+    import netdiag.measure.icmp as icmpmod
 
     seen = _patch_run(monkeypatch)
-    monkeypatch.setattr(util, "is_windows", lambda: True)
-    monkeypatch.setattr(measure, "icmp_socket_available", lambda: False)
+    monkeypatch.setattr(icmpmod, "is_windows", lambda: True)
+    monkeypatch.setattr(measure, "precise_ping_available", lambda: False)
     CliRunner().invoke(cli, ["check", "--duration", "60"])
     assert seen["config"]["count"] == 60  # ~1 ping/s with ping.exe, not 300
 
@@ -220,3 +220,16 @@ def test_help_mentions_device_lists():
     assert (
         "--file" in res.output and "--port" in res.output and "--internet" in res.output
     )
+
+
+def test_output_never_crashes_on_legacy_encodings():
+    from netdiag.cli._app import harden_streams
+
+    harden_streams()  # registers the "netdiag" error handler
+    text = "結論 — 95%上限 ≤28% ✔ ⚠ ✘ ·"
+    assert (
+        text.encode("cp932", "netdiag").decode("cp932")
+        == "結論 ― 95%上限 ≦28% ○ ! × ・"
+    )
+    assert "a — b ✘ ≥".encode("ascii", "netdiag") == b"a - b NG >="
+    assert "日本".encode("cp1252", "netdiag") == b"??"

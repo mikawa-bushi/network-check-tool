@@ -310,6 +310,13 @@ def test_run_check_end_to_end_with_fakes(monkeypatch):
             )
         ],
     )
+    asked = []
+
+    def fake_neighbor(ip):
+        asked.append(ip)
+        return None  # per-device lookup inconclusive: the table read stands
+
+    monkeypatch.setattr(netinfo, "neighbor", fake_neighbor)
     calls = {}
 
     def fake_ping_many(targets, count, interval, timeout, **kw):
@@ -380,3 +387,49 @@ def test_ports_ok_settles_an_icmp_silent_device():
     diag = reconcile_device(engine, engine.run(only=DEVICE))
     assert diag.healthy
     assert diag.results_by_name()["reach"].code == "reach.icmp_silent_ports_ok"
+
+
+def test_silent_on_link_devices_get_a_direct_arp_answer(monkeypatch):
+    # Windows: SendARP says "nobody answered" -> definite absence; a device in
+    # the cache before the test that SendARP still resolves stays "unknown".
+    from netdiag import runner
+
+    hn = _hn()
+    monkeypatch.setattr(netinfo, "snapshot", lambda max_age=5.0: hn)
+    monkeypatch.setattr(netinfo, "link_stats", lambda: {})
+    cached = Neighbor("192.168.3.40", mac="00:26:92:00:00:40", state="stale")
+    monkeypatch.setattr(netinfo, "neighbors", lambda: [cached])
+    answers = {
+        "192.168.3.40": Neighbor(
+            "192.168.3.40", mac="00:26:92:00:00:40", state="stale"
+        ),
+        "192.168.3.41": Neighbor("192.168.3.41", state="failed"),
+    }
+    asked = []
+
+    def fake_neighbor(ip):
+        asked.append(ip)
+        return answers.get(ip)
+
+    monkeypatch.setattr(netinfo, "neighbor", fake_neighbor)
+    monkeypatch.setattr(
+        runner,
+        "ping_many",
+        lambda targets, **kw: {
+            "192.168.3.39": _ping(10),
+            "192.168.3.40": _ping(0),
+            "192.168.3.41": _ping(0),
+        },
+    )
+    devices = [
+        Device(name="OK", host="192.168.3.39"),
+        Device(name="CACHED", host="192.168.3.40"),
+        Device(name="GONE", host="192.168.3.41"),
+    ]
+    rep = runner.run_check(devices, config={"internet": False}, only=["interface"])
+    assert sorted(asked) == ["192.168.3.40", "192.168.3.41"]  # only silent devices
+    codes = {
+        d.device.name: d.diagnosis.results_by_name()["reach"].code for d in rep.devices
+    }
+    assert codes["GONE"] == "reach.no_arp"
+    assert codes["CACHED"] == "reach.no_reply"  # an old cache entry proves nothing

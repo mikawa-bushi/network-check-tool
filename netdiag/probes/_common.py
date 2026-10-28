@@ -6,7 +6,7 @@ from typing import Any, Dict, Optional
 
 from ..core.util import os_name
 from ..i18n import tr
-from ..measure import PingStats, icmp_socket_available
+from ..measure import PingStats, precise_ping_available
 
 # LAN latency guide values. A healthy switched LAN answers in well under a
 # millisecond; PLC Ethernet modules often answer ICMP in a low-priority task
@@ -27,8 +27,8 @@ def oscmd(linux: str, windows: str, macos: Optional[str] = None) -> str:
 
 
 def default_ping_count() -> int:
-    """10 fast samples with the socket pinger; 5 with Windows' 1 s ping cadence."""
-    return 10 if icmp_socket_available() else 5
+    """10 fast samples with a precise pinger; 5 with ping.exe's 1 s cadence."""
+    return 10 if precise_ping_available() else 5
 
 
 def ping_settings(ctx_get) -> Dict[str, Any]:

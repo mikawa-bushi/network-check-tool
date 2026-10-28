@@ -82,16 +82,12 @@ class CheckReport:
 
     @property
     def status(self) -> Status:
-        statuses = [self.host_status] + [d.status for d in self.devices]
-        for s in (Status.FAIL, Status.WARN):
-            if s in statuses:
-                return s
-        return Status.OK
+        return Status.worst([self.host_status] + [d.status for d in self.devices])
 
     @property
     def exit_code(self) -> int:
         """0 healthy, 1 a failure was found, 2 warnings only."""
-        return {Status.FAIL: 1, Status.WARN: 2}.get(self.status, 0)
+        return self.status.exit_code
 
     def to_dict(self) -> Dict[str, Any]:
         from .report import diagnosis_to_dict
@@ -157,16 +153,31 @@ class LinkErrorsProbe(Probe):
         hn = ctx.network()
         wired = {i.name for i in hn.interfaces if i.kind == netinfo.KIND_ETHERNET}
         grew = []
+        flapped = []
         for name in sorted(wired & set(before) & set(after)):
             d = after[name].delta(before[name])
             errs = d.errors_total()
             if errs > 0:
                 grew.append((name, errs, d))
+            if d.link_drops() > 0:
+                flapped.append((name, d.link_drops(), d))
         if not before or not after:
             return CheckResult.skip(
                 self.name,
                 tr("NICカウンタを取得できません", "NIC counters unavailable"),
                 code="link_errors.unavailable",
+            )
+        if flapped:
+            text = ", ".join(f"{n} {c}" for n, c, _d in flapped)
+            return CheckResult.fail(
+                self.name,
+                tr(
+                    f"測定中にこのPCのリンクが切断されました（{text} 回）— ケーブル/コネクタ/スイッチのポート",
+                    f"this PC's link went down during the test ({text} time(s)) — cable/connector/switch port",
+                ),
+                metrics={f"link_drops.{n}": float(c) for n, c, _d in flapped},
+                detail={n: d.to_dict() for n, _c, d in flapped},
+                code="link_errors.link_flap",
             )
         if grew:
             text = ", ".join(f"{n} +{e}" for n, e, _d in grew)
@@ -343,6 +354,20 @@ def _check_devices(
         stats = ping_many(targets, count=count, interval=interval, timeout=timeout)
         window = time.monotonic() - t0
     neigh_after = {n.ip: n for n in netinfo.neighbors()} if targets else {}
+    # Silent on-link devices: ask for their ARP answer directly (on Windows,
+    # SendARP returns a definite "nobody answered"), in parallel.
+    silent = [
+        ip
+        for ip in targets
+        if stats.get(ip) is not None
+        and not stats[ip].any_reply
+        and hn.decide_route(ip).on_link
+    ]
+    if silent:
+        with ThreadPoolExecutor(max_workers=min(16, len(silent))) as pool:
+            for ip, n in zip(silent, pool.map(netinfo.neighbor, silent)):
+                if n is not None:
+                    neigh_after[ip] = n
 
     say(tr("機器ごとに診断中…", "Diagnosing each device…"))
 
