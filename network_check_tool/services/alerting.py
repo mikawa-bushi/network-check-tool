@@ -16,6 +16,10 @@ from netdiag.alerting import StateMachine, Transition
 
 logger = logging.getLogger(__name__)
 
+# Consecutive bad samples before a host is DEGRADED (the line board's "down"
+# uses the same rule, so tiles and alerts agree).
+FAIL_THRESHOLD = 2
+
 
 class HostAlerter:
     """Classify ping samples for one host and emit state-change alerts."""
@@ -26,7 +30,7 @@ class HostAlerter:
         sink,
         rtt_warn_ms: Optional[float] = None,
         loss_warn_pct: Optional[float] = None,
-        fail_threshold: int = 2,
+        fail_threshold: int = FAIL_THRESHOLD,
         recover_threshold: int = 2,
         diagnose: bool = False,
         engine_config: Optional[dict] = None,
@@ -42,7 +46,9 @@ class HostAlerter:
         self.diagnose = diagnose
         self.engine_config = engine_config or {}
         self._sm = StateMachine(
-            fail_threshold=fail_threshold, recover_threshold=recover_threshold
+            fail_threshold=fail_threshold,
+            recover_threshold=recover_threshold,
+            host=host,
         )
 
     def _is_healthy(self, packet_loss: bool, response_time: Optional[float]) -> bool:
@@ -56,13 +62,21 @@ class HostAlerter:
         self, packet_loss: bool, response_time: Optional[float]
     ) -> Optional[Transition]:
         """Feed one ping sample; emit (and return) a Transition iff state changed."""
+        from netdiag.i18n import tr
+
         healthy = self._is_healthy(packet_loss, response_time)
         if packet_loss:
-            reason = f"{self.host}: packet loss"
+            reason = tr(f"{self.host}: 応答なし", f"{self.host}: packet loss")
         elif not healthy:
-            reason = f"{self.host}: rtt {response_time}ms over {self.rtt_warn_ms}ms"
+            reason = tr(
+                f"{self.host}: 応答 {response_time}ms（しきい値 {self.rtt_warn_ms}ms 超）",
+                f"{self.host}: rtt {response_time}ms over {self.rtt_warn_ms}ms",
+            )
         else:
-            reason = f"{self.host}: rtt {response_time}ms"
+            reason = tr(
+                f"{self.host}: 応答 {response_time}ms",
+                f"{self.host}: rtt {response_time}ms",
+            )
         transition = self._sm.observe(healthy, cause=self.host, summary=reason)
         if transition is not None:
             if self.diagnose and transition.event == "degraded":
@@ -91,6 +105,7 @@ class HostAlerter:
             if primary is not None:
                 transition.cause = primary.cause
                 transition.confidence = primary.confidence
+                transition.diagnosis = str(primary.summary)
                 transition.evidence = list(transition.evidence) + [
                     f"netdiag root cause: {primary.cause} — {primary.summary}"
                 ]
@@ -109,3 +124,20 @@ class HostAlerter:
                 ]
         except Exception:
             logger.warning("auto-netdiag failed for %s", self.host, exc_info=True)
+
+
+class DbAlertSink:
+    """Keep alerts in the dashboard database (the line board shows the latest).
+
+    Runs in the scheduler's worker threads, so it pushes its own app context.
+    """
+
+    def __init__(self, app) -> None:
+        self.app = app
+
+    def emit(self, transition: Transition) -> None:
+        from ..models import AlertEvent, db
+
+        with self.app.app_context():
+            db.session.add(AlertEvent.from_transition(transition))
+            db.session.commit()

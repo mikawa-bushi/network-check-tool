@@ -35,13 +35,27 @@ def _is_loopback(host: str) -> bool:
 )
 @click.option("--port", "-p", default=9991, help="Port to bind to")
 @click.option("--debug", is_flag=True, help="Enable debug mode (loopback hosts only)")
-def run_server(host, port, debug):
+@click.option(
+    "--devices",
+    "devices_path",
+    type=click.Path(exists=True, dir_okay=False),
+    default=None,
+    help=(
+        "Device list (CSV saved from Excel, YAML, JSON/TOML) whose names and groups "
+        "label the line board; on a loopback bind every device is also monitored."
+    ),
+)
+def run_server(host, port, debug, devices_path):
     """Run the Flask web application.
 
     Binds to localhost (127.0.0.1) by default. Pass ``--host 0.0.0.0`` to expose
     it on the network -- but the dashboard and data API have no authentication,
     so only do that behind a reverse proxy that adds access control.
+
+    ``--devices 1ライン.csv`` turns it into a one-command line monitor: the board
+    lists the devices by name and group and (on a loopback bind) pings them.
     """
+    host_configs = _load_host_configs(devices_path) if devices_path else []
     if debug and not _is_loopback(host):
         raise click.ClickException(
             f"Refusing to enable --debug on non-loopback host {host!r}: the Werkzeug "
@@ -64,7 +78,40 @@ def run_server(host, port, debug):
     )
     if enable_scheduler:
         click.echo("Host-management API enabled (POST/DELETE /api/hosts).", err=True)
+    if host_configs:
+        from .models import upsert_hosts
+
+        with app.app_context():
+            upsert_hosts(host_configs)
+        scheduler = app.extensions.get("scheduler")
+        if scheduler is not None:
+            for hc in host_configs:
+                scheduler.add_ping_job(
+                    hc.name,
+                    hc.interval,
+                    rtt_warn_ms=hc.rtt_warn_ms,
+                    loss_warn_pct=hc.loss_warn_pct,
+                )
+            click.echo(f"Monitoring {len(host_configs)} devices.", err=True)
+        else:
+            click.echo(
+                f"Loaded names for {len(host_configs)} devices (monitor them with "
+                "start-monitoring --config).",
+                err=True,
+            )
     app.run(host=host, port=port, debug=debug)
+
+
+def _load_host_configs(path, interval=60):
+    """Read a hosts/device list, exiting with a clear message when it is invalid."""
+    from .config.hosts import load_hosts
+
+    try:
+        return load_hosts(path, default_interval=interval)
+    except (ValueError, OSError) as e:
+        # Fail loudly rather than start up monitoring nothing.
+        click.echo(f"Error: invalid device list {path}: {e}", err=True)
+        raise SystemExit(1)
 
 
 @cli.command()
@@ -104,14 +151,7 @@ def start_monitoring(hosts, interval, config_path, alert_file, diagnose):
     # Resolve the host list: a --config file (per-host interval) takes precedence
     # over positional args (shared --interval). One or the other is required.
     if config_path:
-        from .config.hosts import load_hosts
-
-        try:
-            host_configs = load_hosts(config_path, default_interval=interval)
-        except (ValueError, OSError) as e:
-            # Fail loudly rather than start up monitoring nothing.
-            click.echo(f"Error: invalid --config {config_path}: {e}", err=True)
-            raise SystemExit(1)
+        host_configs = _load_host_configs(config_path, interval)
     elif hosts:
         from .config.hosts import HostConfig
 
@@ -123,13 +163,22 @@ def start_monitoring(hosts, interval, config_path, alert_file, diagnose):
     # thresholds come from the config file. The default path lives under ~/.netdiag.
     from pathlib import Path
 
-    from netdiag.alerting import FileAlertSink
+    from netdiag.alerting import FileAlertSink, MultiSink
 
-    sink = FileAlertSink(jsonl_path=Path(alert_file) if alert_file else None)
+    from .services.alerting import DbAlertSink
+
+    file_sink = FileAlertSink(jsonl_path=Path(alert_file) if alert_file else None)
 
     app = create_app()
+    # Alerts also go to the DB so a dashboard on the same database shows them.
+    sink = MultiSink([file_sink, DbAlertSink(app)])
 
     with app.app_context():
+        if config_path:
+            # Names and groups from the list label the dashboard's line board.
+            from .models import upsert_hosts
+
+            upsert_hosts(host_configs)
         # Pass the app so each job (run in an APScheduler worker thread) can push
         # its own application context before writing to the DB. The configured
         # PING_TIMEOUT is forwarded so monitored pings honour it (M2); the worker
@@ -167,7 +216,7 @@ def start_monitoring(hosts, interval, config_path, alert_file, diagnose):
             raise SystemExit(1)
 
         click.echo(
-            f"Monitoring started (alerts → {sink.jsonl_path}). Press Ctrl+C to stop."
+            f"Monitoring started (alerts → {file_sink.jsonl_path}). Press Ctrl+C to stop."
         )
 
         # Keep the process running until the user interrupts (a clean exit 0).
@@ -304,11 +353,12 @@ def clear():
     app = create_app()
 
     with app.app_context():
-        from .models import PingResult, db
+        from .models import AlertEvent, PingResult, db
 
         db.session.query(PingResult).delete()
+        db.session.query(AlertEvent).delete()
         db.session.commit()
-        click.echo("All ping data cleared.")
+        click.echo("All ping data cleared (alerts too; device names are kept).")
 
 
 if __name__ == "__main__":

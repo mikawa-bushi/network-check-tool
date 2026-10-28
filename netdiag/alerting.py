@@ -48,6 +48,8 @@ class Transition:
     consequences: List[str] = field(default_factory=list)
     runbook: List[str] = field(default_factory=list)
     duration_s: Optional[float] = None  # how long the prior state lasted
+    host: Optional[str] = None  # the monitored device, when the alert is about one
+    diagnosis: str = ""  # root-cause explanation, when a diagnosis ran
 
     @property
     def iso(self) -> str:
@@ -68,9 +70,15 @@ class StateMachine:
     link — from emitting a storm of alerts.
     """
 
-    def __init__(self, fail_threshold: int = 2, recover_threshold: int = 2) -> None:
+    def __init__(
+        self,
+        fail_threshold: int = 2,
+        recover_threshold: int = 2,
+        host: Optional[str] = None,
+    ) -> None:
         self.fail_threshold = max(1, fail_threshold)
         self.recover_threshold = max(1, recover_threshold)
+        self.host = host  # stamped on every Transition
         self.state = State.UNKNOWN
         self._bad_streak = 0
         self._good_streak = 0
@@ -118,6 +126,7 @@ class StateMachine:
                     consequences=consequences or [],
                     runbook=runbook or [],
                     duration_s=duration if prior != State.UNKNOWN else None,
+                    host=self.host,
                 )
         elif self.state == State.DEGRADED:
             if self._good_streak >= self.recover_threshold:
@@ -132,6 +141,7 @@ class StateMachine:
                     ts=ts,
                     summary=summary,
                     duration_s=duration,
+                    host=self.host,
                 )
         return None
 

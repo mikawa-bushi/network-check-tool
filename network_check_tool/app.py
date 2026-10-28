@@ -75,11 +75,14 @@ def create_app(config_name=None, register_scheduler=False):
         # empty; hosts are added via POST /api/hosts. Single-process only (see the
         # docstring). Attached under app.extensions so the views can reach it.
         from .services import SchedulerService
+        from .services.alerting import DbAlertSink
 
         scheduler = SchedulerService(
             app=app,
             timeout=app.config["PING_TIMEOUT"],
             max_workers=app.config["SCHEDULER_MAX_WORKERS"],
+            # Confirmed outages land in the DB so the line board can show them.
+            sink=DbAlertSink(app),
         )
         scheduler.start()
         app.extensions["scheduler"] = scheduler
