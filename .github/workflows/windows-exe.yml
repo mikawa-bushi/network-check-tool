@@ -1,0 +1,95 @@
+name: Windows exe
+
+# Builds the single-file netdiag.exe (no Python needed on the target PC),
+# smoke-tests the exe itself, and attaches the zip to the release on a v* tag.
+on:
+  push:
+    branches:
+      - '**'
+    tags:
+      - 'v*'
+    paths:
+      - 'netdiag/**'
+      - 'packaging/windows/**'
+      - 'examples/devices.csv'
+      - 'pyproject.toml'
+      - '.github/workflows/windows-exe.yml'
+  workflow_dispatch:
+
+permissions:
+  contents: write  # only used to upload the zip to a tag's release
+
+jobs:
+  build:
+    runs-on: windows-latest
+    defaults:
+      run:
+        shell: bash
+
+    steps:
+    - name: Checkout code
+      uses: actions/checkout@v4
+
+    - name: Set up Python
+      uses: actions/setup-python@v5
+      with:
+        python-version: '3.12'
+
+    - name: Install netdiag and PyInstaller
+      run: |
+        python -m pip install --upgrade pip
+        python -m pip install ".[yaml]" "pyinstaller~=6.11"
+
+    - name: Build netdiag.exe
+      run: |
+        pyinstaller --noconfirm --clean --onefile --console --name netdiag \
+          --copy-metadata network-check-tool \
+          --exclude-module tkinter --exclude-module flask --exclude-module plotly \
+          --exclude-module network_check_tool \
+          packaging/windows/netdiag_exe.py
+        ls -l dist
+
+    - name: Smoke — the exe itself
+      env:
+        NETDIAG_NO_OPEN: '1'
+      run: |
+        set +e
+        ./dist/netdiag.exe --version || exit 1
+        ./dist/netdiag.exe --lang en check --format json -o check.json
+        rc=$?; echo "check exit code: $rc"; test "$rc" -le 2 || exit 1
+        ./dist/netdiag.exe --lang en ping 127.0.0.1 -c 5 --json > ping.json || exit 1
+        python -c "import json; d=json.load(open('ping.json')); print(d['method'], d['received'], '/', d['sent']); assert d['received'] == d['sent'] == 5" || exit 1
+        # Drag-and-drop mode: a device list as the only argument, Enter to close.
+        mkdir -p dropped
+        python -c "open('dropped/line.csv', 'w', encoding='cp932', newline='').write('名前,IPアドレス\r\nLOOP,127.0.0.1\r\n')"
+        echo | ./dist/netdiag.exe "$(cygpath -w "$PWD/dropped/line.csv")"
+        rc=$?; echo "drop exit code: $rc"; test "$rc" -le 2 || exit 1
+        ls dropped
+        test -n "$(ls dropped/*.html)" || exit 1
+
+    - name: Package
+      id: pkg
+      run: |
+        version=$(python -c "from importlib.metadata import version; print(version('network-check-tool'))")
+        name="netdiag-windows-x64-${version}"
+        mkdir -p "pkg/$name"
+        cp dist/netdiag.exe "pkg/$name/"
+        cp packaging/windows/README.txt "pkg/$name/README.txt"
+        cp examples/devices.csv "pkg/$name/devices_sample.csv"
+        (cd pkg && python -m zipfile -c "$name.zip" "$name")
+        echo "name=$name" >> "$GITHUB_OUTPUT"
+
+    - name: Upload artifact
+      uses: actions/upload-artifact@v4
+      with:
+        name: ${{ steps.pkg.outputs.name }}
+        path: pkg/${{ steps.pkg.outputs.name }}.zip
+
+    - name: Attach to release (v* tags)
+      if: startsWith(github.ref, 'refs/tags/v')
+      env:
+        GH_TOKEN: ${{ github.token }}
+      run: |
+        zip="pkg/${{ steps.pkg.outputs.name }}.zip"
+        gh release upload "$GITHUB_REF_NAME" "$zip" --clobber \
+          || gh release create "$GITHUB_REF_NAME" "$zip" --generate-notes
