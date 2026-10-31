@@ -1,50 +1,51 @@
+"""Device monitoring: ping every host on its interval and record the results.
+
+Hosts that share an interval are pinged together, once per interval, through
+netdiag's ``ping_many``, so a host that doesn't answer never delays or skips the
+others. With the ICMP socket a sweep takes about as long as the slowest reply;
+the Windows ICMP API and the system ``ping`` fallback work through a bounded
+pool, so a whole line that is down takes a few timeouts. Each sweep writes its
+rows in one transaction, then feeds every host's alerter; the hosts that just
+went down are diagnosed together in one netdiag run.
+"""
+
+from __future__ import annotations
+
 import logging
-from typing import List, Optional
+import threading
+from dataclasses import dataclass
+from datetime import datetime, timezone
+from typing import Dict, Iterable, List, Optional
 
-from apscheduler.executors.pool import ThreadPoolExecutor
-from apscheduler.jobstores.memory import MemoryJobStore
-from apscheduler.schedulers.background import BackgroundScheduler
+from netdiag.periodic import PeriodicLoop
 
+from ..config.hosts import HostConfig
+from ..models import db
+from .alerting import HostAlerter, report
 from .ping_service import PingService
 
 logger = logging.getLogger(__name__)
 
-# Default scheduler worker-pool size. Monitoring a handful of hosts needs only a
-# small pool; callers inject Config.SCHEDULER_MAX_WORKERS to override.
-DEFAULT_SCHEDULER_MAX_WORKERS = 4
+
+@dataclass
+class _Target:
+    host: str
+    interval: int
+    alerter: Optional[HostAlerter] = None  # set when alerting is configured
 
 
-def _run_ping_job(app, ping_service: "PingService", host: str, alerter=None):
-    """Module-level job target executed by an APScheduler worker thread.
+class _Sweep(PeriodicLoop):
+    """Ping every host registered at one interval, once per interval."""
 
-    Two reasons this lives at module scope instead of being a bound method:
+    _tick_error_msg = "monitoring sweep failed"
 
-    * **No scheduler in the closure.** A bound ``self._ping_job`` drags the whole
-      ``SchedulerService`` (and its ``BackgroundScheduler``) along as ``self``.
-      A persistent jobstore would then try to pickle it and APScheduler raises
-      "Schedulers cannot be serialized". Keeping the target instance-independent
-      means it stays safe even if a persistent store is reintroduced later.
-    * **App context.** Jobs run in a worker thread, and Flask/flask_sqlalchemy
-      contexts are thread-local, so the main thread's ``app.app_context()`` does
-      not reach here. Without an explicit context, ``ping_and_save`` fails with
-      "Working outside of application context". We push one per invocation.
-    """
-    try:
-        if app is not None:
-            with app.app_context():
-                result = ping_service.ping_and_save(host)
-        else:
-            result = ping_service.ping_and_save(host)
-        logger.debug(
-            f"Ping result for {host}: {result.response_time}ms, "
-            f"packet_loss: {result.packet_loss}"
-        )
-        # Threshold alerting (F3): feed the sample to this host's state machine,
-        # which emits a DEGRADED/RECOVERED alert only on a confirmed change.
-        if alerter is not None:
-            alerter.observe(result.packet_loss, result.response_time)
-    except Exception as e:
-        logger.error(f"Error pinging {host}: {e}")
+    def __init__(self, service: "SchedulerService", interval: int) -> None:
+        super().__init__()
+        self.service = service
+        self.interval = interval
+
+    def _tick(self) -> None:
+        self.service._sweep(self.interval)
 
 
 class SchedulerService:
@@ -52,127 +53,166 @@ class SchedulerService:
         self,
         app=None,
         timeout: Optional[float] = None,
-        max_workers: Optional[int] = None,
         sink=None,
         diagnose: bool = False,
     ):
-        # MemoryJobStore (not SQLAlchemyJobStore): ``start-monitoring`` re-registers
-        # every job on each launch via ``add_ping_job``, so persisting jobs across
-        # runs buys nothing -- and an in-memory store never pickles the job func,
-        # which is what broke bound-method jobs ("Schedulers cannot be serialized").
-        # Dropping the persistent store also removes the old hardcoded
-        # ``sqlite:///network_check_tool.db`` jobstore URL that ignored DATABASE_URL.
-        jobstores = {"default": MemoryJobStore()}
-
-        self.max_workers = (
-            max_workers if max_workers is not None else DEFAULT_SCHEDULER_MAX_WORKERS
-        )
-        # Guard a misconfigured SCHEDULER_MAX_WORKERS up front: ThreadPoolExecutor
-        # otherwise raises a cryptic "max_workers must be greater than 0" from deep
-        # inside concurrent.futures when the scheduler is built.
-        if self.max_workers <= 0:
-            raise ValueError(
-                f"max_workers must be a positive integer, got {self.max_workers}"
-            )
-        executors = {"default": ThreadPoolExecutor(self.max_workers)}
-
-        job_defaults = {"coalesce": False, "max_instances": 3}
-
-        self.scheduler = BackgroundScheduler(
-            jobstores=jobstores, executors=executors, job_defaults=job_defaults
-        )
-
-        # Flask app whose context each job pushes before touching the DB session.
+        # Flask app whose context each sweep pushes before touching the DB
+        # session (sweeps run in their own threads; contexts are thread-local).
         self.app = app
-        # Optional alert sink (netdiag AlertSink). When set, each ping job is given
-        # a per-host HostAlerter and threshold breaches emit DEGRADED/RECOVERED.
+        # Optional alert sink (netdiag AlertSink). When set, each host gets a
+        # HostAlerter and threshold breaches emit DEGRADED/RECOVERED.
         self.sink = sink
         # When True, a confirmed degradation also runs a netdiag sweep (F1).
         self.diagnose = diagnose
-        # Forward the caller-provided timeout (e.g. Config.PING_TIMEOUT, injected at
-        # the CLI edge) to PingService; fall back to its built-in default when unset
-        # so the library layer never has to read global configuration itself (M2).
+        # Forward the caller-provided timeout (e.g. Config.PING_TIMEOUT, injected
+        # at the CLI edge); the library layer never reads global configuration.
         self.ping_service = (
             PingService(timeout=timeout) if timeout is not None else PingService()
         )
+        self._targets: Dict[str, _Target] = {}
+        # One running loop per interval in use; empty while stopped.
+        self._sweeps: Dict[int, _Sweep] = {}
+        self._lock = threading.Lock()
         self.is_running = False
 
-        # Use a module logger only. A service/library must not call
-        # logging.basicConfig -- that reconfigures the root logger as a global
-        # side effect of construction. The CLI entry point owns logging setup.
-        self.logger = logging.getLogger(__name__)
-
     def start(self):
-        if not self.is_running:
-            self.scheduler.start()
+        with self._lock:
+            if self.is_running:
+                return
             self.is_running = True
-            self.logger.info("Scheduler started")
+            for interval in {t.interval for t in self._targets.values()}:
+                self._start_sweep(interval)
+        logger.info("Monitoring started")
 
     def shutdown(self):
-        if self.is_running:
-            self.scheduler.shutdown()
+        with self._lock:
+            if not self.is_running:
+                return
             self.is_running = False
-            self.logger.info("Scheduler stopped")
+            sweeps, self._sweeps = self._sweeps, {}
+        # Don't wait for a sweep in flight: its rows are one transaction.
+        for sweep in sweeps.values():
+            sweep.stop(wait=False)
+        logger.info("Monitoring stopped")
+
+    def add_ping_jobs(self, configs: Iterable[HostConfig]):
+        """Monitor every host in *configs* (replacing earlier entries).
+
+        All of them are registered before any new interval's first sweep, which
+        runs straight away -- so a whole device list is measured together.
+        """
+        targets = [
+            _Target(
+                hc.name,
+                hc.interval,
+                (
+                    HostAlerter(
+                        hc.name,
+                        self.sink,
+                        rtt_warn_ms=hc.rtt_warn_ms,
+                        loss_warn_pct=hc.loss_warn_pct,
+                        diagnose=self.diagnose,
+                    )
+                    if self.sink is not None
+                    else None
+                ),
+            )
+            for hc in configs
+        ]
+        with self._lock:
+            old = {
+                self._targets[t.host].interval
+                for t in targets
+                if t.host in self._targets
+            }
+            self._targets.update((t.host, t) for t in targets)
+            if self.is_running:
+                for interval in {t.interval for t in targets} - set(self._sweeps):
+                    self._start_sweep(interval)
+            idle = [s for s in map(self._release, old) if s is not None]
+        for sweep in idle:
+            sweep.stop(wait=False)
+        for t in targets:
+            logger.info(f"Monitoring {t.host} every {t.interval}s")
 
     def add_ping_job(
         self,
         host: str,
         interval: int = 60,
-        job_id: Optional[str] = None,
         rtt_warn_ms: Optional[float] = None,
         loss_warn_pct: Optional[float] = None,
     ):
-        if job_id is None:
-            job_id = f"ping_{host}"
-
-        # Build a per-host alerter only when a sink is configured; the alerter is
-        # passed as a plain job arg (the in-memory jobstore never pickles it).
-        alerter = None
-        if self.sink is not None:
-            from .alerting import HostAlerter
-
-            alerter = HostAlerter(
-                host,
-                self.sink,
-                rtt_warn_ms=rtt_warn_ms,
-                loss_warn_pct=loss_warn_pct,
-                diagnose=self.diagnose,
-            )
-
-        self.scheduler.add_job(
-            func=_run_ping_job,
-            trigger="interval",
-            seconds=interval,
-            id=job_id,
-            args=[self.app, self.ping_service, host, alerter],
-            replace_existing=True,
+        """Monitor *host* every *interval* seconds (replacing any earlier entry)."""
+        self.add_ping_jobs(
+            [
+                HostConfig(
+                    name=host,
+                    interval=interval,
+                    rtt_warn_ms=rtt_warn_ms,
+                    loss_warn_pct=loss_warn_pct,
+                )
+            ]
         )
 
-        self.logger.info(f"Added ping job for {host} with {interval}s interval")
+    def remove_ping_job(self, host: str):
+        with self._lock:
+            target = self._targets.pop(host, None)
+            idle = self._release(target.interval) if target else None
+        if idle is not None:
+            idle.stop(wait=False)
+        if target is not None:
+            logger.info(f"Stopped monitoring {host}")
 
-    def remove_ping_job(self, job_id: str):
-        try:
-            self.scheduler.remove_job(job_id)
-            self.logger.info(f"Removed ping job: {job_id}")
-        except Exception as e:
-            self.logger.error(f"Failed to remove job {job_id}: {e}")
+    def _start_sweep(self, interval: int) -> None:
+        """Start the loop for *interval* (lock held, running)."""
+        self._sweeps[interval] = sweep = _Sweep(self, interval)
+        sweep.start()
 
-    def add_multiple_ping_jobs(self, hosts: List[str], interval: int = 60):
-        for host in hosts:
-            self.add_ping_job(host, interval)
+    def _release(self, interval: int) -> Optional[_Sweep]:
+        """Detach the loop for *interval* once no host uses it (lock held)."""
+        if any(t.interval == interval for t in self._targets.values()):
+            return None
+        return self._sweeps.pop(interval, None)
 
-    def list_jobs(self):
-        return self.scheduler.get_jobs()
-
-    def get_job_status(self, job_id: str):
-        job = self.scheduler.get_job(job_id)
-        if job:
-            return {
-                "id": job.id,
-                "name": str(job.func),
-                "next_run_time": (
-                    job.next_run_time.isoformat() if job.next_run_time else None
-                ),
-                "trigger": str(job.trigger),
+    def list_jobs(self) -> List[dict]:
+        """One entry per monitored host: ``host``, ``interval``, ``next_run_time``."""
+        with self._lock:
+            due = {i: s.next_run for i, s in self._sweeps.items()}
+            targets = list(self._targets.values())
+        when = {
+            i: datetime.fromtimestamp(ts, timezone.utc).isoformat()
+            for i, ts in due.items()
+            if ts is not None
+        }
+        return [
+            {
+                "host": t.host,
+                "interval": t.interval,
+                "next_run_time": when.get(t.interval),
             }
-        return None
+            for t in targets
+        ]
+
+    def _sweep(self, interval: int) -> None:
+        with self._lock:
+            targets = [t for t in self._targets.values() if t.interval == interval]
+        if not targets:
+            return
+        results = self.ping_service.ping_hosts([t.host for t in targets])
+        with self.app.app_context():
+            self.ping_service.save_ping_results(results)
+            db.session.commit()
+        logger.debug(
+            "sweep every %ss: %d hosts, %d without reply",
+            interval,
+            len(results),
+            sum(r["packet_loss"] for r in results),
+        )
+        changes = []
+        for t, r in zip(targets, results):
+            if t.alerter is not None:
+                change = t.alerter.update(r["packet_loss"], r["response_time"])
+                if change is not None:
+                    changes.append((t.alerter, change))
+        if changes:
+            report(changes)

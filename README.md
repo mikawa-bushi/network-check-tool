@@ -242,6 +242,8 @@ network-checker start-monitoring --config 台帳.csv --diagnose   # 監視だけ
   タイルをクリックすると、その機器の応答時間とロスのグラフに切り替わります。
 - 画面は日本語（ブラウザが英語なら英語。右上で切替）。
 
+- 同じ監視間隔の機器はまとめて一斉に ping します。止まっている機器がいくつあっても、
+  ほかの機器の測定が遅れたり抜けたりしません。
 - 機器ごとの間隔・しきい値（台帳の `監視間隔` `遅延上限` `ロス上限`）で `DEGRADED`/`RECOVERED` アラートを
   JSONLに記録します。`--diagnose` を付けると、劣化した**その機器**について netdiag が原因
   （このPCのリンク断・サブネット不一致・ARP応答なし など）を調べてアラートに添付します。
@@ -262,7 +264,7 @@ network-checker start-monitoring --config 台帳.csv --diagnose   # 監視だけ
 > `--debug` は 127.0.0.1 以外では起動を拒否します。他オリジンからの `/api/*` 利用は `CORS_ORIGINS` で明示的に許可した場合のみです。
 
 主な環境変数: `DATABASE_URL`（既定 `sqlite:///network_check_tool.db`）、`PING_TIMEOUT`（4.0秒）、
-`DEFAULT_PING_INTERVAL`（60秒）、`SCHEDULER_MAX_WORKERS`（4）、`SQLITE_BUSY_TIMEOUT_MS`（5000）、`CORS_ORIGINS`。
+`DEFAULT_PING_INTERVAL`（60秒）、`SQLITE_BUSY_TIMEOUT_MS`（5000）、`CORS_ORIGINS`。
 
 API: `GET /api/overview?hours=`（ライン一覧: 機器ごとの状態）, `/api/alerts?hours=&limit=`, `/api/hosts`,
 `/api/stats?host=&hours=`, `/api/ping_data?host=&hours=`, `/api/export?host=&hours=&format=csv`, `/metrics`、

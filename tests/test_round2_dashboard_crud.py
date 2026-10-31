@@ -15,7 +15,7 @@ from network_check_tool.views.dashboard import dashboard_bp
 
 
 @pytest.fixture
-def sched_app(tmp_path, monkeypatch):
+def sched_app(tmp_path, monkeypatch, idle_monitor):
     monkeypatch.setattr(
         Config, "SQLALCHEMY_DATABASE_URI", f"sqlite:///{tmp_path / 'crud.db'}"
     )
@@ -38,7 +38,7 @@ def test_host_crud_flow(sched_app):
 
     jobs = client.get("/api/jobs").get_json()
     assert [j["host"] for j in jobs] == ["example.com"]
-    assert jobs[0]["job_id"] == "ping_example.com"
+    assert jobs[0]["interval"] == 3600
 
     removed = client.delete("/api/hosts/example.com")
     assert removed.status_code == 200

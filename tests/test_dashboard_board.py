@@ -136,7 +136,9 @@ def test_alerts_are_stored_with_the_diagnosis(app, monkeypatch):
         runbook = ["ケーブルを確認"]
 
     monkeypatch.setattr(
-        runner, "diagnose_target", lambda host, ports=None, config=None: _Hyp()
+        runner,
+        "diagnose_targets",
+        lambda hosts, config=None: {h: _Hyp() for h in hosts},
     )
     with app.app_context():
         upsert_hosts(LINE[:1])
@@ -226,7 +228,7 @@ def test_chart_speaks_the_page_language_and_uses_the_device_name(app):
 
 
 @pytest.fixture
-def sched_app(tmp_path, monkeypatch):
+def sched_app(tmp_path, monkeypatch, idle_monitor):
     monkeypatch.setattr(
         Config, "SQLALCHEMY_DATABASE_URI", f"sqlite:///{tmp_path / 'crud.db'}"
     )
@@ -259,13 +261,15 @@ def test_ui_added_host_carries_name_and_group_until_removed(sched_app):
         by_host["10.0.0.5"]["name"] == "検査機"
         and by_host["10.0.0.5"]["status"] == "unknown"
     )
-    job = sched_app.extensions["scheduler"].scheduler.get_job("ping_10.0.0.5")
-    assert isinstance(job.args[3], HostAlerter)  # outages are recorded for the board
+    target = sched_app.extensions["scheduler"]._targets["10.0.0.5"]
+    assert isinstance(target.alerter, HostAlerter)  # outages are recorded for the board
     client.delete("/api/hosts/10.0.0.5")
     assert _overview(sched_app)[0]["hosts"] == []
 
 
-def test_run_server_devices_labels_and_monitors_the_line(tmp_path, monkeypatch):
+def test_run_server_devices_labels_and_monitors_the_line(
+    tmp_path, monkeypatch, idle_monitor
+):
     devices = tmp_path / "line.csv"
     devices.write_bytes(
         "名前,IPアドレス,グループ\r\nPLC-1,192.168.3.39,1ライン\r\n".encode("cp932")
@@ -290,10 +294,8 @@ def test_run_server_devices_labels_and_monitors_the_line(tmp_path, monkeypatch):
         with app.app_context():
             row = db.session.get(MonitoredHost, "192.168.3.39")
             assert (row.name, row.group_name) == ("PLC-1", "1ライン")
-        assert (
-            app.extensions["scheduler"].scheduler.get_job("ping_192.168.3.39")
-            is not None
-        )
+        monitored = app.extensions["scheduler"].list_jobs()
+        assert [j["host"] for j in monitored] == ["192.168.3.39"]
     finally:
         if "app" in made:
             made["app"].extensions["scheduler"].shutdown()

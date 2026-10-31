@@ -2,6 +2,29 @@
 
 All notable changes to this project are documented in this file.
 
+## [Unreleased]
+
+### Fixed
+- **Monitoring no longer drops devices when some are unreachable.** Each device
+  used to be its own APScheduler job on a 4-thread pool; an unreachable device
+  holds a thread for the whole ping timeout, and jobs that could not start
+  within a second of their slot were skipped. With 20 unreachable and 5 healthy
+  devices at a 5 s interval, the healthy ones recorded nothing for 33 s and 16
+  of the unreachable ones never got a sample (so no outage alert either).
+  Devices sharing an interval are now pinged together, once per interval, with
+  netdiag's concurrent `ping_many`: the same test records every sample of every
+  device. Each sweep writes its rows in one transaction; with `--diagnose`, the
+  hosts that went down together are diagnosed in one netdiag run (this PC's
+  network is checked once, not once per device).
+
+### Changed
+- APScheduler is no longer a dependency (the monitor reuses netdiag's periodic
+  loop). The `SCHEDULER_MAX_WORKERS` setting is gone.
+- The first measurement runs as soon as monitoring starts (it used to wait one
+  interval), so the line board fills in within seconds.
+- `GET /api/jobs` lists one entry per device: `host`, `interval`,
+  `next_run_time` (the `job_id` field is gone).
+
 ## [0.4.0] - 2026-10-28
 
 Field readiness: verified on every OS in CI, precise on Windows, a single exe for
