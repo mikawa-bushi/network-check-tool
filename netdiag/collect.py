@@ -22,7 +22,6 @@ import json
 import platform
 import re
 import socket
-import subprocess
 import sys
 import time
 import zipfile
@@ -30,7 +29,7 @@ from dataclasses import dataclass, field
 from pathlib import Path
 from typing import Callable, Dict, List, Optional, Tuple
 
-from .core.util import _command_env, _no_window_kwargs, os_name
+from .core.util import os_name, run_bytes
 
 TEST_NET = "192.0.2.1"  # RFC 5737 documentation address: never answers
 UNKNOWN_HOST = "netdiag-nonexistent.invalid"  # RFC 6761: never resolves
@@ -212,6 +211,8 @@ class Command:
 
 @dataclass
 class Captured:
+    """A planned command plus its :class:`~netdiag.core.util.RawResult` fields."""
+
     name: str
     args: List[str]
     returncode: Optional[int]
@@ -224,40 +225,7 @@ class Captured:
 
 def run_raw(cmd: Command) -> Captured:
     """Run without decoding; never raises."""
-    start = time.perf_counter()
-    try:
-        proc = subprocess.run(
-            cmd.args,
-            capture_output=True,
-            timeout=cmd.timeout,
-            check=False,
-            env=_command_env(),
-            **_no_window_kwargs(),
-        )
-        return Captured(
-            cmd.name,
-            cmd.args,
-            proc.returncode,
-            proc.stdout,
-            proc.stderr,
-            time.perf_counter() - start,
-        )
-    except FileNotFoundError:
-        return Captured(cmd.name, cmd.args, None, found=False)
-    except subprocess.TimeoutExpired as e:
-        return Captured(
-            cmd.name,
-            cmd.args,
-            None,
-            e.stdout or b"",
-            e.stderr or b"",
-            cmd.timeout,
-            timed_out=True,
-        )
-    except OSError as e:
-        return Captured(
-            cmd.name, cmd.args, None, b"", str(e).encode(), time.perf_counter() - start
-        )
+    return Captured(cmd.name, cmd.args, **vars(run_bytes(cmd.args, cmd.timeout)))
 
 
 def plan(

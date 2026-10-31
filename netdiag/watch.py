@@ -19,9 +19,9 @@ import logging
 import time
 from typing import Callable, List, Optional
 
-from ._periodic import _PeriodicLoop
 from .alerting import AlertSink, FileAlertSink, StateMachine, Transition
 from .diagnosis import Engine, runbook_steps
+from .periodic import PeriodicLoop
 from .storage import Storage
 
 logger = logging.getLogger(__name__)
@@ -32,7 +32,7 @@ logger = logging.getLogger(__name__)
 LIGHT_PROBES = ["interface", "gateway", "external", "dns"]
 
 
-class Watcher(_PeriodicLoop):
+class Watcher(PeriodicLoop):
     _tick_error_msg = "watcher tick failed"
 
     def __init__(

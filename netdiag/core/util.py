@@ -13,6 +13,7 @@ import os
 import platform
 import shutil
 import subprocess
+import time
 from dataclasses import dataclass
 from typing import Dict, List, Optional
 
@@ -89,16 +90,21 @@ def _command_env() -> Dict[str, str]:
     return env
 
 
-def run(args: List[str], timeout: float = 10.0) -> CommandResult:
-    """Run *args* without a shell, capturing output and never raising."""
-    if not args or shutil.which(args[0]) is None:
-        return CommandResult(
-            ok=False,
-            code=127,
-            stdout="",
-            stderr=f"{args[0] if args else '?'}: not found",
-            found=False,
-        )
+@dataclass
+class RawResult:
+    """Undecoded outcome of one command; ``returncode`` is None if it never finished."""
+
+    returncode: Optional[int]
+    stdout: bytes = b""
+    stderr: bytes = b""
+    seconds: float = 0.0
+    found: bool = True
+    timed_out: bool = False
+
+
+def run_bytes(args: List[str], timeout: float = 10.0) -> RawResult:
+    """Run *args* without a shell or decoding, capturing output; never raises."""
+    start = time.perf_counter()
     try:
         proc = subprocess.run(
             args,
@@ -108,24 +114,50 @@ def run(args: List[str], timeout: float = 10.0) -> CommandResult:
             env=_command_env(),
             **_no_window_kwargs(),
         )
-        return CommandResult(
-            ok=proc.returncode == 0,
-            code=proc.returncode,
-            stdout=decode_output(proc.stdout),
-            stderr=decode_output(proc.stderr),
-            found=True,
+        return RawResult(
+            proc.returncode, proc.stdout, proc.stderr, time.perf_counter() - start
         )
+    except FileNotFoundError as e:
+        return RawResult(None, b"", str(e).encode(), found=False)
     except subprocess.TimeoutExpired as e:
+        return RawResult(
+            None, e.stdout or b"", e.stderr or b"", timeout, timed_out=True
+        )
+    except OSError as e:  # permission, etc.
+        return RawResult(None, b"", str(e).encode(), time.perf_counter() - start)
+
+
+def run(args: List[str], timeout: float = 10.0) -> CommandResult:
+    """Run *args* without a shell, capturing decoded output and never raising."""
+    if not args or shutil.which(args[0]) is None:
+        return CommandResult(
+            ok=False,
+            code=127,
+            stdout="",
+            stderr=f"{args[0] if args else '?'}: not found",
+            found=False,
+        )
+    r = run_bytes(args, timeout)
+    if r.timed_out:
         return CommandResult(
             ok=False,
             code=124,
-            stdout=decode_output(e.stdout),
+            stdout=decode_output(r.stdout),
             stderr="timed out",
             found=True,
             timed_out=True,
         )
-    except OSError as e:  # permission, etc.
-        return CommandResult(ok=False, code=126, stdout="", stderr=str(e), found=True)
+    if r.returncode is None:
+        return CommandResult(
+            ok=False, code=126, stdout="", stderr=decode_output(r.stderr), found=True
+        )
+    return CommandResult(
+        ok=r.returncode == 0,
+        code=r.returncode,
+        stdout=decode_output(r.stdout),
+        stderr=decode_output(r.stderr),
+        found=True,
+    )
 
 
 def _no_window_kwargs() -> dict:
