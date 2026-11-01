@@ -85,13 +85,7 @@ def run_server(host, port, debug, devices_path):
             upsert_hosts(host_configs)
         scheduler = app.extensions.get("scheduler")
         if scheduler is not None:
-            for hc in host_configs:
-                scheduler.add_ping_job(
-                    hc.name,
-                    hc.interval,
-                    rtt_warn_ms=hc.rtt_warn_ms,
-                    loss_warn_pct=hc.loss_warn_pct,
-                )
+            scheduler.add_ping_jobs(host_configs)
             click.echo(f"Monitoring {len(host_configs)} devices.", err=True)
         else:
             click.echo(
@@ -179,14 +173,12 @@ def start_monitoring(hosts, interval, config_path, alert_file, diagnose):
             from .models import upsert_hosts
 
             upsert_hosts(host_configs)
-        # Pass the app so each job (run in an APScheduler worker thread) can push
-        # its own application context before writing to the DB. The configured
-        # PING_TIMEOUT is forwarded so monitored pings honour it (M2); the worker
-        # pool is sized from SCHEDULER_MAX_WORKERS rather than a fixed 20 (P3).
+        # Pass the app so each sweep (run in its own thread) can push its own
+        # application context before writing to the DB. The configured
+        # PING_TIMEOUT is forwarded so monitored pings honour it (M2).
         scheduler = SchedulerService(
             app=app,
             timeout=Config.PING_TIMEOUT,
-            max_workers=Config.SCHEDULER_MAX_WORKERS,
             sink=sink,
             diagnose=diagnose,
         )
@@ -199,13 +191,8 @@ def start_monitoring(hosts, interval, config_path, alert_file, diagnose):
             names = ", ".join(hc.name for hc in host_configs)
             click.echo(f"Starting ping monitoring for: {names}")
 
+            scheduler.add_ping_jobs(host_configs)
             for hc in host_configs:
-                scheduler.add_ping_job(
-                    hc.name,
-                    hc.interval,
-                    rtt_warn_ms=hc.rtt_warn_ms,
-                    loss_warn_pct=hc.loss_warn_pct,
-                )
                 label = f" ({hc.label})" if getattr(hc, "label", "") else ""
                 click.echo(
                     f"Added ping job for {hc.name}{label} (every {hc.interval}s)"
@@ -258,7 +245,7 @@ def ping(host, count, as_json):
         # attributes are populated before commit, so per-ping output is unaffected.
         results = []
         for i in range(count):
-            result = ping_service.ping_and_save(host, commit=False)
+            (result,) = ping_service.save_ping_results([ping_service.ping_host(host)])
 
             if not as_json:
                 if result.packet_loss:

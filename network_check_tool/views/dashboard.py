@@ -680,19 +680,7 @@ def get_jobs():
     scheduler = _scheduler()
     if scheduler is None:
         return jsonify({"error": "monitoring scheduler not running"}), 503
-    jobs = []
-    for job in scheduler.list_jobs():
-        host = job.id[len("ping_") :] if job.id.startswith("ping_") else job.id
-        jobs.append(
-            {
-                "job_id": job.id,
-                "host": host,
-                "next_run_time": (
-                    job.next_run_time.isoformat() if job.next_run_time else None
-                ),
-            }
-        )
-    return jsonify(jobs)
+    return jsonify(scheduler.list_jobs())
 
 
 @dashboard_bp.route("/api/hosts", methods=["POST"])
@@ -734,7 +722,7 @@ def remove_host(host):
     scheduler = _scheduler()
     if scheduler is None:
         return jsonify({"error": "monitoring scheduler not running"}), 503
-    scheduler.remove_ping_job(f"ping_{host}")
+    scheduler.remove_ping_job(host)
     meta = db.session.get(MonitoredHost, host)
     if meta is not None:
         db.session.delete(meta)

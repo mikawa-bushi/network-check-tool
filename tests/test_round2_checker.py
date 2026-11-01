@@ -9,6 +9,7 @@ import json
 
 import pytest
 from click.testing import CliRunner
+from conftest import RecordingSink
 from flask import Flask
 
 from network_check_tool import cli as cli_module
@@ -228,8 +229,8 @@ def test_start_monitoring_config_wires_per_host_interval(tmp_path, monkeypatch):
         def start(self):
             pass
 
-        def add_ping_job(self, host, interval, **kw):
-            added.append((host, interval))
+        def add_ping_jobs(self, configs):
+            added.extend((hc.name, hc.interval) for hc in configs)
 
         def shutdown(self):
             pass
@@ -253,18 +254,10 @@ def test_start_monitoring_requires_hosts_or_config():
 # --------------------------------------------------------------------------- F3
 
 
-class _RecordingSink:
-    def __init__(self):
-        self.events = []
-
-    def emit(self, transition):
-        self.events.append(transition)
-
-
 def test_host_alerter_degrades_after_consecutive_loss():
     from network_check_tool.services.alerting import HostAlerter
 
-    sink = _RecordingSink()
+    sink = RecordingSink()
     alerter = HostAlerter("h", sink, fail_threshold=2, recover_threshold=2)
     assert alerter.observe(packet_loss=True, response_time=None) is None  # 1 bad
     t = alerter.observe(packet_loss=True, response_time=None)  # 2 bad -> DEGRADED
@@ -275,10 +268,10 @@ def test_host_alerter_degrades_after_consecutive_loss():
 def test_host_alerter_rtt_threshold_and_healthy(monkeypatch):
     from network_check_tool.services.alerting import HostAlerter
 
-    over = HostAlerter("h", _RecordingSink(), rtt_warn_ms=100, fail_threshold=1)
+    over = HostAlerter("h", RecordingSink(), rtt_warn_ms=100, fail_threshold=1)
     assert over.observe(packet_loss=False, response_time=250.0).event == "degraded"
 
-    sink = _RecordingSink()
+    sink = RecordingSink()
     under = HostAlerter("h", sink, rtt_warn_ms=100, fail_threshold=1)
     assert under.observe(packet_loss=False, response_time=50.0) is None
     assert sink.events == []  # healthy -> no alert
@@ -287,7 +280,7 @@ def test_host_alerter_rtt_threshold_and_healthy(monkeypatch):
 def test_host_alerter_recovers():
     from network_check_tool.services.alerting import HostAlerter
 
-    sink = _RecordingSink()
+    sink = RecordingSink()
     alerter = HostAlerter("h", sink, fail_threshold=1, recover_threshold=1)
     alerter.observe(packet_loss=True, response_time=None)  # DEGRADED
     t = alerter.observe(packet_loss=False, response_time=10.0)  # RECOVERED
@@ -306,38 +299,6 @@ def test_host_alerter_swallows_sink_failure():
     assert alerter.observe(packet_loss=True, response_time=None) is not None
 
 
-def test_run_ping_job_feeds_alerter():
-    from network_check_tool.services import scheduler_service as ss
-
-    observed = []
-
-    class _Alerter:
-        def observe(self, packet_loss, response_time):
-            observed.append((packet_loss, response_time))
-
-    class _Result:
-        packet_loss = True
-        response_time = None
-
-    class _PingService:
-        def ping_and_save(self, host):
-            return _Result()
-
-    ss._run_ping_job(None, _PingService(), "h", alerter=_Alerter())
-    assert observed == [(True, None)]
-
-
-def test_scheduler_without_sink_has_no_alerting(tmp_path):
-    # Backward-compatible default: no sink -> no alerter attached to the job args.
-    from network_check_tool.services import SchedulerService
-
-    svc = SchedulerService()
-    svc.add_ping_job("127.0.0.1", interval=3600)
-    job = svc.scheduler.get_job("ping_127.0.0.1")
-    assert job.args[3] is None  # alerter slot is None when no sink configured
-    svc.shutdown()
-
-
 # --------------------------------------------------------------------------- F1
 
 
@@ -354,11 +315,11 @@ def _patch_fake_netdiag(monkeypatch, cause="gateway"):
 
     seen = {}
 
-    def fake_diagnose_target(host, ports=None, config=None):
-        seen["host"] = host
-        return _Hyp()
+    def fake_diagnose_targets(hosts, config=None):
+        seen["hosts"] = list(hosts)
+        return {h: _Hyp() for h in hosts}
 
-    monkeypatch.setattr(runner, "diagnose_target", fake_diagnose_target)
+    monkeypatch.setattr(runner, "diagnose_targets", fake_diagnose_targets)
     monkeypatch.setattr(nd, "runbook_steps", lambda c: [f"fix {c}"])
     return seen
 
@@ -367,11 +328,11 @@ def test_diagnose_attaches_root_cause_on_degraded(monkeypatch):
     from network_check_tool.services.alerting import HostAlerter
 
     seen = _patch_fake_netdiag(monkeypatch, cause="gateway")
-    sink = _RecordingSink()
+    sink = RecordingSink()
     alerter = HostAlerter("h", sink, fail_threshold=1, diagnose=True)
     t = alerter.observe(packet_loss=True, response_time=None)
     assert t.event == "degraded"
-    assert seen["host"] == "h"  # the degraded host itself is diagnosed
+    assert seen["hosts"] == ["h"]  # the degraded host itself is diagnosed
     assert t.cause == "gateway"
     assert any("netdiag root cause: gateway" in e for e in t.evidence)
     assert t.runbook == ["fix gateway"]
@@ -384,8 +345,8 @@ def test_diagnose_off_does_not_run_netdiag(monkeypatch):
     def _boom(*a, **k):
         raise AssertionError("netdiag must not run when diagnose is off")
 
-    monkeypatch.setattr(runner, "diagnose_target", _boom)
-    sink = _RecordingSink()
+    monkeypatch.setattr(runner, "diagnose_targets", _boom)
+    sink = RecordingSink()
     alerter = HostAlerter("h", sink, fail_threshold=1, diagnose=False)
     t = alerter.observe(packet_loss=True, response_time=None)
     assert t.event == "degraded" and t.cause == "h"  # unenriched

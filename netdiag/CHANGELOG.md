@@ -2,6 +2,21 @@
 
 All notable changes to the `netdiag` package are documented in this file.
 
+## [Unreleased]
+
+### Added
+- `netdiag.runner.diagnose_targets(hosts)`: why several hosts are unreachable,
+  from one check (this PC's network once, the devices side by side).
+
+### Changed
+- `ping_many` resolves host names side by side instead of one after another
+  (with DNS down, each name used to add its full timeout before any ping).
+- The periodic loop behind `monitor` / `watch` is public as
+  `netdiag.periodic.PeriodicLoop` (network-checker's monitor uses it too), with
+  `next_run` (when the next tick is due) and `stop(wait=False)`.
+- `netdiag.core.util.run_bytes()` runs a command without decoding; `run()` and
+  `collect` both build on it.
+
 ## [0.3.0] - 2026-10-28
 
 ### Added

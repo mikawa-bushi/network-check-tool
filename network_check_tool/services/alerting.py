@@ -10,7 +10,7 @@ deliberate later enhancement.
 from __future__ import annotations
 
 import logging
-from typing import Optional
+from typing import List, Optional, Tuple
 
 from netdiag.alerting import StateMachine, Transition
 
@@ -33,7 +33,6 @@ class HostAlerter:
         fail_threshold: int = FAIL_THRESHOLD,
         recover_threshold: int = 2,
         diagnose: bool = False,
-        engine_config: Optional[dict] = None,
     ) -> None:
         self.host = host
         self.sink = sink
@@ -44,7 +43,6 @@ class HostAlerter:
         # F1: when set, diagnose this host with netdiag on a confirmed
         # degradation and attach the root cause to the alert.
         self.diagnose = diagnose
-        self.engine_config = engine_config or {}
         self._sm = StateMachine(
             fail_threshold=fail_threshold,
             recover_threshold=recover_threshold,
@@ -61,7 +59,16 @@ class HostAlerter:
     def observe(
         self, packet_loss: bool, response_time: Optional[float]
     ) -> Optional[Transition]:
-        """Feed one ping sample; emit (and return) a Transition iff state changed."""
+        """Feed one sample; emit (and return) a Transition iff state changed."""
+        transition = self.update(packet_loss, response_time)
+        if transition is not None:
+            report([(self, transition)])
+        return transition
+
+    def update(
+        self, packet_loss: bool, response_time: Optional[float]
+    ) -> Optional[Transition]:
+        """Feed one sample; return the confirmed state change without emitting it."""
         from netdiag.i18n import tr
 
         healthy = self._is_healthy(packet_loss, response_time)
@@ -77,59 +84,74 @@ class HostAlerter:
                 f"{self.host}: 応答 {response_time}ms",
                 f"{self.host}: rtt {response_time}ms",
             )
-        transition = self._sm.observe(healthy, cause=self.host, summary=reason)
-        if transition is not None:
-            if self.diagnose and transition.event == "degraded":
-                self._attach_diagnosis(transition)
-            try:
-                self.sink.emit(transition)
-            except Exception:
-                # A failing sink must never break the monitoring loop.
-                logger.warning("alert sink failed for %s", self.host, exc_info=True)
-        return transition
+        return self._sm.observe(healthy, cause=self.host, summary=reason)
 
-    def _attach_diagnosis(self, transition: Transition) -> None:
-        """Diagnose *this* host once and fold the root cause into the alert.
+    def explain(self, transition: Transition, primary) -> None:
+        """Fold netdiag's root cause for this host (None: none found) into the alert."""
+        if primary is None:
+            transition.evidence = list(transition.evidence) + [
+                "netdiag: no local network fault found"
+            ]
+            return
+        from netdiag.diagnosis import runbook_steps
 
-        Triggered only on a confirmed DEGRADED transition, so the state machine
-        rate-limits it to once per outage episode. netdiag first checks this
-        PC's own network (a broken local link explains every host at once), then
-        the host itself: route/subnet, ARP presence, ping statistics. Any failure
-        here is logged, never propagated.
-        """
+        transition.cause = primary.cause
+        transition.confidence = primary.confidence
+        transition.diagnosis = str(primary.summary)
+        transition.evidence = list(transition.evidence) + [
+            f"netdiag root cause: {primary.cause} — {primary.summary}"
+        ]
+        transition.runbook = list(
+            getattr(primary, "runbook", None) or runbook_steps(primary.cause)
+        )
+        logger.warning(
+            "auto-netdiag for %s: root cause = %s (%s)",
+            self.host,
+            primary.cause,
+            primary.confidence,
+        )
+
+    def emit(self, transition: Transition) -> None:
         try:
-            from netdiag.diagnosis import runbook_steps
-            from netdiag.runner import diagnose_target
-
-            primary = diagnose_target(self.host, config=self.engine_config)
-            if primary is not None:
-                transition.cause = primary.cause
-                transition.confidence = primary.confidence
-                transition.diagnosis = str(primary.summary)
-                transition.evidence = list(transition.evidence) + [
-                    f"netdiag root cause: {primary.cause} — {primary.summary}"
-                ]
-                transition.runbook = list(
-                    getattr(primary, "runbook", None) or runbook_steps(primary.cause)
-                )
-                logger.warning(
-                    "auto-netdiag for %s: root cause = %s (%s)",
-                    self.host,
-                    primary.cause,
-                    primary.confidence,
-                )
-            else:
-                transition.evidence = list(transition.evidence) + [
-                    "netdiag: no local network fault found"
-                ]
+            self.sink.emit(transition)
         except Exception:
-            logger.warning("auto-netdiag failed for %s", self.host, exc_info=True)
+            # A failing sink must never break the monitoring loop.
+            logger.warning("alert sink failed for %s", self.host, exc_info=True)
+
+
+def report(changes: List[Tuple[HostAlerter, Transition]]) -> None:
+    """Emit confirmed state changes, explaining new outages first.
+
+    Every host that just went down (and asked for a diagnosis) is diagnosed in
+    one netdiag run: it checks this PC's own network once (a broken local link
+    explains every device at once), then the devices side by side -- route,
+    ARP presence, ping statistics. Triggered only on a confirmed DEGRADED
+    transition, so it runs at most once per outage episode. A failed diagnosis
+    is logged, never propagated; the alerts still go out.
+    """
+    down = [(a, t) for a, t in changes if a.diagnose and t.event == "degraded"]
+    if down:
+        try:
+            from netdiag.runner import diagnose_targets
+
+            causes = diagnose_targets([a.host for a, _ in down])
+        except Exception:
+            logger.warning(
+                "auto-netdiag failed for %s",
+                ", ".join(a.host for a, _ in down),
+                exc_info=True,
+            )
+        else:
+            for a, t in down:
+                a.explain(t, causes.get(a.host))
+    for a, t in changes:
+        a.emit(t)
 
 
 class DbAlertSink:
     """Keep alerts in the dashboard database (the line board shows the latest).
 
-    Runs in the scheduler's worker threads, so it pushes its own app context.
+    Runs on the monitor's sweep threads, so it pushes its own app context.
     """
 
     def __init__(self, app) -> None:

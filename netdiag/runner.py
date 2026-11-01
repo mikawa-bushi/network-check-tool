@@ -440,19 +440,37 @@ def diagnose_target(
     (route, ARP presence, ping statistics, ports). Returns None when nothing is
     wrong any more.
     """
+    device = Device(name=host, host=host, ports=list(ports or []))
+    return _diagnose([device], config)[host]
+
+
+def diagnose_targets(
+    hosts: List[str], config: Optional[Dict[str, Any]] = None
+) -> Dict[str, Any]:
+    """:func:`diagnose_target` for several hosts at once: ``{host: Hypothesis}``.
+
+    One check covers them all -- this PC's network is examined once and the
+    devices side by side -- so a whole line going down costs one diagnosis,
+    not one per device.
+    """
+    hosts = list(dict.fromkeys(hosts))
+    return _diagnose([Device(name=h, host=h) for h in hosts], config) if hosts else {}
+
+
+def _diagnose(devices: List[Device], config: Optional[Dict[str, Any]]):
     cfg = {"internet": False, **(config or {})}
-    rep = run_check(
-        [Device(name=host, host=host, ports=list(ports or []))],
-        config=cfg,
-        only=QUICK_HOST_PROBES,
-    )
+    rep = run_check(devices, config=cfg, only=QUICK_HOST_PROBES)
     host_fail = [h for h in rep.host.hypotheses if h.confidence != "low"]
-    if host_fail:
-        return host_fail[0]
-    dev = rep.devices[0].diagnosis if rep.devices else None
-    if dev is not None and dev.primary is not None:
-        return dev.primary
-    return rep.host.primary
+    found = {}
+    for r in rep.devices:
+        dev = r.diagnosis
+        if host_fail:
+            found[r.device.host] = host_fail[0]
+        elif dev is not None and dev.primary is not None:
+            found[r.device.host] = dev.primary
+        else:
+            found[r.device.host] = rep.host.primary
+    return found
 
 
 def _absent_or_none(ip: str, hn: netinfo.HostNetwork, table: Dict[str, Any]):

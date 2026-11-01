@@ -1,93 +1,66 @@
-from typing import Dict
+from typing import Dict, List, Optional, Sequence
 
-from netdiag.core.util import have
-from netdiag.measure import precise_ping_available
-from netdiag.probes.icmp import ping as _measure_ping
+from netdiag.measure import PingStats, ping_many
 
 from ..models import PingResult, db
 from ..utils import utcnow
+
+
+def _result(host: str, timestamp, rtt: Optional[float], error: Optional[str]) -> Dict:
+    return {
+        "host": host,
+        "timestamp": timestamp,
+        "response_time": rtt,
+        "packet_loss": rtt is None,
+        "error_message": error,
+    }
+
+
+def _from_stats(host: str, timestamp, st: Optional[PingStats]) -> Dict:
+    if st is None or st.error:
+        return _result(host, timestamp, None, st.error if st else "not measured")
+    if st.rtt is None:
+        return _result(host, timestamp, None, "Request timeout")
+    return _result(host, timestamp, st.rtt.avg, None)
 
 
 class PingService:
     def __init__(self, timeout: float = 4.0):
         self.timeout = timeout
 
-    def ping_host(self, host: str) -> Dict:
-        """Measure one ping to ``host`` and return a result dict.
+    def ping_hosts(self, hosts: Sequence[str]) -> List[Dict]:
+        """Ping every host once, all at the same time; one result dict per host.
 
         The measurement comes from netdiag's shared ping core (microsecond timing
-        via an ICMP socket when permitted, else the system ``ping``). The
-        returned dict has the keys
-        ``host``, ``timestamp``, ``response_time`` (milliseconds, or ``None`` on
-        failure), ``packet_loss`` (``True`` when no reply was received), and
-        ``error_message``.
+        via an ICMP socket or the Windows ICMP API when available, else the system
+        ``ping`` in parallel; a missing ``ping`` comes back as the error). Each
+        dict has the keys ``host``, ``timestamp``, ``response_time``
+        (milliseconds, or ``None`` on failure), ``packet_loss`` (``True`` when no
+        reply was received), and ``error_message``; results keep the order of
+        *hosts*.
         """
         timestamp = utcnow()
-
-        # netdiag measures with an unprivileged ICMP socket where the OS allows
-        # it (no ping binary needed) and falls back to the system ping command.
-        if not (precise_ping_available() or have("ping")):
-            return {
-                "host": host,
-                "timestamp": timestamp,
-                "response_time": None,
-                "packet_loss": True,
-                "error_message": "ping command not available",
-            }
-
         try:
-            # One ping per sample (preserves the previous cadence/cost). netdiag's
-            # ping returns the average RTT already in milliseconds. Note netdiag's
-            # run() caps the whole subprocess at count*timeout+5s, so the worst-case
-            # block here is a few seconds longer than self.timeout alone.
-            rtt, loss, _raw = _measure_ping(host, count=1, timeout=self.timeout)
+            stats = ping_many(hosts, count=1, timeout=self.timeout)
         except Exception as e:
-            return {
-                "host": host,
-                "timestamp": timestamp,
-                "response_time": None,
-                "packet_loss": True,
-                "error_message": str(e),
-            }
+            return [_result(h, timestamp, None, str(e)) for h in hosts]
+        return [_from_stats(h, timestamp, stats.get(h)) for h in hosts]
 
-        # With count=1 loss is only ever 0 or 100, so "got a reply" == success.
-        # (A reply with partial loss can't occur here; if count were ever raised,
-        # a measured RTT would still be reported as a successful sample.)
-        if rtt is None or loss >= 100.0:
-            return {
-                "host": host,
-                "timestamp": timestamp,
-                "response_time": None,
-                "packet_loss": True,
-                "error_message": "Request timeout",
-            }
+    def ping_host(self, host: str) -> Dict:
+        """Measure one ping to ``host`` (see :meth:`ping_hosts`)."""
+        return self.ping_hosts([host])[0]
 
-        return {
-            "host": host,
-            "timestamp": timestamp,
-            "response_time": rtt,
-            "packet_loss": False,
-            "error_message": None,
-        }
-
-    def save_ping_result(self, result: Dict, commit: bool = True) -> PingResult:
-        ping_result = PingResult(
-            target_host=result["host"],
-            timestamp=result["timestamp"],
-            response_time=result["response_time"],
-            packet_loss=result["packet_loss"],
-            error_message=result["error_message"],
-        )
-
-        db.session.add(ping_result)
-        # ``commit=False`` lets a batch caller (e.g. ``ping --count N``) add many
-        # rows and commit once. The default keeps the monitoring scheduler's
-        # one-row-per-job behaviour unchanged. The returned object's attributes are
-        # readable before the commit, so callers can report each result immediately.
-        if commit:
-            db.session.commit()
-        return ping_result
-
-    def ping_and_save(self, host: str, commit: bool = True) -> PingResult:
-        result = self.ping_host(host)
-        return self.save_ping_result(result, commit=commit)
+    def save_ping_results(self, results: Sequence[Dict]) -> List[PingResult]:
+        """Add result dicts to the session (the caller commits)."""
+        rows = [
+            PingResult(
+                target_host=r["host"],
+                timestamp=r["timestamp"],
+                response_time=r["response_time"],
+                packet_loss=r["packet_loss"],
+                error_message=r["error_message"],
+            )
+            for r in results
+        ]
+        db.session.add_all(rows)
+        return rows

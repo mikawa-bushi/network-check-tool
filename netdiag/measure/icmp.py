@@ -253,13 +253,21 @@ def _run(
     out: Dict[str, PingStats] = {}
     jobs: Dict[str, Dict[str, str]] = {"socket": {}, "win": {}}
     system_jobs: List[Tuple[str, Optional[int]]] = []
+    backends = {}
     for t in dict.fromkeys(targets):  # de-duplicate, keep order
         fam = family or _literal_family(t)
-        backend = _choose(method, fam)
-        if backend == "system":
+        backends[t] = _choose(method, fam)
+        if backends[t] == "system":
             system_jobs.append((t, fam))
+    # Names resolve side by side: with DNS down, each would otherwise add its
+    # full timeout before any echo is sent.
+    addrs = resolve_all(
+        [t for t, b in backends.items() if b != "system"], timeout=max(timeout, 2.0)
+    )
+    for t, backend in backends.items():
+        if backend == "system":
             continue
-        addr = _resolve_v4(t, timeout=max(timeout, 2.0))
+        addr = addrs[t]
         if addr is None:
             out[t] = PingStats(target=t, method=backend, error="name resolution failed")
             continue

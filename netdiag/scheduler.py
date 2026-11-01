@@ -10,12 +10,12 @@ from __future__ import annotations
 
 from typing import Callable, List, Optional
 
-from ._periodic import _PeriodicLoop
 from .diagnosis import Engine
+from .periodic import PeriodicLoop
 from .storage import Storage
 
 
-class Monitor(_PeriodicLoop):
+class Monitor(PeriodicLoop):
     _tick_error_msg = "monitor tick failed"
 
     def __init__(

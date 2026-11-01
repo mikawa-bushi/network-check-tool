@@ -80,7 +80,6 @@ def create_app(config_name=None, register_scheduler=False):
         scheduler = SchedulerService(
             app=app,
             timeout=app.config["PING_TIMEOUT"],
-            max_workers=app.config["SCHEDULER_MAX_WORKERS"],
             # Confirmed outages land in the DB so the line board can show them.
             sink=DbAlertSink(app),
         )

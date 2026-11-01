@@ -8,6 +8,8 @@
 
 from click.testing import CliRunner
 from flask import Flask
+from sqlalchemy import event
+from sqlalchemy.orm import Session
 
 from network_check_tool import cli as cli_module
 from network_check_tool.cli import cli
@@ -46,38 +48,35 @@ def test_cli_ping_commits_once_for_the_batch(tmp_path, monkeypatch):
     monkeypatch.setattr(cli_module, "create_app", lambda *a, **k: app)
     monkeypatch.setattr(PingService, "ping_host", _fake_ping)
 
-    seen_commit_flags = []
-    orig_save = PingService.save_ping_result
-
-    def spy_save(self, result, commit=True):
-        seen_commit_flags.append(commit)
-        return orig_save(self, result, commit=commit)
-
-    monkeypatch.setattr(PingService, "save_ping_result", spy_save)
-
-    result = CliRunner().invoke(cli, ["ping", "example.com", "--count", "3"])
+    commits = []
+    listener = lambda session: commits.append(session)  # noqa: E731
+    event.listen(Session, "after_commit", listener)
+    try:
+        result = CliRunner().invoke(cli, ["ping", "example.com", "--count", "3"])
+    finally:
+        event.remove(Session, "after_commit", listener)
 
     assert result.exit_code == 0, result.output
-    # Every per-ping save deferred its commit ...
-    assert seen_commit_flags == [False, False, False]
-    # ... and the single post-loop commit still persisted all three rows.
+    # One commit for the batch, and it persisted all three rows.
+    assert len(commits) == 1
     with app.app_context():
         assert PingResult.query.count() == 3
 
 
-def test_save_ping_result_no_commit_leaves_row_pending(tmp_path):
+def test_save_ping_results_leaves_rows_pending(tmp_path):
     app = _make_web_app(tmp_path / "p2b.db")
     svc = PingService()
     with app.app_context():
-        svc.save_ping_result(
-            {
-                "host": "h",
-                "timestamp": utcnow(),
-                "response_time": 1.0,
-                "packet_loss": False,
-                "error_message": None,
-            },
-            commit=False,
+        svc.save_ping_results(
+            [
+                {
+                    "host": "h",
+                    "timestamp": utcnow(),
+                    "response_time": 1.0,
+                    "packet_loss": False,
+                    "error_message": None,
+                }
+            ]
         )
         # Not committed yet: a fresh session/connection sees no row.
         db.session.rollback()
