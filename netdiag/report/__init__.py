@@ -13,6 +13,12 @@ CDN, no JavaScript) so it works on an offline shop-floor PC.
 from .common import is_not_applicable, unicode_ok
 from .data import diagnosis_to_dict, render_check_csv, render_check_json, render_json
 from .html import render_check_html, render_html
+from .soak import (
+    render_soak_csv,
+    render_soak_html,
+    render_soak_json,
+    render_soak_text,
+)
 from .text import render_check_text, render_terminal
 
 __all__ = [
@@ -23,6 +29,10 @@ __all__ = [
     "render_check_json",
     "render_check_html",
     "render_check_csv",
+    "render_soak_text",
+    "render_soak_json",
+    "render_soak_html",
+    "render_soak_csv",
     "diagnosis_to_dict",
     "is_not_applicable",
     "unicode_ok",

@@ -93,6 +93,7 @@ def read_link_stats(name: str, base: Path = SYS_NET) -> Optional[LinkStats]:
         tx_dropped=_read_int(st / "tx_dropped"),
         rx_crc_errors=_read_int(st / "rx_crc_errors"),
         collisions=_read_int(st / "collisions"),
+        carrier_changes=_read_int(base / name / "carrier_changes"),
     )
 
 

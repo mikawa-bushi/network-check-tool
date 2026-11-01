@@ -31,6 +31,20 @@ netdiag check -f 台帳.csv          # このPC + 台帳の全機器を点検
 
 ## インストール
 
+### Windows: exe 版（Python 不要・インストール不要）
+
+[Releases](https://github.com/mikawa-bushi/network-check-tool/releases) の
+`netdiag-windows-x64-<版>.zip` を展開して使います（管理者権限不要）。
+
+- `netdiag.exe` を**ダブルクリック** → このPCを点検し、結果のHTMLレポートを exe の隣に保存してブラウザで開きます。
+- 台帳（Excelで保存したCSV）を `netdiag.exe` に**ドラッグ＆ドロップ** → 台帳の全機器を点検し、
+  台帳の隣に `<台帳名>_点検結果_日時.html` を保存して開きます。
+- コマンドプロンプトからは `netdiag.exe check -f 台帳.csv` など、下記の `netdiag` と同じように使えます。
+
+署名なしの exe のため、初回に SmartScreen の確認が出ることがあります（「詳細情報」→「実行」）。
+
+### pip（Windows / Linux / macOS）
+
 ```bash
 pip install network-check-tool
 # Windows で netdiag にパスが通っていない場合:
@@ -115,6 +129,30 @@ netdiag check 192.168.3.39 --duration 600    # 10分間測り続ける
 （例: ロス0件で 1% 未満と言うには約380回）。測定中にPCのNICエラー（CRC等）が増えた場合は、
 ケーブル・コネクタ・ノイズの問題として報告します。
 
+### 5. 瞬断を捕まえる（長時間の連続監視）
+
+```bash
+netdiag soak -f 台帳.csv --duration 2h -o 結果.html   # 2時間、全機器を 0.2 秒間隔で監視
+netdiag soak 192.168.3.39 --duration 8h --format csv -o log.csv
+```
+
+「ときどき通信が切れる」を、**いつ・何秒・どの機器が**切れたかの時系列にします。
+全機器が同時に切れたら「このPC側（ケーブル・NIC・PC直近のスイッチ）」、一部の機器だけなら
+「その機器群が共有するスイッチ・配線」、1台だけなら「その機器・ケーブル」と切り分けます。
+PCのNICエラーの増加（Linux ではリンク断の回数も）を同じ時間軸に並べて表示します。
+HTMLレポートでは機器×時間のヒートマップで、途切れた時刻がひと目で分かります。
+監視中は途切れた／戻った瞬間を画面に表示し、Ctrl+C で止めてもそこまでの結果を保存します。
+
+### 6. 不具合を報告する（生データの収集）
+
+```bash
+netdiag collect --target 192.168.3.39     # → netdiag-collect-日時.zip
+```
+
+netdiag が使うOSコマンド（ping・arp・route・PowerShell など）の**生の出力**と netdiag の解釈結果を
+zip にまとめます。IPアドレス・MAC・PC名・ユーザー名・SSID・ドメインは既定で伏せます
+（サブネット構造とMACのメーカー部分は残すので解析に使えます）。送る前に中身を確認してください。
+
 ### 表示例
 
 ```text
@@ -163,8 +201,9 @@ netdiag check 192.168.3.39 --duration 600    # 10分間測り続ける
 - pingの送信は全体で毎秒200回までに制限しています。
 - TCPポートは、台帳や `-p` で**指定したものだけ**に接続し、すぐ切断します（接続数に上限のあるPLCを考慮）。
   `netdiag scan` は ping と ARP だけを使い、指定しない限りポートには触れません。
-- 管理者権限は不要です。ping は OS が許可していれば権限不要のICMPソケット（マイクロ秒精度）、
-  そうでなければ OS の `ping` コマンドで測定します。
+- 管理者権限は不要です。ping は Linux/macOS では権限不要のICMPソケット、Windows では
+  OS の ICMP API（`IcmpSendEcho`）で送信し、いずれも高分解能タイマーで 1ms 未満まで測ります。
+  どちらも使えない環境では OS の `ping` コマンドで測定します。
 
 ## netdiag コマンド一覧
 
@@ -173,6 +212,8 @@ netdiag check 192.168.3.39 --duration 600    # 10分間測り続ける
 | `netdiag check [機器...] [-f 台帳] [-p ポート]` | このPCと機器を点検（`--count` `--duration` `--internet` `-o` `--format text/json/html/csv` `--all`） |
 | `netdiag scan [ネットワーク]` | 同じネットワーク上の機器を一覧（`--save 台帳.csv`、`-p` でポートも確認） |
 | `netdiag ping <host>` | pingの精密統計（損失の95%上限・中央値/p95/最大・ジッタ） |
+| `netdiag soak [機器...] [-f 台帳] --duration 2h` | 長時間の連続監視。瞬断の時刻・長さ・範囲（全機器/一部/1台）とPC側のリンク断を時系列で（`--format text/json/html/csv` `-o`） |
+| `netdiag collect [--target IP]` | 不具合報告用に、OSコマンドの生出力と解釈結果をzipに収集（既定でIP・MAC等を伏せる） |
 | `netdiag explain [項目]` | 各チェックの内容と、同じことを手で確かめるコマンド |
 | `netdiag scenario <file>` | YAML/JSONのシナリオ（このPCの確認項目 + 機器）で点検。例: [`examples/line1.yaml`](examples/line1.yaml) |
 | `netdiag snapshot save/diff` | 正常時のネットワーク設定を保存し、「何が変わったか」を比較 |
@@ -189,9 +230,17 @@ netdiag check 192.168.3.39 --duration 600    # 10分間測り続ける
 夜間だけ通信が切れる、といった問題には常設の監視が有効です。`netdiag` と同じ台帳がそのまま使えます。
 
 ```bash
-network-checker start-monitoring --config 台帳.csv --diagnose   # 定期ping + 劣化時に自動診断
-network-checker run-server                                       # http://localhost:9991
+network-checker run-server --devices 台帳.csv                    # 監視 + ダッシュボード（1コマンド）
+#   → http://localhost:9991 をブラウザで開く
+network-checker start-monitoring --config 台帳.csv --diagnose   # 監視だけを常駐させる場合
 ```
+
+- **ライン一覧**: 台帳の機器を名前・グループ（ライン）ごとのタイルで表示し、
+  正常／注意／停止／不明をアイコンと文字で示します。停止したタイルには最後に応答した時刻と、
+  `--diagnose` で調べた原因（例:「PLC-2 がARPに応答しません」）を表示します。
+  下には最近のアラート（停止・復旧と停止していた時間、次に確認すること）が並びます。
+  タイルをクリックすると、その機器の応答時間とロスのグラフに切り替わります。
+- 画面は日本語（ブラウザが英語なら英語。右上で切替）。
 
 - 機器ごとの間隔・しきい値（台帳の `監視間隔` `遅延上限` `ロス上限`）で `DEGRADED`/`RECOVERED` アラートを
   JSONLに記録します。`--diagnose` を付けると、劣化した**その機器**について netdiag が原因
@@ -203,7 +252,7 @@ network-checker run-server                                       # http://localh
 | コマンド | 内容 |
 |---|---|
 | `network-checker start-monitoring [hosts...] [--config FILE] [--diagnose] [--alert-file F]` | 監視を開始 |
-| `network-checker run-server [--host H] [--port P]` | ダッシュボード（既定 127.0.0.1:9991） |
+| `network-checker run-server [--devices 台帳] [--host H] [--port P]` | ダッシュボード（既定 127.0.0.1:9991）。`--devices` で台帳の機器名・グループを表示し、127.0.0.1 で起動したときはその機器を監視 |
 | `network-checker ping <host> [--count N] [--json]` | pingして監視DBに記録 |
 | `network-checker status [--host H] [--json]` | 監視DBの最近の結果 |
 | `network-checker init` / `clear` | DBの初期化 / 全削除 |
@@ -215,8 +264,9 @@ network-checker run-server                                       # http://localh
 主な環境変数: `DATABASE_URL`（既定 `sqlite:///network_check_tool.db`）、`PING_TIMEOUT`（4.0秒）、
 `DEFAULT_PING_INTERVAL`（60秒）、`SCHEDULER_MAX_WORKERS`（4）、`SQLITE_BUSY_TIMEOUT_MS`（5000）、`CORS_ORIGINS`。
 
-API: `GET /api/hosts`, `/api/stats?host=&hours=`, `/api/ping_data?host=&hours=`, `/api/export?host=&hours=&format=csv`,
-`/metrics`、ホスト管理（ループバック起動時のみ）`GET /api/jobs`, `POST /api/hosts`, `DELETE /api/hosts/<host>`。
+API: `GET /api/overview?hours=`（ライン一覧: 機器ごとの状態）, `/api/alerts?hours=&limit=`, `/api/hosts`,
+`/api/stats?host=&hours=`, `/api/ping_data?host=&hours=`, `/api/export?host=&hours=&format=csv`, `/metrics`、
+ホスト管理（ループバック起動時のみ）`GET /api/jobs`, `POST /api/hosts`（`name`/`group`/`note` も指定可）, `DELETE /api/hosts/<host>`。
 
 ---
 
@@ -235,8 +285,18 @@ API: `GET /api/hosts`, `/api/stats?host=&hours=`, `/api/ping_data?host=&hours=`,
   `netdiag` needs only the standard library and `click`. Closed networks are the default — add
   `--internet` to also check external reachability and DNS. Output in Japanese by default;
   `--lang en` or `NETDIAG_LANG=en` for English. Reports: text, JSON, self-contained HTML, CSV.
+- `netdiag soak` watches devices for hours and turns "it drops sometimes" into a timeline: when,
+  for how long, and whether all devices, some or one dropped together — next to this PC's NIC
+  errors (and link drops on Linux) (HTML heatmap, CSV, JSON).
+- `netdiag collect` zips the raw output of every OS command netdiag relies on, with IPs, MACs,
+  host/user names, SSIDs and domains masked, for bug reports.
+- Windows: a single `netdiag.exe` (no Python): double-click to check this PC, or drop a device
+  list on it to check the line; an HTML report opens in the browser. Precise pings use the
+  Windows ICMP API (no admin rights).
 - `netdiag scan` discovers devices on a subnet (ICMP + ARP only); `network-checker` adds long-term
-  monitoring with a dashboard, threshold alerts and automatic per-device diagnosis.
+  monitoring with a dashboard — a line board of every device by name and group with its state
+  and the last diagnosed cause (Japanese/English UI) — threshold alerts and automatic per-device
+  diagnosis. `network-checker run-server --devices devices.csv` does it in one command.
 
 Exit codes: `0` healthy, `1` problem found, `2` warnings only. See [docs/netdiag.md](docs/netdiag.md).
 

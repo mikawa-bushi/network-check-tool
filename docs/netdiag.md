@@ -94,6 +94,8 @@ from before proves nothing — the device may have died seconds ago.
 | `netdiag check [TARGET...] [-f FILE] [-p PORT]` | Check this PC and devices. `TARGET` = `192.168.3.39`, `192.168.3.39:502`, `PLC1=192.168.3.39:modbus,4840` |
 | `netdiag scan [NETWORK...] [--save FILE]` | Discover devices (ICMP + ARP; ports only with `-p`). `NETWORK` = CIDR, `a.b.c.d-e`, or the PC's own subnets |
 | `netdiag ping HOST [-c N] [-i S] [--json]` | Precise ping statistics |
+| `netdiag soak [TARGET...] [-f FILE] [--duration 2h]` | Hours-long continuous measurement: outage timeline, correlation across devices, this PC's link drops/NIC errors |
+| `netdiag collect [--target IP] [--no-mask] [--no-ping]` | Zip the raw output of the OS commands netdiag parses (masked) for bug reports |
 | `netdiag explain [PROBE]` / `list-probes` | What each check does, the manual commands, and the next steps |
 | `netdiag scenario FILE` | A YAML/JSON scenario: `checks` (host probes), `devices` (device list), `config` |
 | `netdiag snapshot save/list/diff [NAME]` | Save the network configuration while it works; diff later ("what changed?") |
@@ -134,6 +136,66 @@ stable English `code` (`route.no_route`, `reach.no_arp`, `ports.closed`,
 `ipconfig.duplicate_ip`, `link.half_duplex`, …); match on codes, not on the
 localised `summary`.
 
+## Intermittent drops (`netdiag soak`)
+
+`netdiag soak -f devices.csv --duration 2h` pings every device continuously
+(default every 0.2 s, 1 s timeout, ≤200 pps overall) and keeps per-device state
+with bounded memory, so it can run for a shift:
+
+- **Outages**: two or more consecutive losses (`--min-lost`) after a device has
+  replied once, with start time and length. Isolated single losses are counted
+  as sporadic loss instead.
+- **Correlation**: outages that overlap across devices are grouped into
+  incidents — *all* devices (≥80 % of those alive) → this PC's side (cable,
+  NIC, the switch next to the PC); *some* → a shared switch / cable run (the
+  groups of the device list are named); *single* → that device or its cable.
+- **This PC**: NIC error counters that grew, and on Linux link drops
+  (`carrier_changes`), are put on the same timeline (per `--bucket`). On
+  Windows/macOS a drop of the PC's own link shows up as an *all devices*
+  incident, which already points at this PC's side.
+- **Live**: outage start/end lines on stderr as they happen; per-minute
+  summaries (`--bucket`). Ctrl-C stops and still writes the report.
+- **Output**: text, JSON (`kind: "soak"`), CSV (one row per device and minute,
+  written progressively with `-o x.csv` so a crash keeps the data) and a
+  self-contained HTML heatmap (device × time).
+
+Exit codes as for `check`: 0 clean, 1 outages, 2 sporadic loss only.
+
+## Field data (`netdiag collect`)
+
+`netdiag collect` runs the commands netdiag itself parses on this OS (Windows:
+the PowerShell collector, `ipconfig /all`, `route print`, `arp -a`, `netsh`,
+pings to the gateway, an unused TEST-NET address, an unknown host and loopback;
+Linux/macOS: `ip -j`, `/sys/class/net`, `ifconfig`, `netstat`, `ping`…) and
+stores the **raw bytes** (no decoding, so cp932 output stays inspectable) next
+to netdiag's own interpretation (`netinfo.json`, `check.json`, `ping.json`).
+
+Masking is on by default and preserves structure: IPv4 addresses are mapped
+per /24 (subnet relationships and the last octet survive; netmasks, loopback,
+link-local and public resolvers are kept), MACs keep the vendor (OUI) half,
+IPv6 keeps the prefix type, and host names, user names, SSIDs and internal
+domains are replaced. `--no-mask` keeps everything (internal use only).
+
+## Ping back-ends
+
+`netdiag.measure.icmp` picks, per run: an unprivileged ICMP socket (Linux with
+`net.ipv4.ping_group_range`, macOS), the Windows ICMP API (`IcmpSendEcho` via
+ctypes — no admin rights, sub-millisecond timing with `perf_counter`, duplicate
+replies counted), else the OS `ping` command (≈1 request/s on Windows; netdiag
+adjusts `--duration` accordingly). `NETDIAG_PING_METHOD=socket|win|system`
+forces one. On Windows, ARP presence is also asked directly with `SendARP`
+instead of reading `arp -a`.
+
+## Windows exe
+
+`netdiag.exe` (built by `.github/workflows/windows-exe.yml` with PyInstaller,
+attached to `v*` releases) bundles Python. Started with no arguments it checks
+this PC; with a single device-list path (what Windows passes on drag & drop) it
+checks those devices. Either way it prints the result, saves an HTML report
+(next to the exe / the list, falling back to the home folder) and opens it,
+then waits for Enter so the console window stays. Any other arguments run the
+normal CLI. Set `NETDIAG_NO_OPEN=1` to skip opening the browser.
+
 ## Device lists and scenarios
 
 ```csv
@@ -168,9 +230,11 @@ files drive `network-checker start-monitoring --config`.
 - History is downsampled hourly after 7 days and kept 90 days (`prune`).
 
 For per-device long-term monitoring with a dashboard, use
-`network-checker start-monitoring --config devices.csv --diagnose`: when a
-device degrades, `netdiag.runner.diagnose_target()` checks this PC's network
-first and then that device, and the root cause is attached to the alert.
+`network-checker run-server --devices devices.csv` (monitor + dashboard in one
+process) or `network-checker start-monitoring --config devices.csv --diagnose`:
+when a device degrades, `netdiag.runner.diagnose_target()` checks this PC's
+network first and then that device, and the root cause is attached to the
+alert — and shown on the dashboard's line board next to the device.
 
 ## Extending with plugins
 
@@ -193,16 +257,19 @@ narrative. Use `netdiag.i18n.Text(ja, en)` / `tr(ja, en)` for bilingual text.
 netdiag/
 ├── core/          CheckResult (+ stable code), Status, Probe (scope/default/advice), registry, safe subprocess
 ├── netinfo/       model.py + linux.py / windows.py / macos.py collectors, snapshot cache
-├── measure/       icmp.py (socket + system ping), tcp.py, dns.py, stats.py
+├── measure/       icmp.py (socket / Windows API / system ping, streaming), winicmp.py, tcp.py, dns.py, stats.py
 ├── probes/        interface, link, ipconfig, gateway, neighbor, icmp/external, dns, dualstack,
 │                  tcp, firewall, http, tls, system/clock, wifi, traceroute, device (route/reach/ports)
 ├── diagnosis/     engine (dep-graph, transitive gating), rules (advice), baseline, changepoint
-├── runner.py      run_check(), diagnose_target(), live NIC-error probe
+├── runner.py      run_check(), diagnose_target(), live NIC-error / link-flap probe
+├── soak.py        long-run recorder: outages, incidents, NIC events (report/soak.py renders it)
+├── collect.py     raw command capture + structure-preserving masking
+├── launcher.py    netdiag.exe: double-click / drag & drop
 ├── inventory.py   device lists (CSV/YAML/JSON/TOML), port presets
 ├── scan.py        subnet discovery
 ├── oui.py         MAC vendor lookup from an OUI database already on the system
 ├── report/        text / JSON / HTML / CSV
 ├── i18n.py        ja / en
-├── cli/           click commands (check, scan, ping, explain, scenario, snapshot, peer, watch …)
+├── cli/           click commands (check, scan, ping, soak, collect, explain, scenario, snapshot, peer, watch …)
 ├── snapshot/ peer/ scenario/ alerting.py watch.py storage.py scheduler.py plugins.py
 ```

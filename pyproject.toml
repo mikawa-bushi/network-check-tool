@@ -1,6 +1,6 @@
 [tool.poetry]
 name = "network-check-tool"
-version = "0.3.0"
+version = "0.4.0"
 description = "Network checks for production engineers: diagnose this PC and every PLC/HMI on the line (netdiag), plus a ping-monitoring dashboard (network-checker)."
 authors = ["hardwork9047 <155122235+hardwork9047@users.noreply.github.com>"]
 readme = "README.md"
@@ -37,9 +37,9 @@ include = [
 
 [tool.poetry.dependencies]
 python = "^3.10"
-flask = "^3.1.0"
+flask = "^3.1.3"
 flask-sqlalchemy = "^3.1.1"
-flask-cors = "^4.0.0"
+flask-cors = "^6.0.0"
 click = "^8.1.3"
 apscheduler = "^3.10.4"
 plotly = "^5.17.0"
@@ -57,8 +57,14 @@ network-checker = "network_check_tool.cli:cli"
 netdiag = "netdiag.cli:main"
 
 [tool.poetry.group.dev.dependencies]
-pytest = "^8.3.4"
-black = "^24.0.0"
+pytest = "^9.0.3"
+black = "^26.10.1"
+# Transitive via pre-commit -> virtualenv. 4.2.1 fixes GHSA advisories but needs
+# Python 3.11+, so 3.10 environments keep the newest release that supports it.
+filelock = [
+    { version = ">=4.2.1", python = ">=3.11" },
+    { version = "*", python = "<3.11" },
+]
 pre-commit = "^4.6.0"
 
 [tool.black]

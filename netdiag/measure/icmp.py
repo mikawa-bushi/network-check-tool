@@ -1,13 +1,16 @@
 """Precise, unprivileged ICMP echo measurement.
 
-Two back-ends, chosen automatically:
+Three back-ends, chosen automatically:
 
 * **ICMP datagram socket** (Linux, macOS): ``socket(AF_INET, SOCK_DGRAM,
   IPPROTO_ICMP)`` needs no root, gives microsecond timing, sub-second send
   intervals and detects duplicate replies (two devices answering for one IP).
   One socket and one thread serve many targets at once, like ``fping``, so
   checking 30 devices takes as long as checking one.
-* **System ``ping`` command** (Windows, or when datagram ICMP is not permitted):
+* **Windows ICMP API** (``IcmpSendEcho``, see :mod:`.winicmp`): the same
+  freedom on Windows without administrator rights — free intervals,
+  sub-millisecond timing, duplicate answers, explicit "unreachable" statuses.
+* **System ``ping`` command** (fallback when neither is usable):
   run in parallel per target and parsed *per reply line* in a language-neutral
   way. Japanese Windows prints ``時間 <1ms`` and ``(25% の損失)``; English prints
   ``time<1ms`` and ``(25% loss)`` — the parser relies only on the ``=``/``<``
@@ -15,8 +18,9 @@ Two back-ends, chosen automatically:
   where "Destination host unreachable" replies are reported as *received* (0 %
   loss) in ping's own statistics.
 
-Both produce a :class:`PingStats` with per-reply RTTs, so every report shows the
+All produce a :class:`PingStats` with per-reply RTTs, so every report shows the
 same statistics (loss with a 95 % upper bound, min/median/p95/max, jitter).
+:func:`ping_stream` runs the same back-ends open-ended for long measurements.
 """
 
 from __future__ import annotations
@@ -32,7 +36,7 @@ import threading
 import time
 from concurrent.futures import ThreadPoolExecutor
 from dataclasses import dataclass, field
-from typing import Dict, Iterable, List, Optional, Sequence, Tuple
+from typing import Callable, Dict, Iterable, List, Optional, Sequence, Tuple
 
 from ..core.util import have, is_macos, is_windows, run
 from .stats import RttSummary, loss_upper_bound_pct, summarize
@@ -173,59 +177,122 @@ def ping_many(
 ) -> Dict[str, PingStats]:
     """Ping several targets concurrently; returns ``{target: PingStats}``.
 
-    ``method`` is ``auto`` (socket when permitted, else system ping),
-    ``socket`` or ``system``. ``family`` 4/6 forces an address family.
+    ``method`` is ``auto`` (ICMP socket or the Windows ICMP API when available,
+    else the system ``ping``), ``socket``, ``win`` or ``system``. ``family``
+    4/6 forces an address family.
     """
-    count = max(1, int(count))
-    method = os.environ.get("NETDIAG_PING_METHOD", "") or method
-    out: Dict[str, PingStats] = {}
-    socket_jobs: Dict[str, str] = {}  # target -> IPv4 address
-    system_jobs: List[Tuple[str, Optional[int]]] = []
+    return _run(
+        targets,
+        count=max(1, int(count)),
+        interval=interval,
+        timeout=timeout,
+        size=size,
+        family=family,
+        method=method,
+        max_pps=max_pps,
+    )
 
+
+SampleFn = Callable[[str, float, Optional[float], Optional[str]], None]
+
+
+def ping_stream(
+    targets: Sequence[str],
+    on_sample: SampleFn,
+    stop: threading.Event,
+    interval: float = DEFAULT_INTERVAL,
+    timeout: float = DEFAULT_TIMEOUT,
+    size: int = DEFAULT_SIZE,
+    method: str = "auto",
+    max_pps: float = MAX_PPS,
+) -> Dict[str, PingStats]:
+    """Ping continuously until *stop* is set, reporting every request.
+
+    ``on_sample(target, sent_at, rtt_ms, error)`` is called once per request:
+    ``rtt_ms`` is None for a lost request, ``sent_at`` is the wall-clock send
+    time (for outage timelines). Memory stays bounded however long it runs;
+    the returned stats carry counts only (no per-reply RTT list).
+    """
+    return _run(
+        targets,
+        count=None,
+        interval=interval,
+        timeout=timeout,
+        size=size,
+        family=None,
+        method=method,
+        max_pps=max_pps,
+        on_sample=on_sample,
+        stop=stop,
+    )
+
+
+def _choose(method: str, fam: Optional[int]) -> str:
+    method = os.environ.get("NETDIAG_PING_METHOD", "") or method
+    if method == "system" or fam == 6:
+        return "system"
+    if method in ("auto", "socket") and icmp_socket_available():
+        return "socket"
+    if method in ("auto", "win") and win_icmp_available():
+        return "win"
+    return "system"
+
+
+def _run(
+    targets: Sequence[str],
+    count: Optional[int],
+    interval: float,
+    timeout: float,
+    size: int,
+    family: Optional[int],
+    method: str,
+    max_pps: float,
+    on_sample: Optional[SampleFn] = None,
+    stop: Optional[threading.Event] = None,
+) -> Dict[str, PingStats]:
+    out: Dict[str, PingStats] = {}
+    jobs: Dict[str, Dict[str, str]] = {"socket": {}, "win": {}}
+    system_jobs: List[Tuple[str, Optional[int]]] = []
     for t in dict.fromkeys(targets):  # de-duplicate, keep order
         fam = family or _literal_family(t)
-        use_socket = (
-            method in ("auto", "socket") and fam != 6 and icmp_socket_available()
-        )
-        if use_socket:
-            addr = _resolve_v4(t, timeout=max(timeout, 2.0))
-            if addr is None:
-                out[t] = PingStats(
-                    target=t, method="icmp-socket", error="name resolution failed"
-                )
-                continue
-            socket_jobs[t] = addr
-        else:
+        backend = _choose(method, fam)
+        if backend == "system":
             system_jobs.append((t, fam))
+            continue
+        addr = _resolve_v4(t, timeout=max(timeout, 2.0))
+        if addr is None:
+            out[t] = PingStats(target=t, method=backend, error="name resolution failed")
+            continue
+        jobs[backend][t] = addr
 
-    if socket_jobs:
-        out.update(
-            _SocketPinger(
-                socket_jobs,
-                count=count,
-                interval=interval,
-                timeout=timeout,
-                size=size,
-                max_pps=max_pps,
-            ).run()
-        )
+    common = dict(
+        interval=interval,
+        timeout=timeout,
+        size=size,
+        max_pps=max_pps,
+        count=count,
+        on_sample=on_sample,
+        stop=stop,
+    )
+    runners = []
+    if jobs["socket"]:
+        runners.append(_SocketPinger(jobs["socket"], **common).run)
+    if jobs["win"]:
+        from .winicmp import WinIcmpPinger
+
+        runners.append(WinIcmpPinger(jobs["win"], **common).run)
     if system_jobs:
-        workers = max(1, min(32, len(system_jobs)))
-        with ThreadPoolExecutor(max_workers=workers) as pool:
-            futures = {
-                t: pool.submit(
-                    system_ping,
-                    t,
-                    count=count,
-                    interval=interval,
-                    timeout=timeout,
-                    size=size,
-                    family=fam,
-                )
-                for t, fam in system_jobs
-            }
-            for t, fut in futures.items():
-                out[t] = fut.result()
+        runners.append(
+            lambda: _system_many(
+                system_jobs, count, interval, timeout, size, on_sample, stop
+            )
+        )
+    if len(runners) == 1:
+        out.update(runners[0]())
+    elif runners:
+        with ThreadPoolExecutor(max_workers=len(runners)) as pool:
+            for res in pool.map(lambda r: r(), runners):
+                out.update(res)
     return {t: out[t] for t in dict.fromkeys(targets)}
 
 
@@ -251,6 +318,25 @@ def icmp_socket_available() -> bool:
                     except (OSError, AttributeError):
                         _socket_ok = False
     return _socket_ok
+
+
+def win_icmp_available() -> bool:
+    """Is the Windows ICMP API (IcmpSendEcho, no admin needed) usable?"""
+    if not is_windows():
+        return False
+    from .winicmp import get_api
+
+    return get_api() is not None
+
+
+def precise_ping_available() -> bool:
+    """Sub-millisecond timing and free send intervals on this host (IPv4)?"""
+    return _choose("auto", None) != "system"
+
+
+def system_ping_cadence() -> float:
+    """Shortest gap the OS ``ping`` keeps: ping.exe ~1 s, iputils 0.2 s unprivileged."""
+    return 1.0 if is_windows() else 0.2
 
 
 # --------------------------------------------------------------------------
@@ -292,28 +378,39 @@ def parse_echo_reply(data: bytes) -> Optional[Tuple[int, int, bytes]]:
 
 
 class _SocketPinger:
-    """fping-style: one socket, one thread, many targets, paced sends."""
+    """fping-style: one socket, one thread, many targets, paced sends.
+
+    Request ``k`` goes to address ``k % n`` at ``t0 + k * step``, so every
+    address is pinged once per period, evenly spread and never faster than
+    ``max_pps`` overall. With ``count=None`` it runs until ``stop`` is set,
+    keeping only a short window of per-request state.
+    """
 
     def __init__(
         self,
         jobs: Dict[str, str],
-        count: int,
         interval: float,
         timeout: float,
         size: int,
         max_pps: float,
+        count: Optional[int] = None,
+        on_sample: Optional[SampleFn] = None,
+        stop: Optional[threading.Event] = None,
     ) -> None:
         self.jobs = jobs
         self.count = count
         self.interval = max(0.001, interval)
         self.timeout = max(0.05, timeout)
-        self.size = max(len(_MAGIC) + 4, size)
+        self.size = max(len(_MAGIC) + 8, size)
         self.min_gap = 1.0 / max_pps if max_pps > 0 else 0.0
+        self.on_sample = on_sample
+        self.stop = stop or threading.Event()
+        self.keep_rtts = count is not None  # streaming keeps counts only
         self.token = os.urandom(4)
         self.ident = os.getpid() & 0xFFFF
 
-    def _payload(self, seq: int) -> bytes:
-        body = _MAGIC + self.token + struct.pack("!I", seq)
+    def _payload(self, k: int) -> bytes:
+        body = _MAGIC + self.token + struct.pack("!I", k & 0xFFFFFFFF)
         return body + b"\x00" * max(0, self.size - len(body))
 
     def run(self) -> Dict[str, PingStats]:
@@ -324,7 +421,10 @@ class _SocketPinger:
         by_addr: Dict[str, List[str]] = {}
         for t, a in self.jobs.items():
             by_addr.setdefault(a, []).append(t)
-        addrs = list(by_addr)
+        self.addrs = addrs = list(by_addr)
+        self.by_addr = by_addr
+        self.stats = stats
+        n = len(addrs)
 
         try:
             sock = socket.socket(socket.AF_INET, socket.SOCK_DGRAM, socket.IPPROTO_ICMP)
@@ -336,62 +436,39 @@ class _SocketPinger:
         sel = selectors.DefaultSelector()
         sel.register(sock, selectors.EVENT_READ)
 
-        # Schedule: request i to every address, spread evenly over one interval,
-        # never faster than min_gap overall. seq encodes (round, address index).
-        n = len(addrs)
-        schedule: List[Tuple[float, int, int]] = []
-        step = max(self.interval / n, self.min_gap)
-        for i in range(self.count):
-            for j in range(n):
-                schedule.append(
-                    (i * max(self.interval, n * self.min_gap) + j * step, i, j)
-                )
-        schedule.sort()
-
-        sent_at: Dict[Tuple[int, int], float] = {}  # (addr idx, round) -> t
-        seen: Dict[Tuple[int, int], bool] = {}
-        rtts: Dict[int, Dict[int, float]] = {j: {} for j in range(n)}
-        late = [0] * n
-        dups = [0] * n
-        sent = [0] * n
-        errors: List[Dict[str, int]] = [{} for _ in range(n)]
+        period = max(self.interval, n * self.min_gap)
+        step = period / n
+        total = None if self.count is None else self.count * n
+        # k -> (perf send time, wall send time, send error)
+        self.outstanding: Dict[int, Tuple[float, float, Optional[str]]] = {}
+        self.answered: Dict[int, float] = {}  # recently answered k -> perf time
+        self.rtts: Dict[int, Dict[int, float]] = {j: {} for j in range(n)}
+        self.late = [0] * n
+        self.next_k = 0
         t0 = time.perf_counter()
-        next_idx = 0
-        last_send = t0
         try:
             while True:
                 now = time.perf_counter()
-                # send everything that is due
-                while next_idx < len(schedule) and t0 + schedule[next_idx][0] <= now:
-                    _, rnd, j = schedule[next_idx]
-                    next_idx += 1
-                    seq = rnd * n + j
-                    pkt = build_echo_request(self.ident, seq, self._payload(seq))
-                    try:
-                        sock.sendto(pkt, (addrs[j], 0))
-                        sent_at[(j, rnd)] = time.perf_counter()
-                    except OSError as e:
-                        # e.g. "No route to host" after ARP failed: the packet
-                        # never left, so it counts as sent-and-lost with a reason.
-                        sent_at[(j, rnd)] = time.perf_counter()
-                        msg = e.strerror or str(e)
-                        errors[j][msg] = errors[j].get(msg, 0) + 1
-                    sent[j] += 1
-                    last_send = time.perf_counter()
-                    now = last_send
-                done_sending = next_idx >= len(schedule)
-                outstanding = len(sent_at) - len(seen)
-                if done_sending and (
-                    outstanding <= 0 or now - last_send > self.timeout
+                stopping = self.stop.is_set()
+                while (
+                    not stopping
+                    and (total is None or self.next_k < total)
+                    and t0 + self.next_k * step <= now
                 ):
+                    self._send(sock, self.next_k, n)
+                    self.next_k += 1
+                    now = time.perf_counter()
+                self._expire(now, n)
+                done_sending = stopping or (total is not None and self.next_k >= total)
+                if done_sending and not self.outstanding:
                     break
-                # wait for a reply or the next send, whichever comes first
                 if not done_sending:
-                    wait = max(0.0, t0 + schedule[next_idx][0] - now)
+                    wait = max(0.0, t0 + self.next_k * step - now)
                 else:
-                    wait = max(0.0, last_send + self.timeout - now)
+                    oldest = min(v[0] for v in self.outstanding.values())
+                    wait = max(0.0, oldest + self.timeout - now)
                 for _key, _ev in sel.select(timeout=min(wait, 0.05)):
-                    self._drain(sock, addrs, n, sent_at, seen, rtts, late, dups)
+                    self._drain(sock, n)
         finally:
             sel.close()
             sock.close()
@@ -399,18 +476,47 @@ class _SocketPinger:
         for j, addr in enumerate(addrs):
             for t in by_addr[addr]:
                 s = stats[t]
-                s.sent = sent[j]
-                ordered = [rtts[j][r] for r in sorted(rtts[j])]
-                s.rtts_ms = ordered
-                s.received = len(ordered)
-                s.duplicates = dups[j]
-                if late[j]:
-                    s.errors["late reply (after timeout)"] = late[j]
-                for msg, c in errors[j].items():
-                    s.errors[msg] = s.errors.get(msg, 0) + c
+                if self.keep_rtts:
+                    s.rtts_ms = [self.rtts[j][r] for r in sorted(self.rtts[j])]
+                if self.late[j]:
+                    s.errors["late reply (after timeout)"] = self.late[j]
         return stats
 
-    def _drain(self, sock, addrs, n, sent_at, seen, rtts, late, dups) -> None:
+    def _emit(self, j: int, wall: float, rtt: Optional[float], err: Optional[str]):
+        for t in self.by_addr[self.addrs[j]]:
+            s = self.stats[t]
+            if rtt is not None:
+                s.received += 1
+            elif err:
+                s.add_error(err)
+            if self.on_sample is not None:
+                self.on_sample(t, wall, rtt, err)
+
+    def _send(self, sock, k: int, n: int) -> None:
+        j = k % n
+        pkt = build_echo_request(self.ident, k, self._payload(k))
+        err = None
+        try:
+            sock.sendto(pkt, (self.addrs[j], 0))
+        except OSError as e:
+            # e.g. "No route to host" after ARP failed: the packet never left,
+            # so it counts as sent-and-lost, with the reason kept.
+            err = e.strerror or str(e)
+        self.outstanding[k] = (time.perf_counter(), time.time(), err)
+        for t in self.by_addr[self.addrs[j]]:
+            self.stats[t].sent += 1
+
+    def _expire(self, now: float, n: int) -> None:
+        for k, (sent_p, sent_w, err) in list(self.outstanding.items()):
+            if now - sent_p > self.timeout:
+                del self.outstanding[k]
+                self._emit(k % n, sent_w, None, err)
+        horizon = now - 2 * self.timeout
+        for k, t in list(self.answered.items()):
+            if t < horizon:
+                del self.answered[k]
+
+    def _drain(self, sock, n: int) -> None:
         while True:
             try:
                 data, src = sock.recvfrom(65535)
@@ -426,24 +532,112 @@ class _SocketPinger:
             if not payload.startswith(_MAGIC + self.token):
                 continue  # someone else's echo reply
             try:
-                (seq_in_payload,) = struct.unpack("!I", payload[8:12])
+                (k,) = struct.unpack("!I", payload[8:12])
             except struct.error:
                 continue
-            if seq_in_payload & 0xFFFF != seq:
+            if k & 0xFFFF != seq or k >= self.next_k:
                 continue
-            seq = seq_in_payload
-            rnd, j = divmod(seq, n)
-            if j >= n or src[0] != addrs[j] or (j, rnd) not in sent_at:
+            j = k % n
+            if src[0] != self.addrs[j]:
                 continue
-            if seen.get((j, rnd)):
-                dups[j] += 1  # a second answer to the same request: IP conflict/loop
+            if k in self.answered:
+                # A second answer to the same request: IP conflict or a loop.
+                for t in self.by_addr[self.addrs[j]]:
+                    self.stats[t].duplicates += 1
                 continue
-            seen[(j, rnd)] = True
-            rtt = (t_recv - sent_at[(j, rnd)]) * 1000.0
-            if rtt > self.timeout * 1000.0:
-                late[j] += 1
+            entry = self.outstanding.pop(k, None)
+            if entry is None:
+                self.late[j] += 1  # answered after we had given up on it
                 continue
-            rtts[j][rnd] = rtt
+            sent_p, sent_w, _err = entry
+            self.answered[k] = t_recv
+            rtt = (t_recv - sent_p) * 1000.0
+            if self.keep_rtts:
+                self.rtts[j][k // n] = rtt
+            self._emit(j, sent_w, rtt, None)
+
+
+def _system_many(
+    jobs: List[Tuple[str, Optional[int]]],
+    count: Optional[int],
+    interval: float,
+    timeout: float,
+    size: int,
+    on_sample: Optional[SampleFn],
+    stop: Optional[threading.Event],
+) -> Dict[str, PingStats]:
+    """System ``ping`` per target in parallel; in streaming mode, in rounds."""
+    workers = max(1, min(32, len(jobs)))
+    if count is not None:
+        with ThreadPoolExecutor(max_workers=workers) as pool:
+            futs = {
+                t: pool.submit(
+                    system_ping,
+                    t,
+                    count=count,
+                    interval=interval,
+                    timeout=timeout,
+                    size=size,
+                    family=fam,
+                )
+                for t, fam in jobs
+            }
+            return {t: f.result() for t, f in futs.items()}
+
+    totals = {
+        t: PingStats(target=t, method="system-ping", resolution_ms=1.0) for t, _ in jobs
+    }
+    cadence = max(interval, system_ping_cadence())
+    per_round = max(5, int(10 / cadence))  # ~10 s of samples per ping run
+
+    def one_round(t: str, fam: Optional[int]) -> None:
+        start = time.time()
+        st = system_ping(
+            t, count=per_round, interval=interval, timeout=timeout, family=fam
+        )
+        tot = totals[t]
+        if st.error:
+            tot.error = st.error
+            return
+        tot.sent += st.sent
+        tot.received += st.received
+        tot.duplicates += st.duplicates
+        for msg, c in st.errors.items():
+            tot.errors[msg] = tot.errors.get(msg, 0) + c
+        if on_sample is not None:
+            for i, rtt in enumerate(per_request_results(st, per_round)):
+                on_sample(t, start + i * cadence, rtt, None)
+
+    with ThreadPoolExecutor(max_workers=workers) as pool:
+        while stop is None or not stop.is_set():
+            list(pool.map(lambda job: one_round(*job), jobs))
+            if all(totals[t].error for t, _ in jobs):
+                break
+    return totals
+
+
+_SEQ_RE = re.compile(r"(?:icmp_seq|seq)=(\d+)")
+
+
+def per_request_results(st: PingStats, count: int) -> List[Optional[float]]:
+    """Per-request RTT (None = lost) recovered from system ping output.
+
+    POSIX output numbers each reply (``icmp_seq=N``); Windows prints exactly
+    one line per request, in order. Used to place losses on a timeline.
+    """
+    text = st.raw or ""
+    if is_windows():
+        blocks = _paragraphs(text)
+        region = blocks[0][1:] if blocks else []
+        out = [_win_reply_rtt(line) for line in region[:count]]
+        return out + [None] * (count - len(out))
+    by_seq: Dict[int, float] = {}
+    for line in text.splitlines():
+        m_seq, rtt = _SEQ_RE.search(line), _posix_reply_rtt(line)
+        if m_seq and rtt is not None:
+            by_seq.setdefault(int(m_seq.group(1)), rtt)
+    base = 0 if 0 in by_seq else 1
+    return [by_seq.get(base + i) for i in range(count)]
 
 
 # --------------------------------------------------------------------------
@@ -517,7 +711,7 @@ def system_ping(
     if not have("ping"):
         stats.error = "ping command not available"
         return stats
-    budget = count * (max(interval, 1.0 if windows else 0.2) + timeout) + 5
+    budget = count * (max(interval, system_ping_cadence()) + timeout) + 5
     res = run(
         build_ping_args(host, count, timeout, interval, size=size, family=family),
         timeout=budget,
@@ -547,8 +741,8 @@ def system_ping(
 def _measured(text: str, windows: bool) -> bool:
     """Did ping actually send requests (as opposed to failing up front)?"""
     if windows:
-        blocks = [b for b in re.split(r"\n\s*\n", text.strip()) if b.strip()]
-        return bool(blocks) and len(blocks[0].splitlines()) > 1
+        blocks = _paragraphs(text)
+        return bool(blocks) and len(blocks[0]) > 1
     return _POSIX_SUMMARY_RE.search(text) is not None or "bytes from" in text
 
 
@@ -569,6 +763,14 @@ _POSIX_SUMMARY_RE = re.compile(
 _POSIX_ERROR_RE = re.compile(r"^From\s+\S+?:?\s+(?:icmp_seq=\d+\s+)?(.+?)\s*$")
 
 
+def _posix_reply_rtt(line: str) -> Optional[float]:
+    """RTT of a ``bytes from ... time=N ms`` reply line (duplicates excluded)."""
+    if "bytes from" not in line or "(DUP!)" in line:
+        return None
+    m = _POSIX_TIME_RE.search(line)
+    return float(m.group(1)) if m else None
+
+
 def parse_posix_ping(
     text: str, count: int
 ) -> Tuple[int, int, int, List[float], Dict[str, int]]:
@@ -586,11 +788,11 @@ def parse_posix_ping(
 
     for line in text.splitlines():
         if "bytes from" in line:
-            m = _POSIX_TIME_RE.search(line)
+            rtt = _posix_reply_rtt(line)
             if "(DUP!)" in line:
                 dup_lines += 1
-            elif m:
-                rtts.append(float(m.group(1)))
+            elif rtt is not None:
+                rtts.append(rtt)
             else:  # e.g. macOS "92 bytes from x: Destination Host Unreachable"
                 _err(line.split(":", 1)[-1].strip())
             continue
@@ -615,6 +817,37 @@ _WIN_LIST_SEP = (",", "、", "，")
 _WIN_SENT_RE = re.compile(r"(?:Sent|送信)\s*=\s*(\d+)", re.IGNORECASE)
 
 
+def _paragraphs(text: str) -> List[List[str]]:
+    """Blank-line separated blocks of stripped lines."""
+    blocks: List[List[str]] = []
+    cur: List[str] = []
+    for line in text.splitlines():
+        if line.strip():
+            cur.append(line.strip())
+        elif cur:
+            blocks.append(cur)
+            cur = []
+    if cur:
+        blocks.append(cur)
+    return blocks
+
+
+def _win_reply_rtt(line: str) -> Optional[float]:
+    """RTT of a ping.exe reply line in any language, None for anything else.
+
+    A reply carries exactly one ``=N ms``/``<N ms`` token and no list separator
+    (the statistics lines are comma/読点 separated). ``<1ms`` becomes 0.5 ms.
+    """
+    tokens = _WIN_RTT_RE.findall(line)
+    if len(tokens) != 1 or any(sep in line for sep in _WIN_LIST_SEP):
+        return None
+    m = _WIN_RTT_RE.search(line)
+    value = float(m.group(1))
+    if "<" in m.group(0):
+        value = max(0.0, value - 0.5)
+    return value
+
+
 def parse_windows_ping(
     text: str, count: int
 ) -> Tuple[int, int, int, List[float], Dict[str, int]]:
@@ -627,17 +860,7 @@ def parse_windows_ping(
     "destination host unreachable", "TTL expired" — is a lost request, whatever
     language it is written in. ``<1ms`` is recorded as 0.5 ms (1 ms resolution).
     """
-    blocks: List[List[str]] = []
-    cur: List[str] = []
-    for line in text.splitlines():
-        if line.strip():
-            cur.append(line.strip())
-        elif cur:
-            blocks.append(cur)
-            cur = []
-    if cur:
-        blocks.append(cur)
-
+    blocks = _paragraphs(text)
     region: List[str] = blocks[0][1:] if blocks else []
     rtts: List[float] = []
     errors: Dict[str, int] = {}
@@ -646,14 +869,9 @@ def parse_windows_ping(
         errors[blocks[0][0]] = 1
         return count, 0, 0, rtts, errors
     for line in region:
-        tokens = _WIN_RTT_RE.findall(line)
-        is_reply = len(tokens) == 1 and not any(sep in line for sep in _WIN_LIST_SEP)
-        if is_reply:
-            m = _WIN_RTT_RE.search(line)
-            value = float(m.group(1))
-            if "<" in line[m.start() : m.end()]:
-                value = max(0.0, value - 0.5)  # "<1ms" -> 0.5 ms
-            rtts.append(value)
+        rtt = _win_reply_rtt(line)
+        if rtt is not None:
+            rtts.append(rtt)
         else:
             errors[line] = errors.get(line, 0) + 1
 

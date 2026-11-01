@@ -29,7 +29,7 @@ repos:
 
   # --- フォーマッタ / リンタ（導入先の CI と同一バージョンに合わせる） ---
   - repo: https://github.com/psf/black-pre-commit-mirror
-    rev: 24.10.0
+    rev: 26.10.1
     hooks:
       - id: black
 

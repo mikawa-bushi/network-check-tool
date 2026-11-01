@@ -30,17 +30,17 @@ from ._app import (
 def effective_interval(interval) -> float:
     """Seconds between pings as actually sent on this PC.
 
-    Without the ICMP socket, Windows' ``ping`` paces itself at about one request
-    per second whatever is asked, so a ``--duration`` must be converted with
-    that cadence or a 10-minute test would run for 50 minutes.
+    Without a precise pinger the OS ``ping`` sets the pace (``ping.exe``: about
+    one request per second whatever is asked), so a ``--duration`` must be
+    converted with that cadence or a 10-minute test would run for 50 minutes.
     """
-    from ..core.util import is_windows
-    from ..measure import icmp_socket_available
+    from ..measure import precise_ping_available
+    from ..measure.icmp import system_ping_cadence
 
     wanted = interval or 0.2
-    if is_windows() and not icmp_socket_available():
-        return max(wanted, 1.0)
-    return wanted
+    if precise_ping_available():
+        return wanted
+    return max(wanted, system_ping_cadence())
 
 
 def _collect_devices(targets, device_files, ports) -> List[Device]:

@@ -1,7 +1,7 @@
 from typing import Dict
 
 from netdiag.core.util import have
-from netdiag.measure import icmp_socket_available
+from netdiag.measure import precise_ping_available
 from netdiag.probes.icmp import ping as _measure_ping
 
 from ..models import PingResult, db
@@ -26,7 +26,7 @@ class PingService:
 
         # netdiag measures with an unprivileged ICMP socket where the OS allows
         # it (no ping binary needed) and falls back to the system ping command.
-        if not (icmp_socket_available() or have("ping")):
+        if not (precise_ping_available() or have("ping")):
             return {
                 "host": host,
                 "timestamp": timestamp,

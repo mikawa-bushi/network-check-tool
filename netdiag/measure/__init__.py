@@ -12,7 +12,10 @@ from .icmp import (
     parse_windows_ping,
     ping,
     ping_many,
+    ping_stream,
+    precise_ping_available,
     system_ping,
+    win_icmp_available,
 )
 from .stats import (
     RttSummary,
@@ -28,6 +31,9 @@ __all__ = [
     "PingStats",
     "ping",
     "ping_many",
+    "ping_stream",
+    "precise_ping_available",
+    "win_icmp_available",
     "system_ping",
     "icmp_socket_available",
     "parse_posix_ping",

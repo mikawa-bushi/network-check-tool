@@ -108,23 +108,24 @@ def _powershell() -> Optional[str]:
     return None
 
 
+def powershell_args(script: str) -> List[str]:
+    """Argument vector that runs *script* in Windows PowerShell (else pwsh)."""
+    return [
+        _powershell() or "powershell",
+        "-NoProfile",
+        "-NonInteractive",
+        "-ExecutionPolicy",
+        "Bypass",
+        "-Command",
+        script,
+    ]
+
+
 def run_powershell(script: str, timeout: float = 30.0) -> Optional[Any]:
     """Run *script* and parse its JSON stdout; None on any failure."""
-    exe = _powershell()
-    if not exe:
+    if not _powershell():
         return None
-    res = run(
-        [
-            exe,
-            "-NoProfile",
-            "-NonInteractive",
-            "-ExecutionPolicy",
-            "Bypass",
-            "-Command",
-            script,
-        ],
-        timeout=timeout,
-    )
+    res = run(powershell_args(script), timeout=timeout)
     text = (res.stdout or "").strip().lstrip("﻿")
     if not text:
         return None
@@ -450,7 +451,20 @@ def neighbors() -> List[Neighbor]:
 
 
 def neighbor(ip: str) -> Optional[Neighbor]:
-    """Cheap single lookup via ``arp -a <ip>`` (no PowerShell start-up cost)."""
+    """ARP evidence for one address.
+
+    ``SendARP`` asks the network directly (no admin rights needed): a reply
+    gives the MAC, "nobody answered" is definite absence. Its answer may come
+    from the cache, so freshness is still judged against the table read before
+    the test (state STALE = "not proven fresh"). Falls back to ``arp -a <ip>``.
+    """
+    from ..measure.winicmp import arp_lookup
+
+    verdict, mac = arp_lookup(ip)
+    if verdict == "present":
+        return Neighbor(ip=ip, mac=mac, state=NEIGH_STALE)
+    if verdict == "absent":
+        return Neighbor(ip=ip, mac=None, state=NEIGH_FAILED)
     res = run(["arp", "-a", ip], timeout=10)
     for n in parse_arp_a(res.stdout):
         if n.ip == ip:

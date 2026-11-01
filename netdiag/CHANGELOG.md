@@ -2,6 +2,36 @@
 
 All notable changes to the `netdiag` package are documented in this file.
 
+## [0.3.0] - 2026-10-28
+
+### Added
+- `netdiag.soak` + `netdiag soak`: long-run recorder (per-device outages,
+  per-minute buckets; raw RTTs only for the open minute plus a fixed-size
+  reservoir sample), incident grouping across
+  devices, findings with stable codes (`soak.common_outage`, `soak.group_outage`,
+  `soak.device_outage`, `soak.never_replied`, `soak.sporadic_loss`,
+  `soak.nic_errors`, `soak.pc_link_flap`); `netdiag.report.soak` renderers.
+- `netdiag.collect` + `netdiag collect`: raw command capture per OS and
+  structure-preserving masking of IPv4/IPv6/MAC/host/user/SSID/domain values on
+  raw bytes (Shift_JIS output stays intact).
+- `netdiag.measure.winicmp`: Windows `IcmpSendEcho` pinger (no admin, perf_counter
+  timing, duplicate replies, global rate limit) and `SendARP` presence check, used
+  automatically on Windows; `NETDIAG_PING_METHOD=socket|win|system` overrides.
+- `netdiag.measure.ping_stream()`: continuous per-request callbacks for every
+  back-end; `precise_ping_available()`, `win_icmp_available()`.
+- `netdiag.launcher`: the entry point of `netdiag.exe` (double-click / drag & drop).
+- `LinkStats.carrier_changes` / `link_drops()` (Linux sysfs); `link_errors`
+  reports a link that dropped during the test (`link_errors.link_flap`).
+- `Transition.host` and `Transition.diagnosis` (the monitored device and the
+  human-readable root cause), included in JSONL alerts; `StateMachine(host=...)`
+  stamps the host on every transition.
+- `Status.worst()` and `Status.exit_code`, shared by the check and soak reports.
+
+### Changed
+- Silent on-link devices get a direct ARP answer (`SendARP` on Windows) instead of
+  relying on the OS ARP table alone.
+- The CLI never crashes on output the console/pipe encoding cannot represent.
+
 ## [0.2.0] - 2026-10-21
 
 ### Added

@@ -57,12 +57,12 @@ def _esc(s) -> str:
     return html.escape(str(s if s is not None else ""))
 
 
-def _page(title: str, body: str) -> str:
+def _page(title: str, body: str, extra_css: str = "") -> str:
     lang = "ja" if get_language() == "ja" else "en"
     return (
         f'<!doctype html>\n<html lang="{lang}"><head><meta charset="utf-8">'
         f'<meta name="viewport" content="width=device-width, initial-scale=1">'
-        f"<title>{_esc(title)}</title><style>{_CSS}</style></head><body>\n{body}\n</body></html>"
+        f"<title>{_esc(title)}</title><style>{_CSS}{extra_css}</style></head><body>\n{body}\n</body></html>"
     )
 
 

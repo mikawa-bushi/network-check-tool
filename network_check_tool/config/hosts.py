@@ -44,6 +44,8 @@ class HostConfig:
     rtt_warn_ms: Optional[float] = None
     loss_warn_pct: Optional[float] = None
     label: str = ""  # human name from a device list (e.g. "PLC-1")
+    group: str = ""  # line / area from a device list (e.g. "1ライン")
+    note: str = ""
 
 
 _DEVICE_LIST_SUFFIXES = (".csv", ".tsv", ".txt", ".yaml", ".yml")
@@ -59,6 +61,8 @@ def _from_device_list(path: Path, default_interval: int) -> List[HostConfig]:
             rtt_warn_ms=d.rtt_warn_ms,
             loss_warn_pct=d.loss_warn_pct,
             label=d.name if d.name != d.host else "",
+            group=d.group,
+            note=d.note,
         )
         for d in load_devices(path)
     ]
@@ -105,6 +109,9 @@ def load_hosts(path, default_interval: int = 60) -> List[HostConfig]:
                 interval=int(entry.get("interval", default_interval)),
                 rtt_warn_ms=entry.get("rtt_warn_ms"),
                 loss_warn_pct=entry.get("loss_warn_pct"),
+                label=str(entry.get("label") or ""),
+                group=str(entry.get("group") or ""),
+                note=str(entry.get("note") or ""),
             )
         )
     if not hosts:

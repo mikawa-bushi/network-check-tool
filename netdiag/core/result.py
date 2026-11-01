@@ -11,7 +11,7 @@ from __future__ import annotations
 import time
 from dataclasses import asdict, dataclass, field
 from enum import Enum
-from typing import Any, Dict, List, Optional
+from typing import Any, Dict, Iterable, List, Optional
 
 
 class Status(str, Enum):
@@ -37,6 +37,20 @@ class Status(str, Enum):
             Status.FAIL: "✘",  # ✘
             Status.SKIP: "—",  # —
         }[self]
+
+    @property
+    def exit_code(self) -> int:
+        """CLI exit code for an overall verdict: 0 healthy, 1 failure, 2 warnings only."""
+        return {Status.FAIL: 1, Status.WARN: 2}.get(self, 0)
+
+    @classmethod
+    def worst(cls, statuses: Iterable["Status"]) -> "Status":
+        """FAIL if any failed, else WARN if any warned, else OK (SKIP never escalates)."""
+        seen = set(statuses)
+        for s in (cls.FAIL, cls.WARN):
+            if s in seen:
+                return s
+        return cls.OK
 
 
 @dataclass
