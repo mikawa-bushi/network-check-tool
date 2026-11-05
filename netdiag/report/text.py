@@ -8,7 +8,7 @@ per line; the diagnosis section gives numbered next steps in plain language.
 from __future__ import annotations
 
 import time
-from typing import List, Optional
+from typing import List, NamedTuple, Optional
 
 from ..core import CheckResult, Status
 from ..diagnosis import Diagnosis
@@ -194,32 +194,36 @@ def _fmt_num(v, digits: int = 2) -> str:
     return f"{v:.{digits}f}"
 
 
-def _device_cells(dr) -> List[str]:
+class DeviceCells(NamedTuple):
+    name: str
+    address: str
+    replies: str
+    loss: str
+    loss_bound: str
+    rtt: str
+    ports: str
+    finding: str
+
+
+def device_cells(dr) -> DeviceCells:
     d = dr.device
+    m = dr.measurement
     reach = dr.result("reach")
-    route = dr.result("route")
-    ping = (reach.detail.get("ping") if reach is not None else None) or {}
-    rtt = ping.get("rtt") or {}
-    addr = (route.detail.get("address") if route is not None else None) or d.host
-    if ping.get("sent"):
-        replies = f"{ping.get('received', 0)}/{ping['sent']}"
-        loss = ping.get("loss_pct")
+    if m.sent:
+        replies = f"{m.received}/{m.sent}"
+        loss = m.loss_pct
         loss_s = (
             f"{loss:.0f}%"
             if loss is not None and (loss == 0 or loss >= 1)
             else f"{loss:.1f}%"
         )
-        upper = ping.get("loss_upper_pct")
-        bound = (
-            f"≤{upper:.0f}%"
-            if upper is not None and ping.get("received") == ping.get("sent")
-            else ""
-        )
+        upper = m.loss_upper_pct
+        bound = f"≤{upper:.0f}%" if upper is not None and m.received == m.sent else ""
     else:
         replies, loss_s, bound = "—", "—", ""
     rtt_s = (
-        f"{_fmt_num(rtt.get('median'))}/{_fmt_num(rtt.get('p95'))}/{_fmt_num(rtt.get('max'))}"
-        if rtt
+        f"{_fmt_num(m.rtt_median_ms)}/{_fmt_num(m.rtt_p95_ms)}/{_fmt_num(m.rtt_max_ms)}"
+        if m.rtt_median_ms is not None
         else "—"
     )
     if dr.diagnosis is None:
@@ -230,8 +234,16 @@ def _device_cells(dr) -> List[str]:
     else:
         # Healthy, but worth a note (e.g. silent to ping, ports fine).
         finding = short_finding(reach.code) if reach is not None else ""
-    name = d.name if d.name != d.host else ""
-    return [name, addr, replies, loss_s, bound, rtt_s, port_cell(dr), finding]
+    return DeviceCells(
+        name=d.name if d.name != d.host else "",
+        address=m.address or d.host,
+        replies=replies,
+        loss=loss_s,
+        loss_bound=bound,
+        rtt=rtt_s,
+        ports=port_cell(dr),
+        finding=finding,
+    )
 
 
 def _table(
@@ -318,7 +330,7 @@ def render_check_text(
         rows = []
         statuses = []
         for dr in report.devices:
-            rows.append([st.sym(dr.status)] + _device_cells(dr))
+            rows.append([st.sym(dr.status), *device_cells(dr)])
             statuses.append(dr.status)
         table = _table(rows, header, [2, 18, 16, 7, 6, 7, 22, 30, 30])
         lines.append("  " + st.dim(table[0]))

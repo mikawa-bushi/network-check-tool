@@ -17,7 +17,7 @@ from ..diagnosis import Diagnosis
 from ..i18n import get_language, tr
 from .common import confidence_word, is_not_applicable, status_word
 from .data import hypothesis_runbook
-from .text import _device_cells
+from .text import device_cells
 
 _CSS = """
 :root { --fg:#1b1f24; --muted:#5d6670; --bg:#ffffff; --card:#f6f7f9; --line:#d9dde3;
@@ -183,18 +183,16 @@ def render_check_html(report, show_all: bool = True) -> str:
         ]
         rows = []
         for dr in report.devices:
-            cells = _device_cells(dr)
-            reach = dr.result("reach")
-            mac = (reach.detail.get("mac") if reach is not None else None) or ""
-            vendor = (reach.detail.get("vendor") if reach is not None else None) or ""
-            name = cells[0] or dr.device.name
+            cells = device_cells(dr)
+            m = dr.measurement
+            name = cells.name or dr.device.name
             rows.append(
                 f"<tr class='{dr.status.value}'><td class='st'>{_esc(dr.status.symbol)}</td>"
                 f"<td>{_esc(name)}<div class='meta'>{_esc(dr.device.group)} {_esc(dr.device.note)}</div></td>"
-                f"<td class='num'>{_esc(cells[1])}</td><td class='num'>{_esc(cells[2])}</td>"
-                f"<td class='num'>{_esc(cells[3])}</td><td class='num'>{_esc(cells[4])}</td>"
-                f"<td class='num'>{_esc(cells[5])}</td><td>{_esc(cells[6])}</td>"
-                f"<td>{_esc(cells[7])}</td><td class='num'>{_esc(mac)}<div class='meta'>{_esc(vendor)}</div></td></tr>"
+                f"<td class='num'>{_esc(cells.address)}</td><td class='num'>{_esc(cells.replies)}</td>"
+                f"<td class='num'>{_esc(cells.loss)}</td><td class='num'>{_esc(cells.loss_bound)}</td>"
+                f"<td class='num'>{_esc(cells.rtt)}</td><td>{_esc(cells.ports)}</td>"
+                f"<td>{_esc(cells.finding)}</td><td class='num'>{_esc(m.mac)}<div class='meta'>{_esc(m.vendor)}</div></td></tr>"
             )
         parts.append(f"<h2>{tr('機器', 'Devices')} ({len(report.devices)})</h2>")
         parts.append(

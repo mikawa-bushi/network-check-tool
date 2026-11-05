@@ -39,6 +39,21 @@ DEVICE_WORKERS = 16
 ProgressFn = Callable[[str], None]
 
 
+@dataclass(frozen=True)
+class DeviceMeasurement:
+    address: Optional[str]
+    sent: Optional[int]
+    received: Optional[int]
+    loss_pct: Optional[float]
+    loss_upper_pct: Optional[float]
+    rtt_median_ms: Optional[float]
+    rtt_p95_ms: Optional[float]
+    rtt_max_ms: Optional[float]
+    jitter_ms: Optional[float]
+    mac: str
+    vendor: str
+
+
 @dataclass
 class DeviceReport:
     device: Device
@@ -53,6 +68,26 @@ class DeviceReport:
         if self.diagnosis is None:
             return None
         return self.diagnosis.results_by_name().get(name)
+
+    @property
+    def measurement(self) -> DeviceMeasurement:
+        route, reach = self.result("route"), self.result("reach")
+        detail = reach.detail if reach is not None else {}
+        ping = detail.get("ping") or {}
+        rtt = ping.get("rtt") or {}
+        return DeviceMeasurement(
+            address=route.detail.get("address") if route is not None else None,
+            sent=ping.get("sent"),
+            received=ping.get("received"),
+            loss_pct=ping.get("loss_pct"),
+            loss_upper_pct=ping.get("loss_upper_pct"),
+            rtt_median_ms=rtt.get("median"),
+            rtt_p95_ms=rtt.get("p95"),
+            rtt_max_ms=rtt.get("max"),
+            jitter_ms=rtt.get("jitter"),
+            mac=detail.get("mac") or "",
+            vendor=detail.get("vendor") or "",
+        )
 
     def to_dict(self) -> Dict[str, Any]:
         from .report import diagnosis_to_dict
