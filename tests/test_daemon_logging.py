@@ -164,4 +164,4 @@ def test_setup_logging_writes_to_file(tmp_path):
         h.flush()
 
     assert log_path.exists()
-    assert "hello-from-test" in log_path.read_text()
+    assert "hello-from-test" in log_path.read_text(encoding="utf-8")

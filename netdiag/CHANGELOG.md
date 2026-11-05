@@ -4,7 +4,16 @@ All notable changes to the `netdiag` package are documented in this file.
 
 ## [Unreleased]
 
+### Fixed
+- On an English Windows, the first Japanese alert stopped `watch` with
+  `UnicodeEncodeError`. Alerts, the alert log, the watch state, snapshots and
+  the daemon log are now always UTF-8. Older files written in the PC's own
+  encoding still load, with any characters that don't fit shown as `�`.
+
 ### Added
+- The Windows exe zip includes `LICENSE.txt` and `THIRD_PARTY_NOTICES.txt` (the
+  licenses of Python, OpenSSL, click, colorama, PyYAML and PyInstaller it
+  bundles).
 - `netdiag.runner.diagnose_targets(hosts)`: why several hosts are unreachable,
   from one check (this PC's network once, the devices side by side).
 

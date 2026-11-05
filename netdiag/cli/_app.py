@@ -40,7 +40,9 @@ def _setup_logging(verbose: bool = False, log_file: Optional[str] = None) -> Non
         return
     lg.setLevel(logging.DEBUG if verbose else logging.WARNING)
     handler: logging.Handler = (
-        logging.FileHandler(log_file) if log_file else logging.StreamHandler()
+        logging.FileHandler(log_file, encoding="utf-8")
+        if log_file
+        else logging.StreamHandler()
     )
     handler.setFormatter(
         logging.Formatter("%(asctime)s %(levelname)s %(name)s: %(message)s")

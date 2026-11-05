@@ -80,11 +80,11 @@ def test_file_sink_writes_jsonl_and_log(tmp_path):
     )
     sink.emit(t)
 
-    lines = jsonl.read_text().strip().splitlines()
+    lines = jsonl.read_text(encoding="utf-8").strip().splitlines()
     assert len(lines) == 1
     rec = json.loads(lines[0])
     assert rec["event"] == "degraded"
     assert rec["cause"] == "dns"
     assert "iso" in rec
-    assert "DEGRADED" in log.read_text()
-    assert "dns" in log.read_text()
+    assert "DEGRADED" in log.read_text(encoding="utf-8")
+    assert "dns" in log.read_text(encoding="utf-8")

@@ -8,6 +8,9 @@ on:
     branches:
       - '**'
 
+permissions:
+  contents: read
+
 jobs:
   black-check:
     runs-on: ubuntu-latest
@@ -63,6 +66,8 @@ jobs:
     name: Auto-format with Black
     needs: black-check
     if: failure() && github.event_name == 'push'
+    permissions:
+      contents: write  # pushes the formatting commit
 
     steps:
     - name: Checkout code
@@ -100,7 +105,7 @@ jobs:
         git diff --staged --quiet || git commit -m "Auto-format code with Black 🖤"
 
     - name: Push changes
-      uses: ad-m/github-push-action@master
+      uses: ad-m/github-push-action@881a6320fdb16eb5318c5054f31c218aec2b324c  # v1.3.0
       with:
         github_token: ${{ secrets.GITHUB_TOKEN }}
         branch: ${{ github.ref }}

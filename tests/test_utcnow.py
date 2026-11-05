@@ -29,7 +29,7 @@ def test_no_deprecated_utcnow_in_package_source():
     # don't count.
     offenders = []
     for p in _PKG.rglob("*.py"):
-        for node in ast.walk(ast.parse(p.read_text())):
+        for node in ast.walk(ast.parse(p.read_text(encoding="utf-8"))):
             if isinstance(node, ast.Attribute) and node.attr == "utcnow":
                 offenders.append(f"{p.relative_to(_PKG)}:{node.lineno}")
     assert offenders == [], f"deprecated .utcnow usage found in: {offenders}"

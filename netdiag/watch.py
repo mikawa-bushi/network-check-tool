@@ -118,7 +118,8 @@ class Watcher(PeriodicLoop):
 
         try:
             Path(self.state_path).write_text(
-                json.dumps(self.sm.snapshot(), ensure_ascii=False, indent=2)
+                json.dumps(self.sm.snapshot(), ensure_ascii=False, indent=2),
+                encoding="utf-8",
             )
         except OSError:
             pass

@@ -91,7 +91,7 @@ def test_a_device_list_is_measured_together_from_the_first_sweep(tmp_path):
             [HostConfig(name=h, interval=60) for h in ("a", "b", "c")]
             + [HostConfig(name="slow", interval=300)]
         )
-        assert _wait_for(lambda: len(fake.calls) == 2)
+        assert _wait_for(lambda: all(_rows(app, h) for h in ("a", "b", "c", "slow")))
     finally:
         scheduler.shutdown()
 

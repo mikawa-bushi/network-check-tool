@@ -377,14 +377,18 @@ def status(state_file, alert_file, limit, fmt):
     state = None
     if state_path.exists():
         try:
-            state = json.loads(state_path.read_text())
+            state = json.loads(state_path.read_text(encoding="utf-8", errors="replace"))
         except (OSError, json.JSONDecodeError):
             state = None
 
     recent = []
     if alert_path.exists():
         try:
-            lines = alert_path.read_text().strip().splitlines()
+            lines = (
+                alert_path.read_text(encoding="utf-8", errors="replace")
+                .strip()
+                .splitlines()
+            )
             for ln in lines[-limit:]:
                 recent.append(json.loads(ln))
         except (OSError, json.JSONDecodeError):
