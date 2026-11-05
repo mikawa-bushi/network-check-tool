@@ -104,7 +104,7 @@ representative at an online or offline event.
 
 Instances of abusive, harassing, or otherwise unacceptable behavior may be
 reported to the community leaders responsible for enforcement at
-**155122235+hardwork9047@users.noreply.github.com**
+[@hardwork9047](https://github.com/hardwork9047) on GitHub (see How to Report below).
 
 All complaints will be reviewed and investigated promptly and fairly.
 
@@ -183,14 +183,15 @@ community.
 
 If you experience or witness behavior that violates this Code of Conduct:
 
-1. **Direct reporting**: Email **155122235+hardwork9047@users.noreply.github.com** with:
+1. **Direct reporting**: Open an issue that mentions [@hardwork9047](https://github.com/hardwork9047) and asks for a private
+   channel. Keep the details out of the issue. Then share:
    - Description of the incident
    - When and where it occurred
    - Names of people involved (if comfortable sharing)
    - Any supporting evidence (screenshots, links, etc.)
 
-2. **Anonymous reporting**: If you prefer to remain anonymous, you can create a
-   throwaway email account to report incidents
+2. **Anonymous reporting**: Use GitHub's **Report content** on the comment or
+   issue. GitHub reviews these reports
 
 3. **Public reporting**: For less serious issues, you can mention them in GitHub
    issues or discussions
@@ -215,7 +216,6 @@ All reports will be handled with discretion. Community leaders will:
 Current community leaders responsible for enforcement:
 
 * **[@hardwork9047](https://github.com/hardwork9047)** - Project Maintainer
-  - Email: 155122235+hardwork9047@users.noreply.github.com
   - Responsible for: Overall project governance, serious violations
 
 *Note: As the project grows, additional community leaders may be appointed*
@@ -287,8 +287,8 @@ For answers to common questions about this code of conduct, see the FAQ at
 ## Questions?
 
 If you have questions about this Code of Conduct, please:
-- Open a [GitHub Discussion](https://github.com/mikawa-bushi/network-check-tool/discussions)
-- Email the maintainers at **155122235+hardwork9047@users.noreply.github.com**
+- Open a [GitHub issue](https://github.com/mikawa-bushi/network-check-tool/issues)
+- Mention [@hardwork9047](https://github.com/hardwork9047) in an issue
 - Check the [Contributing Guidelines](CONTRIBUTING.md) for related information
 
 **Thank you for helping make network-check-tool a welcoming community for everyone!** 🌟
