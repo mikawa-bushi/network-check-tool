@@ -20,6 +20,7 @@ from flask import (
 )
 from sqlalchemy import case, func
 
+from ..config.hosts import HostConfig
 from ..models import AlertEvent, MonitoredHost, PingResult, db, upsert_hosts
 from ..services.alerting import FAIL_THRESHOLD
 from ..utils import utcnow
@@ -673,9 +674,6 @@ def add_host():
         return jsonify({"error": "interval must be an integer"}), 400
     if interval < 1:
         return jsonify({"error": "interval must be >= 1 second"}), 400
-    scheduler.add_ping_job(host, interval)
-    from ..config.hosts import HostConfig
-
     entry = HostConfig(
         name=host,
         interval=interval,
@@ -683,6 +681,7 @@ def add_host():
         group=str(data.get("group") or "").strip(),
         note=str(data.get("note") or "").strip(),
     )
+    scheduler.add_ping_jobs([entry])
     upsert_hosts([entry], from_list=False)
     named = {"name": entry.label, "group": entry.group, "note": entry.note}
     body = {"host": host, "interval": interval}
