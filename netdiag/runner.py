@@ -18,7 +18,6 @@
 from __future__ import annotations
 
 import platform
-import socket
 import time
 from concurrent.futures import ThreadPoolExecutor
 from dataclasses import dataclass, field
@@ -40,6 +39,21 @@ DEVICE_WORKERS = 16
 ProgressFn = Callable[[str], None]
 
 
+@dataclass(frozen=True)
+class DeviceMeasurement:
+    address: Optional[str]
+    sent: Optional[int]
+    received: Optional[int]
+    loss_pct: Optional[float]
+    loss_upper_pct: Optional[float]
+    rtt_median_ms: Optional[float]
+    rtt_p95_ms: Optional[float]
+    rtt_max_ms: Optional[float]
+    jitter_ms: Optional[float]
+    mac: str
+    vendor: str
+
+
 @dataclass
 class DeviceReport:
     device: Device
@@ -54,6 +68,26 @@ class DeviceReport:
         if self.diagnosis is None:
             return None
         return self.diagnosis.results_by_name().get(name)
+
+    @property
+    def measurement(self) -> DeviceMeasurement:
+        route, reach = self.result("route"), self.result("reach")
+        detail = reach.detail if reach is not None else {}
+        ping = detail.get("ping") or {}
+        rtt = ping.get("rtt") or {}
+        return DeviceMeasurement(
+            address=route.detail.get("address") if route is not None else None,
+            sent=ping.get("sent"),
+            received=ping.get("received"),
+            loss_pct=ping.get("loss_pct"),
+            loss_upper_pct=ping.get("loss_upper_pct"),
+            rtt_median_ms=rtt.get("median"),
+            rtt_p95_ms=rtt.get("p95"),
+            rtt_max_ms=rtt.get("max"),
+            jitter_ms=rtt.get("jitter"),
+            mac=detail.get("mac") or "",
+            vendor=detail.get("vendor") or "",
+        )
 
     def to_dict(self) -> Dict[str, Any]:
         from .report import diagnosis_to_dict
@@ -115,7 +149,7 @@ def diagnosis_status(diag: Optional[Diagnosis]) -> Status:
         return Status.SKIP
     if diag.healthy:
         return Status.OK
-    if any(h.confidence != "low" for h in diag.hypotheses) or any(
+    if any(h.is_fault for h in diag.hypotheses) or any(
         r.status == Status.FAIL for r in diag.results
     ):
         return Status.FAIL
@@ -375,7 +409,7 @@ def _check_devices(
         d = devices[i]
         ip = addr[i]
         dcfg = dict(cfg)
-        dcfg["target"] = d.to_target()
+        dcfg["target"] = d.to_dict()
         if ip is not None:
             dcfg["_address"] = ip
             dcfg["_ping"] = stats.get(ip)
@@ -460,7 +494,7 @@ def diagnose_targets(
 def _diagnose(devices: List[Device], config: Optional[Dict[str, Any]]):
     cfg = {"internet": False, **(config or {})}
     rep = run_check(devices, config=cfg, only=QUICK_HOST_PROBES)
-    host_fail = [h for h in rep.host.hypotheses if h.confidence != "low"]
+    host_fail = [h for h in rep.host.hypotheses if h.is_fault]
     found = {}
     for r in rep.devices:
         dev = r.diagnosis
@@ -485,10 +519,3 @@ def _absent_or_none(ip: str, hn: netinfo.HostNetwork, table: Dict[str, Any]):
     if dec.on_link and dec.special is None:
         return netinfo.Neighbor(ip=ip, state="incomplete")
     return None
-
-
-def local_hostname() -> str:
-    try:
-        return socket.gethostname()
-    except OSError:  # pragma: no cover
-        return platform.node()

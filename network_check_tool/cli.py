@@ -4,6 +4,7 @@ import click
 
 from .app import create_app
 from .config.config import Config
+from .config.hosts import DEFAULT_MONITOR_INTERVAL
 from .services import SchedulerService
 
 
@@ -96,7 +97,7 @@ def run_server(host, port, debug, devices_path):
     app.run(host=host, port=port, debug=debug)
 
 
-def _load_host_configs(path, interval=60):
+def _load_host_configs(path, interval=DEFAULT_MONITOR_INTERVAL):
     """Read a hosts/device list, exiting with a clear message when it is invalid."""
     from .config.hosts import load_hosts
 
@@ -110,7 +111,12 @@ def _load_host_configs(path, interval=60):
 
 @cli.command()
 @click.argument("hosts", nargs=-1, required=False)
-@click.option("--interval", "-i", default=60, help="Ping interval in seconds")
+@click.option(
+    "--interval",
+    "-i",
+    default=DEFAULT_MONITOR_INTERVAL,
+    help="Ping interval in seconds",
+)
 @click.option(
     "--config",
     "config_path",

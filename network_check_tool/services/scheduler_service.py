@@ -110,7 +110,6 @@ class SchedulerService:
                         hc.name,
                         self.sink,
                         rtt_warn_ms=hc.rtt_warn_ms,
-                        loss_warn_pct=hc.loss_warn_pct,
                         diagnose=self.diagnose,
                     )
                     if self.sink is not None
@@ -134,25 +133,6 @@ class SchedulerService:
             sweep.stop(wait=False)
         for t in targets:
             logger.info(f"Monitoring {t.host} every {t.interval}s")
-
-    def add_ping_job(
-        self,
-        host: str,
-        interval: int = 60,
-        rtt_warn_ms: Optional[float] = None,
-        loss_warn_pct: Optional[float] = None,
-    ):
-        """Monitor *host* every *interval* seconds (replacing any earlier entry)."""
-        self.add_ping_jobs(
-            [
-                HostConfig(
-                    name=host,
-                    interval=interval,
-                    rtt_warn_ms=rtt_warn_ms,
-                    loss_warn_pct=loss_warn_pct,
-                )
-            ]
-        )
 
     def remove_ping_job(self, host: str):
         with self._lock:

@@ -3,6 +3,7 @@
 from types import SimpleNamespace as NS
 
 import netdiag.runner as runner
+from netdiag.diagnosis import Hypothesis
 
 
 def _report(host_hyps, devices, host_primary=None):
@@ -31,7 +32,7 @@ def test_each_host_gets_its_own_cause_from_one_check(monkeypatch):
 
 
 def test_a_fault_on_this_pc_explains_every_host(monkeypatch):
-    link_down = NS(confidence="high")
+    link_down = Hypothesis(cause="link", confidence="high", summary="link down")
     monkeypatch.setattr(
         runner,
         "run_check",

@@ -25,6 +25,11 @@ All notable changes to this project are documented in this file.
 - `GET /api/jobs` lists one entry per device: `host`, `interval`,
   `next_run_time` (the `job_id` field is gone).
 
+### Removed
+- The `DEFAULT_PING_INTERVAL` and `DEFAULT_HOSTS` environment variables. Nothing
+  read them, so setting them had no effect. Use `--interval` and a hosts or
+  device list instead.
+
 ## [0.4.0] - 2026-10-28
 
 Field readiness: verified on every OS in CI, precise on Windows, a single exe for

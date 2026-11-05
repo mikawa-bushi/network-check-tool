@@ -24,35 +24,36 @@ import json
 import re
 from dataclasses import asdict, dataclass, field
 from pathlib import Path
-from typing import Any, Dict, Iterable, List, Optional, Sequence
+from typing import Any, Dict, Iterable, List, NamedTuple, Optional, Sequence, Tuple
 
-# Well-known TCP service ports for FA/OT equipment and common maintenance access.
-PORT_PRESETS: Dict[str, List[int]] = {
-    "modbus": [502],
-    "modbus-tcp": [502],
-    "modbustcp": [502],
-    "enip": [44818],
-    "ethernet-ip": [44818],
-    "ethernetip": [44818],
-    "opcua": [4840],
-    "opc-ua": [4840],
-    "s7": [102],
-    "iso-tsap": [102],
-    "melsoft": [5007],
-    "fins": [9600],
-    "iec104": [2404],
-    "dnp3": [20000],
-    "mqtt": [1883],
-    "mqtts": [8883],
-    "http": [80],
-    "https": [443],
-    "ssh": [22],
-    "telnet": [23],
-    "ftp": [21],
-    "vnc": [5900],
-    "rdp": [3389],
-    "smb": [445],
+
+class Service(NamedTuple):
+    name: str
+    aliases: Tuple[str, ...]
+
+
+SERVICES: Dict[int, Service] = {
+    21: Service("FTP", ("ftp",)),
+    22: Service("SSH", ("ssh",)),
+    23: Service("Telnet", ("telnet",)),
+    80: Service("HTTP", ("http",)),
+    102: Service("S7/ISO-TSAP", ("s7", "iso-tsap")),
+    443: Service("HTTPS", ("https",)),
+    445: Service("SMB", ("smb",)),
+    502: Service("Modbus/TCP", ("modbus", "modbus-tcp", "modbustcp")),
+    1883: Service("MQTT", ("mqtt",)),
+    2404: Service("IEC104", ("iec104",)),
+    3389: Service("RDP", ("rdp",)),
+    4840: Service("OPC UA", ("opcua", "opc-ua")),
+    5007: Service("MELSOFT", ("melsoft",)),
+    5900: Service("VNC", ("vnc",)),
+    8883: Service("MQTTS", ("mqtts",)),
+    9600: Service("FINS/TCP", ("fins",)),
+    20000: Service("DNP3", ("dnp3",)),
+    44818: Service("EtherNet/IP", ("enip", "ethernet-ip", "ethernetip")),
 }
+SERVICE_NAMES = {port: s.name for port, s in SERVICES.items()}
+_PORT_WORDS = {alias: port for port, s in SERVICES.items() for alias in s.aliases}
 
 _ALIASES: Dict[str, Sequence[str]] = {
     "name": (
@@ -147,10 +148,6 @@ class Device:
             else self.host
         )
 
-    def to_target(self) -> Dict[str, Any]:
-        """The dict shape the target-scoped probes read from ``ctx["target"]``."""
-        return asdict(self)
-
     def to_dict(self) -> Dict[str, Any]:
         return asdict(self)
 
@@ -178,8 +175,8 @@ def parse_ports(value: Any) -> List[int]:
             token = str(item).strip().lower()
             if token.isdigit():
                 ports = [int(token)]
-            elif token in PORT_PRESETS:
-                ports = PORT_PRESETS[token]
+            elif token in _PORT_WORDS:
+                ports = [_PORT_WORDS[token]]
             else:
                 raise InventoryError(f"unknown port or protocol: {item!r}")
         for p in ports:

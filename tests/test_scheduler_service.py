@@ -71,7 +71,7 @@ def test_sweep_fires_and_saves_row(tmp_path):
     scheduler = SchedulerService(app=app)
     scheduler.start()  # start first, then add -- the start-monitoring order
     try:
-        scheduler.add_ping_job("127.0.0.1", interval=60)
+        scheduler.add_ping_jobs([HostConfig(name="127.0.0.1", interval=60)])
         job = scheduler.list_jobs()[0]
         assert (job["host"], job["interval"]) == ("127.0.0.1", 60)
         assert job["next_run_time"]
@@ -106,8 +106,7 @@ def test_sweep_feeds_each_hosts_alerter(tmp_path, recording_sink):
     app = _make_app(tmp_path / "alert.db")
     scheduler = SchedulerService(app=app, sink=recording_sink)
     scheduler.ping_service.ping_hosts = _FakePing(down={"b"})
-    scheduler.add_ping_job("a", interval=60)
-    scheduler.add_ping_job("b", interval=60)
+    scheduler.add_ping_jobs([HostConfig(name=h, interval=60) for h in "ab"])
 
     scheduler._sweep(60)
     scheduler._sweep(60)  # second consecutive loss confirms the outage
@@ -141,18 +140,18 @@ def test_hosts_that_go_down_together_are_diagnosed_in_one_run(
 
 def test_without_sink_no_alerter_is_attached():
     scheduler = SchedulerService()
-    scheduler.add_ping_job("127.0.0.1", interval=3600)
+    scheduler.add_ping_jobs([HostConfig(name="127.0.0.1", interval=3600)])
     assert scheduler._targets["127.0.0.1"].alerter is None
 
 
 def test_moving_or_removing_the_last_host_drops_its_sweep(tmp_path, idle_monitor):
     scheduler = SchedulerService(app=_make_app(tmp_path / "move.db"))
-    scheduler.add_ping_job("a", interval=60)
+    scheduler.add_ping_jobs([HostConfig(name="a", interval=60)])
     assert scheduler._sweeps == {}  # nothing runs until started
     scheduler.start()
     try:
-        scheduler.add_ping_job("b", interval=60)
-        scheduler.add_ping_job("a", interval=30)  # re-adding replaces the entry
+        scheduler.add_ping_jobs([HostConfig(name="b", interval=60)])
+        scheduler.add_ping_jobs([HostConfig(name="a", interval=30)])
         assert sorted(scheduler._sweeps) == [30, 60]
         assert {j["host"]: j["interval"] for j in scheduler.list_jobs()} == {
             "a": 30,
@@ -170,7 +169,7 @@ def test_moving_or_removing_the_last_host_drops_its_sweep(tmp_path, idle_monitor
 
 def test_can_restart_after_shutdown(tmp_path, idle_monitor):
     scheduler = SchedulerService(app=_make_app(tmp_path / "restart.db"))
-    scheduler.add_ping_job("127.0.0.1", interval=1)
+    scheduler.add_ping_jobs([HostConfig(name="127.0.0.1", interval=1)])
     scheduler.start()
     scheduler.shutdown()
     assert scheduler.list_jobs()[0]["next_run_time"] is None  # stopped

@@ -28,31 +28,11 @@ from typing import Any, Dict, List, Optional
 
 from ..core import CheckResult, Context, Probe, register
 from ..i18n import Text, tr
+from ..inventory import SERVICE_NAMES
 from ..measure import PingStats, ping, tcp_check_many
 from ..measure.icmp import _literal_family, _resolve_v4
 from ..netinfo import model as nm
 from ._common import classify_latency, fmt_ms, oscmd, ping_settings, ping_summary
-
-SERVICE_NAMES = {
-    21: "FTP",
-    22: "SSH",
-    23: "Telnet",
-    80: "HTTP",
-    102: "S7/ISO-TSAP",
-    443: "HTTPS",
-    445: "SMB",
-    502: "Modbus/TCP",
-    1883: "MQTT",
-    2404: "IEC104",
-    3389: "RDP",
-    4840: "OPC UA",
-    5007: "MELSOFT",
-    5900: "VNC",
-    8883: "MQTTS",
-    9600: "FINS/TCP",
-    20000: "DNP3",
-    44818: "EtherNet/IP",
-}
 
 
 def target(ctx: Context) -> Dict[str, Any]:
@@ -60,11 +40,6 @@ def target(ctx: Context) -> Dict[str, Any]:
     if isinstance(t, str):
         t = {"name": t, "host": t}
     return t
-
-
-def device_label(t: Dict[str, Any]) -> str:
-    name, host = t.get("name") or "", t.get("host") or ""
-    return f"{name} ({host})" if name and name != host else host
 
 
 def port_label(port: int) -> str:

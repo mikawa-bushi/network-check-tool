@@ -38,6 +38,10 @@ class Hypothesis:
     title: str = ""  # the cause probe's display title
     code: str = ""  # the cause result's stable outcome code
 
+    @property
+    def is_fault(self) -> bool:
+        return self.confidence != "low"
+
 
 @dataclass
 class Diagnosis:

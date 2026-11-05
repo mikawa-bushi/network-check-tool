@@ -5,9 +5,8 @@ from __future__ import annotations
 import csv
 import io
 import json
-from typing import Any, Dict, List, Optional
+from typing import Any, Dict, List
 
-from ..core import CheckResult
 from ..diagnosis import Diagnosis
 from ..diagnosis.rules import runbook_steps
 from ..i18n import tr
@@ -66,9 +65,7 @@ def device_row(dr) -> Dict[str, Any]:
     """Flatten one device's outcome into spreadsheet columns."""
     from .text import port_cell
 
-    reach: Optional[CheckResult] = dr.result("reach")
-    ping = (reach.detail.get("ping") if reach is not None else None) or {}
-    rtt = ping.get("rtt") or {}
+    m = dr.measurement
     primary = dr.diagnosis.primary if dr.diagnosis else None
     d = dr.device
     return {
@@ -76,20 +73,17 @@ def device_row(dr) -> Dict[str, Any]:
         "name": d.name,
         "host": d.host,
         "group": d.group,
-        "address": (
-            dr.result("route").detail.get("address") if dr.result("route") else None
-        )
-        or "",
-        "received": ping.get("received", ""),
-        "sent": ping.get("sent", ""),
-        "loss_pct": ping.get("loss_pct", ""),
-        "loss_upper_pct": ping.get("loss_upper_pct", ""),
-        "rtt_median_ms": rtt.get("median", ""),
-        "rtt_p95_ms": rtt.get("p95", ""),
-        "rtt_max_ms": rtt.get("max", ""),
-        "jitter_ms": rtt.get("jitter", ""),
-        "mac": (reach.detail.get("mac") if reach is not None else "") or "",
-        "vendor": (reach.detail.get("vendor") if reach is not None else "") or "",
+        "address": m.address or "",
+        "received": m.received,
+        "sent": m.sent,
+        "loss_pct": m.loss_pct,
+        "loss_upper_pct": m.loss_upper_pct,
+        "rtt_median_ms": m.rtt_median_ms,
+        "rtt_p95_ms": m.rtt_p95_ms,
+        "rtt_max_ms": m.rtt_max_ms,
+        "jitter_ms": m.jitter_ms,
+        "mac": m.mac,
+        "vendor": m.vendor,
         "ports": port_cell(dr, plain=True),
         "cause": primary.summary if primary else (dr.skipped_reason or ""),
         "next_step": (
