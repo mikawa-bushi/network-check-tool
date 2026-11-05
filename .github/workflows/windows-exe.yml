@@ -81,7 +81,7 @@ jobs:
         # colorama on Windows), PyYAML for YAML lists, PyInstaller's bootloader.
         python packaging/windows/third_party_notices.py \
           "pkg/$name/THIRD_PARTY_NOTICES.txt" click colorama PyYAML pyinstaller
-        grep -E '^(Python|click|colorama|PyYAML|pyinstaller) [0-9]' "pkg/$name/THIRD_PARTY_NOTICES.txt"
+        grep -E '^(Python|OpenSSL|click|colorama|PyYAML|pyinstaller) [0-9]' "pkg/$name/THIRD_PARTY_NOTICES.txt"
         (cd pkg && python -m zipfile -c "$name.zip" "$name")
         echo "name=$name" >> "$GITHUB_OUTPUT"
 

@@ -12,7 +12,8 @@ All notable changes to the `netdiag` package are documented in this file.
 
 ### Added
 - The Windows exe zip includes `LICENSE.txt` and `THIRD_PARTY_NOTICES.txt` (the
-  licenses of Python, click, colorama, PyYAML and PyInstaller it bundles).
+  licenses of Python, OpenSSL, click, colorama, PyYAML and PyInstaller it
+  bundles).
 - `netdiag.runner.diagnose_targets(hosts)`: why several hosts are unreachable,
   from one check (this PC's network once, the devices side by side).
 

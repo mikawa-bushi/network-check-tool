@@ -2,12 +2,13 @@
 
     python packaging/windows/third_party_notices.py OUT.txt DIST [DIST ...]
 
-Python's own LICENSE.txt covers the interpreter and the libraries it ships
-(OpenSSL, libffi, SQLite, expat and the rest). Each DIST is an installed
+Python's own LICENSE.txt covers the interpreter and most libraries it ships,
+but not OpenSSL, whose license sits in licenses/OpenSSL.txt. Each DIST is an installed
 distribution bundled into the exe; its license files come from its metadata.
 Exits non-zero when a license can't be found, so a package never ships without it.
 """
 
+import ssl
 import sys
 import sysconfig
 from importlib import metadata
@@ -39,7 +40,16 @@ def dist_licenses(name: str) -> str:
 
 def main() -> None:
     out, names = Path(sys.argv[1]), sys.argv[2:]
-    sections = [(f"Python {sys.version.split()[0]}", python_license())]
+    sections = [
+        (f"Python {sys.version.split()[0]}", python_license()),
+        (
+            ssl.OPENSSL_VERSION,
+            Path(__file__)
+            .with_name("licenses")
+            .joinpath("OpenSSL.txt")
+            .read_text(encoding="utf-8"),
+        ),
+    ]
     for name in names:
         version = metadata.version(name)
         sections.append((f"{name} {version}", dist_licenses(name)))
