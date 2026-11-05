@@ -35,12 +35,15 @@ except ModuleNotFoundError:  # Python 3.10 -- use the declared `toml` dependency
         return toml.loads(text)
 
 
+DEFAULT_MONITOR_INTERVAL = 60
+
+
 @dataclass
 class HostConfig:
     """One monitored host. Thresholds are optional and consumed by alerting."""
 
     name: str
-    interval: int = 60
+    interval: int = DEFAULT_MONITOR_INTERVAL
     rtt_warn_ms: Optional[float] = None
     loss_warn_pct: Optional[float] = None
     label: str = ""  # human name from a device list (e.g. "PLC-1")
@@ -68,7 +71,9 @@ def _from_device_list(path: Path, default_interval: int) -> List[HostConfig]:
     ]
 
 
-def load_hosts(path, default_interval: int = 60) -> List[HostConfig]:
+def load_hosts(
+    path, default_interval: int = DEFAULT_MONITOR_INTERVAL
+) -> List[HostConfig]:
     """Parse a hosts config file into ``HostConfig`` entries.
 
     Accepts a TOML ``[[host]]`` array or a JSON ``{"host": [...]}`` list; each

@@ -20,7 +20,7 @@ from flask import (
 )
 from sqlalchemy import case, func
 
-from ..config.hosts import HostConfig
+from ..config.hosts import DEFAULT_MONITOR_INTERVAL, HostConfig
 from ..models import AlertEvent, MonitoredHost, PingResult, db, upsert_hosts
 from ..services.alerting import FAIL_THRESHOLD
 from ..utils import utcnow
@@ -643,8 +643,6 @@ def metrics():
 # These routes manage the in-process monitoring scheduler. They only function
 # when one is attached (run-server on a loopback bind); otherwise they return
 # 503, which is how the write API stays disabled on public/multi-worker setups.
-
-DEFAULT_MONITOR_INTERVAL = 60
 
 
 def _scheduler():
