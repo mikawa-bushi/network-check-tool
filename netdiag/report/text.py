@@ -12,7 +12,7 @@ from typing import List, Optional
 
 from ..core import CheckResult, Status
 from ..diagnosis import Diagnosis
-from ..i18n import tr
+from ..i18n import is_ja, tr
 from .common import (
     Style,
     confidence_word,
@@ -384,15 +384,9 @@ def _headline(report, st: Style) -> str:
             if parts
             else status_word(status)
         )
-        if not report_is_ja():
+        if not is_ja():
             text = text.replace("、", "; ")
     return st.status(status, st.bold(f"{st.sym(status)} {text}"))
-
-
-def report_is_ja() -> bool:
-    from ..i18n import is_ja
-
-    return is_ja()
 
 
 def _problem_blocks(report, st: Style) -> List[str]:

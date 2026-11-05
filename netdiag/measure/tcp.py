@@ -15,7 +15,7 @@ import socket
 import time
 from concurrent.futures import ThreadPoolExecutor
 from dataclasses import dataclass, field
-from typing import Dict, Iterable, List, Optional, Tuple
+from typing import Dict, Iterable, List, Tuple
 
 from .stats import summarize
 
@@ -150,13 +150,3 @@ def tcp_check_many(
             pairs,
         )
         return dict(zip(pairs, results))
-
-
-def describe_state(state: str) -> Optional[str]:
-    """Machine key -> short human hint (English; reports localise separately)."""
-    return {
-        "open": "listening",
-        "closed": "host answered, nothing listening (RST)",
-        "filtered": "no answer (firewall drop or host down)",
-        "unreachable": "no route / host unreachable",
-    }.get(state)

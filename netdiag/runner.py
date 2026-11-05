@@ -18,7 +18,6 @@
 from __future__ import annotations
 
 import platform
-import socket
 import time
 from concurrent.futures import ThreadPoolExecutor
 from dataclasses import dataclass, field
@@ -375,7 +374,7 @@ def _check_devices(
         d = devices[i]
         ip = addr[i]
         dcfg = dict(cfg)
-        dcfg["target"] = d.to_target()
+        dcfg["target"] = d.to_dict()
         if ip is not None:
             dcfg["_address"] = ip
             dcfg["_ping"] = stats.get(ip)
@@ -485,10 +484,3 @@ def _absent_or_none(ip: str, hn: netinfo.HostNetwork, table: Dict[str, Any]):
     if dec.on_link and dec.special is None:
         return netinfo.Neighbor(ip=ip, state="incomplete")
     return None
-
-
-def local_hostname() -> str:
-    try:
-        return socket.gethostname()
-    except OSError:  # pragma: no cover
-        return platform.node()

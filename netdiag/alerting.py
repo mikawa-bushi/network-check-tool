@@ -145,14 +145,6 @@ class StateMachine:
                 )
         return None
 
-    @property
-    def degraded(self) -> bool:
-        return self.state == State.DEGRADED
-
-    @property
-    def current_cause(self) -> Optional[str]:
-        return self._cause
-
     def snapshot(self) -> dict:
         return {
             "state": self.state.value,

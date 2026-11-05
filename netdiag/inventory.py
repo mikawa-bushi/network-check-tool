@@ -147,10 +147,6 @@ class Device:
             else self.host
         )
 
-    def to_target(self) -> Dict[str, Any]:
-        """The dict shape the target-scoped probes read from ``ctx["target"]``."""
-        return asdict(self)
-
     def to_dict(self) -> Dict[str, Any]:
         return asdict(self)
 

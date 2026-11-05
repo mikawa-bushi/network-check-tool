@@ -177,14 +177,6 @@ class Storage:
         ]
 
     @_synchronized
-    def prune(self, older_than_days: float = 30) -> int:
-        """Delete raw samples older than the cutoff. Returns rows removed."""
-        cutoff = time.time() - older_than_days * 86400
-        cur = self.conn.execute("DELETE FROM samples WHERE ts < ?", (cutoff,))
-        self.conn.commit()
-        return cur.rowcount
-
-    @_synchronized
     def downsample(self, older_than_days: float = 7, bucket_seconds: int = 3600) -> int:
         """Roll raw samples older than the cutoff into per-bucket aggregates.
 

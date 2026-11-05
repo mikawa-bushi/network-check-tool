@@ -264,7 +264,7 @@ network-checker start-monitoring --config 台帳.csv --diagnose   # 監視だけ
 > `--debug` は 127.0.0.1 以外では起動を拒否します。他オリジンからの `/api/*` 利用は `CORS_ORIGINS` で明示的に許可した場合のみです。
 
 主な環境変数: `DATABASE_URL`（既定 `sqlite:///network_check_tool.db`）、`PING_TIMEOUT`（4.0秒）、
-`DEFAULT_PING_INTERVAL`（60秒）、`SQLITE_BUSY_TIMEOUT_MS`（5000）、`CORS_ORIGINS`。
+`SQLITE_BUSY_TIMEOUT_MS`（5000）、`CORS_ORIGINS`。
 
 API: `GET /api/overview?hours=`（ライン一覧: 機器ごとの状態）, `/api/alerts?hours=&limit=`, `/api/hosts`,
 `/api/stats?host=&hours=`, `/api/ping_data?host=&hours=`, `/api/export?host=&hours=&format=csv`, `/metrics`、

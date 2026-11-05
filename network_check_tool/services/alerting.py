@@ -29,7 +29,6 @@ class HostAlerter:
         host: str,
         sink,
         rtt_warn_ms: Optional[float] = None,
-        loss_warn_pct: Optional[float] = None,
         fail_threshold: int = FAIL_THRESHOLD,
         recover_threshold: int = 2,
         diagnose: bool = False,
@@ -37,9 +36,6 @@ class HostAlerter:
         self.host = host
         self.sink = sink
         self.rtt_warn_ms = rtt_warn_ms
-        # Reserved for a future windowed loss% check; a single ping sample only
-        # exposes a boolean loss, so per-sample classification uses packet_loss.
-        self.loss_warn_pct = loss_warn_pct
         # F1: when set, diagnose this host with netdiag on a confirmed
         # degradation and attach the root cause to the alert.
         self.diagnose = diagnose

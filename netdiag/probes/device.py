@@ -62,11 +62,6 @@ def target(ctx: Context) -> Dict[str, Any]:
     return t
 
 
-def device_label(t: Dict[str, Any]) -> str:
-    name, host = t.get("name") or "", t.get("host") or ""
-    return f"{name} ({host})" if name and name != host else host
-
-
 def port_label(port: int) -> str:
     svc = SERVICE_NAMES.get(port)
     return f"{port}/{svc}" if svc else str(port)

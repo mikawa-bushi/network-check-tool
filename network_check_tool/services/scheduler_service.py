@@ -110,7 +110,6 @@ class SchedulerService:
                         hc.name,
                         self.sink,
                         rtt_warn_ms=hc.rtt_warn_ms,
-                        loss_warn_pct=hc.loss_warn_pct,
                         diagnose=self.diagnose,
                     )
                     if self.sink is not None

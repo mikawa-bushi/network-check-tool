@@ -28,9 +28,6 @@ class Baseline:
         # 1.4826 scales MAD to be a consistent estimator of stddev for normals.
         return (value - self.median) / (1.4826 * self.mad)
 
-    def is_anomalous(self, value: float, threshold: float = 4.0) -> bool:
-        return abs(self.deviation(value)) >= threshold
-
 
 def compute_baseline(values: Sequence[float]) -> Optional[Baseline]:
     vals = [v for v in values if v is not None]

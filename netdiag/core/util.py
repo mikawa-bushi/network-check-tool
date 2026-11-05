@@ -194,11 +194,3 @@ def is_root() -> bool:
         return os.geteuid() == 0  # type: ignore[attr-defined]
     except AttributeError:  # Windows
         return False
-
-
-def first_match(text: str, *needles: str) -> Optional[str]:
-    for line in text.splitlines():
-        for n in needles:
-            if n in line:
-                return line.strip()
-    return None
