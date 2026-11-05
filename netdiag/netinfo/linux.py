@@ -67,7 +67,7 @@ def _ip_json(*args: str) -> Optional[list]:
 
 def _read(path: Path) -> Optional[str]:
     try:
-        return path.read_text().strip()
+        return path.read_text(encoding="utf-8").strip()
     except (OSError, ValueError):
         return None
 

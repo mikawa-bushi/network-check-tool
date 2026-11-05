@@ -112,6 +112,9 @@ def test_ping3_no_longer_used():
     # ...and it must be gone from the project dependencies. A regex line scan
     # avoids tomllib (3.11+ only) so this runs on the project's 3.10 floor.
     pyproject_text = (
-        Path(__file__).resolve().parent.parent.joinpath("pyproject.toml").read_text()
+        Path(__file__)
+        .resolve()
+        .parent.parent.joinpath("pyproject.toml")
+        .read_text(encoding="utf-8")
     )
     assert not re.search(r"(?m)^\s*ping3\s*=", pyproject_text)

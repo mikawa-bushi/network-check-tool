@@ -324,14 +324,14 @@ def _sysfs_links() -> Dict[str, Dict[str, str]]:
             "carrier_changes",
         ):
             try:
-                rec[name] = (d / name).read_text().strip()
+                rec[name] = (d / name).read_text(encoding="utf-8").strip()
             except (OSError, ValueError):
                 continue
         stats = d / "statistics"
         if stats.is_dir():
             for f in stats.iterdir():
                 try:
-                    rec[f"statistics.{f.name}"] = f.read_text().strip()
+                    rec[f"statistics.{f.name}"] = f.read_text(encoding="utf-8").strip()
                 except OSError:
                     continue
         rec["wireless"] = str((d / "wireless").exists())

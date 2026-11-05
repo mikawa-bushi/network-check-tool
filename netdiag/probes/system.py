@@ -31,7 +31,7 @@ def _mem_available_pct() -> Optional[float]:
         return None
     try:
         info: Dict[str, int] = {}
-        for line in p.read_text().splitlines():
+        for line in p.read_text(encoding="utf-8").splitlines():
             k, _, v = line.partition(":")
             info[k.strip()] = int(v.strip().split()[0])
         total = info.get("MemTotal", 0)
@@ -77,7 +77,10 @@ def _conntrack() -> Optional[Dict[str, int]]:
     max_p = Path("/proc/sys/net/netfilter/nf_conntrack_max")
     try:
         if count_p.exists() and max_p.exists():
-            return {"count": int(count_p.read_text()), "max": int(max_p.read_text())}
+            return {
+                "count": int(count_p.read_text(encoding="utf-8")),
+                "max": int(max_p.read_text(encoding="utf-8")),
+            }
     except (OSError, ValueError):
         pass
     return None

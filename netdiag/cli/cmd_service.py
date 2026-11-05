@@ -85,7 +85,8 @@ def service_install(interval, external_ip, dns_name):
     unit_dir.mkdir(parents=True, exist_ok=True)
     unit_path = unit_dir / "netdiag-watch.service"
     unit_path.write_text(
-        _unit_text(_exec_start(interval, external_ip, dns_name), system=False)
+        _unit_text(_exec_start(interval, external_ip, dns_name), system=False),
+        encoding="utf-8",
     )
     click.echo(
         tr(

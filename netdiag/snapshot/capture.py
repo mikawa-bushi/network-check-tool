@@ -60,7 +60,9 @@ def save(name: str = "default", directory: Optional[Path] = None) -> Path:
     directory = Path(directory) if directory else DEFAULT_DIR
     directory.mkdir(parents=True, exist_ok=True)
     path = directory / f"{name}.json"
-    path.write_text(json.dumps(capture(), indent=2, ensure_ascii=False))
+    path.write_text(
+        json.dumps(capture(), indent=2, ensure_ascii=False), encoding="utf-8"
+    )
     return path
 
 
@@ -69,7 +71,7 @@ def load(name: str = "default", directory: Optional[Path] = None) -> Optional[Di
     path = directory / f"{name}.json"
     if not path.exists():
         return None
-    return json.loads(path.read_text())
+    return json.loads(path.read_text(encoding="utf-8", errors="replace"))
 
 
 def list_snapshots(directory: Optional[Path] = None) -> List[str]:

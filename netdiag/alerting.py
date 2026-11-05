@@ -184,9 +184,9 @@ class FileAlertSink:
         self.log_path.parent.mkdir(parents=True, exist_ok=True)
 
     def emit(self, transition: Transition) -> None:
-        with self.jsonl_path.open("a") as f:
+        with self.jsonl_path.open("a", encoding="utf-8") as f:
             f.write(json.dumps(transition.to_dict(), ensure_ascii=False) + "\n")
-        with self.log_path.open("a") as f:
+        with self.log_path.open("a", encoding="utf-8") as f:
             f.write(self._format_line(transition) + "\n")
 
     @staticmethod
