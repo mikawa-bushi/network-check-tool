@@ -66,7 +66,7 @@ def _result_line(r: CheckResult, st: Style, name_width: int = 11) -> str:
 def _hypothesis_lines(diag: Diagnosis, st: Style, indent: str = "") -> List[str]:
     lines: List[str] = []
     for i, h in enumerate(diag.hypotheses, 1):
-        status = Status.FAIL if h.confidence != "low" else Status.WARN
+        status = Status.FAIL if h.is_fault else Status.WARN
         head = (
             f"{i}. "
             + tr("推定原因", "Likely cause")
@@ -407,7 +407,7 @@ def _problem_blocks(report, st: Style) -> List[str]:
 
 
 def _cause_block(subject: str, h, st: Style) -> List[str]:
-    status = Status.FAIL if h.confidence != "low" else Status.WARN
+    status = Status.FAIL if h.is_fault else Status.WARN
     head = f"{subject} — {h.summary}"
     conf = tr("確信度", "confidence") + f": {confidence_word(h.confidence)}"
     out = [f"  {st.status(status)} " + st.bold(head) + st.dim(f"  [{conf}]")]

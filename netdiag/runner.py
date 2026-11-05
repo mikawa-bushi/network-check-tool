@@ -114,7 +114,7 @@ def diagnosis_status(diag: Optional[Diagnosis]) -> Status:
         return Status.SKIP
     if diag.healthy:
         return Status.OK
-    if any(h.confidence != "low" for h in diag.hypotheses) or any(
+    if any(h.is_fault for h in diag.hypotheses) or any(
         r.status == Status.FAIL for r in diag.results
     ):
         return Status.FAIL
@@ -459,7 +459,7 @@ def diagnose_targets(
 def _diagnose(devices: List[Device], config: Optional[Dict[str, Any]]):
     cfg = {"internet": False, **(config or {})}
     rep = run_check(devices, config=cfg, only=QUICK_HOST_PROBES)
-    host_fail = [h for h in rep.host.hypotheses if h.confidence != "low"]
+    host_fail = [h for h in rep.host.hypotheses if h.is_fault]
     found = {}
     for r in rep.devices:
         dev = r.diagnosis

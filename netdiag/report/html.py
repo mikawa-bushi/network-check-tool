@@ -126,7 +126,7 @@ def render_html(diag: Diagnosis) -> str:
             f"推定原因 {len(diag.hypotheses)} 件",
             f"{len(diag.hypotheses)} suspected cause(s)",
         )
-        cls = "fail" if any(h.confidence != "low" for h in diag.hypotheses) else "warn"
+        cls = "fail" if any(h.is_fault for h in diag.hypotheses) else "warn"
     hyps = "".join(_hypothesis_html("", h, i) for i, h in enumerate(diag.hypotheses, 1))
     body = (
         f"<h1>netdiag {tr('診断レポート', 'report')} — {_esc(verdict)}</h1>"
