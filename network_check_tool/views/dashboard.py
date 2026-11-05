@@ -36,6 +36,7 @@ _PLOTLY_JS_LOCK = threading.Lock()
 HOURS_MIN = 1
 HOURS_MAX = 168  # one week
 HOURS_DEFAULT = 24
+METRICS_HOURS_DEFAULT = 1
 
 # Cap on the number of points handed to the chart/data endpoints. Beyond this the
 # raw rows are bucketed and averaged (see ``_downsample``) so the JSON payload and
@@ -86,39 +87,33 @@ def _downsample(results, max_points=MAX_CHART_POINTS):
     return points
 
 
-def _parse_hours(default=HOURS_DEFAULT):
-    """Parse and validate the ``?hours=`` query parameter.
+class ApiError(Exception):
+    def __init__(self, message, status):
+        super().__init__(message)
+        self.message = message
+        self.status = status
 
-    Returns ``(hours, None)`` on success, where ``hours`` is clamped to
-    ``[HOURS_MIN, HOURS_MAX]``. On a non-integer value returns
-    ``(None, (json_response, 400))`` so the caller can ``return error``
-    instead of letting ``int()`` raise and surface a 500.
-    """
+
+@dashboard_bp.errorhandler(ApiError)
+def _api_error(e):
+    return jsonify({"error": e.message}), e.status
+
+
+def _parse_hours(default=HOURS_DEFAULT):
     raw = request.args.get("hours", default)
     try:
         hours = int(raw)
     except (TypeError, ValueError):
-        return None, (
-            jsonify({"error": "Invalid 'hours' parameter; must be an integer"}),
-            400,
-        )
-    return max(HOURS_MIN, min(hours, HOURS_MAX)), None
+        raise ApiError("Invalid 'hours' parameter; must be an integer", 400)
+    return max(HOURS_MIN, min(hours, HOURS_MAX))
 
 
 def _host_window(require_host=False):
-    """Resolve the ``(host, hours, since)`` shared by the data/chart/stats endpoints.
-
-    Returns ``((host, hours, since), None)`` on success, or ``(None, error)`` where
-    ``error`` is a ready-to-return ``(response, status)`` -- a 400 for an invalid
-    ``hours`` value or, when ``require_host`` is set, a missing ``host``.
-    """
     host = request.args.get("host")
-    hours, error = _parse_hours()
-    if error:
-        return None, error
+    hours = _parse_hours()
     if require_host and not host:
-        return None, (jsonify({"error": "Host parameter is required"}), 400)
-    return (host, hours, utcnow() - timedelta(hours=hours)), None
+        raise ApiError("Host parameter is required", 400)
+    return host, hours, utcnow() - timedelta(hours=hours)
 
 
 def _window_query(host, since):
@@ -185,10 +180,7 @@ def get_hosts():
 @dashboard_bp.route("/api/ping_data")
 def get_ping_data():
     """Get ping data for visualization"""
-    parsed, error = _host_window(require_host=True)
-    if error:
-        return error
-    host, _hours, since = parsed
+    host, _hours, since = _host_window(require_host=True)
 
     results = _window_query(host, since).all()
 
@@ -242,10 +234,7 @@ _CHART_WORDS = {
 @dashboard_bp.route("/api/ping_chart")
 def get_ping_chart():
     """Generate Plotly chart for ping data"""
-    parsed, error = _host_window(require_host=True)
-    if error:
-        return error
-    host, hours, since = parsed
+    host, hours, since = _host_window(require_host=True)
     # The page passes its language; other API clients keep the English figure.
     words = _CHART_WORDS["ja" if request.args.get("lang") == "ja" else "en"]
 
@@ -316,10 +305,7 @@ def get_ping_chart():
 @dashboard_bp.route("/api/stats")
 def get_stats():
     """Get overall statistics"""
-    parsed, error = _host_window()
-    if error:
-        return error
-    host, _hours, since = parsed
+    host, _hours, since = _host_window()
 
     # Aggregate in SQL rather than reading every row into Python, so latency does
     # not grow linearly with the number of stored pings (the composite
@@ -386,10 +372,7 @@ def export_data():
     fmt = request.args.get("format", "csv").lower()
     if fmt != "csv":
         return jsonify({"error": "Only format=csv is supported"}), 400
-    parsed, error = _host_window(require_host=True)
-    if error:
-        return error
-    host, _hours, since = parsed
+    host, _hours, since = _host_window(require_host=True)
     query = _window_query(host, since)
 
     def rows():
@@ -526,9 +509,7 @@ def overview():
     any other host with pings in the window. ``?hours=`` (default 1) sets the
     window for the loss rate and RTT.
     """
-    hours, error = _parse_hours(default=OVERVIEW_HOURS_DEFAULT)
-    if error:
-        return error
+    hours = _parse_hours(default=OVERVIEW_HOURS_DEFAULT)
     now = utcnow()
     stats = _host_stats(now - timedelta(hours=hours))
     metas = db.session.query(MonitoredHost).order_by(MonitoredHost.position).all()
@@ -597,9 +578,7 @@ def overview():
 @dashboard_bp.route("/api/alerts")
 def recent_alerts():
     """Confirmed outages/recoveries, newest first (``?hours=`` default 24)."""
-    hours, error = _parse_hours()
-    if error:
-        return error
+    hours = _parse_hours()
     try:
         limit = max(1, min(int(request.args.get("limit", 50)), 500))
     except (TypeError, ValueError):
@@ -631,9 +610,7 @@ def metrics():
       ``network_ping_loss_ratio`` fraction of pings lost (0..1)
       ``network_ping_rtt_ms``     average RTT of successful pings (ms)
     """
-    hours, error = _parse_hours(default=1)  # a short, recent window
-    if error:
-        return error
+    hours = _parse_hours(default=METRICS_HOURS_DEFAULT)
     stats = _host_stats(utcnow() - timedelta(hours=hours))
 
     up_lines = [
@@ -670,25 +647,22 @@ DEFAULT_MONITOR_INTERVAL = 60
 
 
 def _scheduler():
-    """The in-process monitoring scheduler, or ``None`` if not running."""
-    return current_app.extensions.get("scheduler")
+    scheduler = current_app.extensions.get("scheduler")
+    if scheduler is None:
+        raise ApiError("monitoring scheduler not running", 503)
+    return scheduler
 
 
 @dashboard_bp.route("/api/jobs")
 def get_jobs():
     """List the currently scheduled monitoring jobs."""
-    scheduler = _scheduler()
-    if scheduler is None:
-        return jsonify({"error": "monitoring scheduler not running"}), 503
-    return jsonify(scheduler.list_jobs())
+    return jsonify(_scheduler().list_jobs())
 
 
 @dashboard_bp.route("/api/hosts", methods=["POST"])
 def add_host():
     """Add (or replace) a monitoring job for a host."""
     scheduler = _scheduler()
-    if scheduler is None:
-        return jsonify({"error": "monitoring scheduler not running"}), 503
     data = request.get_json(silent=True) or {}
     host = (data.get("host") or "").strip()
     if not host:
@@ -719,10 +693,7 @@ def add_host():
 @dashboard_bp.route("/api/hosts/<host>", methods=["DELETE"])
 def remove_host(host):
     """Stop monitoring a host."""
-    scheduler = _scheduler()
-    if scheduler is None:
-        return jsonify({"error": "monitoring scheduler not running"}), 503
-    scheduler.remove_ping_job(host)
+    _scheduler().remove_ping_job(host)
     meta = db.session.get(MonitoredHost, host)
     if meta is not None:
         db.session.delete(meta)
