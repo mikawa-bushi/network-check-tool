@@ -117,10 +117,14 @@ _ALIASES: Dict[str, Sequence[str]] = {
     "loss_warn_pct": ("loss_warn_pct", "ロス上限", "ロス率上限", "loss_pct"),
     "interval": ("interval", "間隔", "監視間隔", "interval_s"),
 }
+
+
+def _header_key(header: str) -> str:
+    return re.sub(r"[\s_()（）%]", "", header.lower())
+
+
 _HEADER_LOOKUP = {
-    re.sub(r"[\s_()（）%]", "", alias.lower()): key
-    for key, aliases in _ALIASES.items()
-    for alias in aliases
+    _header_key(alias): key for key, aliases in _ALIASES.items() for alias in aliases
 }
 
 
@@ -238,7 +242,7 @@ def device_from_mapping(row: Dict[str, Any], where: str = "") -> Device:
     for k, v in row.items():
         if k is None:
             continue
-        key = _HEADER_LOOKUP.get(re.sub(r"[\s_()（）%]", "", str(k).lower()))
+        key = _HEADER_LOOKUP.get(_header_key(str(k)))
         if key and key not in canon:
             canon[key] = v
     host = _cell(canon.get("host"))
@@ -297,9 +301,7 @@ def parse_csv_text(text: str) -> List[Device]:
     rows = list(csv.reader(io.StringIO("\n".join(lines)), delimiter=delimiter))
     line_no = [n for n, _ln in numbered]
     header = [c.strip() for c in rows[0]]
-    mapped = [
-        _HEADER_LOOKUP.get(re.sub(r"[\s_()（）%]", "", h.lower())) for h in header
-    ]
+    mapped = [_HEADER_LOOKUP.get(_header_key(h)) for h in header]
     devices: List[Device] = []
     if "host" in mapped or ("name" in mapped and len(header) == 1):
         for i, row in enumerate(rows[1:], start=1):
