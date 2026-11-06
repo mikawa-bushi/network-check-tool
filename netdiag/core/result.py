@@ -26,10 +26,6 @@ class Status(str, Enum):
     SKIP = "skip"  # could not run (missing tool, no permission, N/A on platform)
 
     @property
-    def ok(self) -> bool:
-        return self in (Status.OK, Status.WARN)
-
-    @property
     def symbol(self) -> str:
         return {
             Status.OK: "✔",  # ✔

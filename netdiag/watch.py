@@ -59,7 +59,6 @@ class Watcher(PeriodicLoop):
         self.escalate = escalate
         self.sink = sink or FileAlertSink()
         self.storage = storage if storage is not None else (Storage() if save else None)
-        self.save = save
         self.sm = StateMachine(
             fail_threshold=fail_threshold, recover_threshold=recover_threshold
         )

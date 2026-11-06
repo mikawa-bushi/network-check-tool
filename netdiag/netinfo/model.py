@@ -161,10 +161,6 @@ class Interface:
             if not a.is_loopback and not a.is_link_local and "duplicate" not in a.flags
         ]
 
-    @property
-    def label(self) -> str:
-        return self.name
-
     def to_dict(self) -> dict:
         d = asdict(self)
         d["addresses"] = [a.cidr for a in self.addresses]
@@ -245,6 +241,14 @@ class HostNetwork:
 
     def default_routes(self) -> List[Route]:
         return [r for r in self.routes if r.is_default and r.gateway]
+
+    def preferred_default_route(self) -> Optional[Route]:
+        """The default route the OS normally uses: lowest metric, an unset one last."""
+        return min(
+            self.default_routes(),
+            key=lambda r: r.metric if r.metric is not None else 1 << 30,
+            default=None,
+        )
 
     def default_gateways(self) -> List[str]:
         return list(dict.fromkeys(r.gateway for r in self.default_routes()))

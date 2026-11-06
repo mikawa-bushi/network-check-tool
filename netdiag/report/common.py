@@ -19,12 +19,6 @@ RESET = "\033[0m"
 BOLD = "\033[1m"
 DIM = "\033[2m"
 
-_UNICODE_SYMBOLS = {
-    Status.OK: "✔",
-    Status.WARN: "⚠",
-    Status.FAIL: "✘",
-    Status.SKIP: "—",
-}
 _ASCII_SYMBOLS = {
     Status.OK: "OK",
     Status.WARN: "!!",
@@ -74,7 +68,7 @@ class Style:
         return code if self.color else ""
 
     def sym(self, status: Status) -> str:
-        return (_UNICODE_SYMBOLS if self.unicode else _ASCII_SYMBOLS)[status]
+        return status.symbol if self.unicode else _ASCII_SYMBOLS[status]
 
     def status(self, status: Status, text: Optional[str] = None) -> str:
         body = text if text is not None else self.sym(status)

@@ -30,7 +30,7 @@ from .diagnosis import Diagnosis, Engine
 from .i18n import Text, get_language, tr
 from .inventory import Device
 from .measure import ping_many
-from .measure.icmp import _literal_family, resolve_all
+from .measure.icmp import addresses_for
 from .probes._common import default_ping_count, oscmd
 
 DEVICE_PROBES = ["route", "reach", "ports"]
@@ -354,14 +354,13 @@ def _check_devices(
             f"Resolving {len(devices)} device(s)…",
         )
     )
-    names = [d.host for d in devices if _literal_family(d.host) is None]
-    resolved = resolve_all(names, timeout=float(cfg.get("dns_timeout", 3.0)))
-    addr: Dict[int, Optional[str]] = {}
-    for i, d in enumerate(devices):
-        addr[i] = d.host if _literal_family(d.host) else resolved.get(d.host)
+    resolved = addresses_for(
+        (d.host for d in devices), timeout=float(cfg.get("dns_timeout", 3.0))
+    )
+    addr = [resolved[d.host] for d in devices]
 
     targets = []
-    for i, ip in addr.items():
+    for ip in addr:
         if not ip:
             continue
         dec = hn.decide_route(ip)

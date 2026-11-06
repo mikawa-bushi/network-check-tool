@@ -59,9 +59,7 @@ def l2_evidence(
     """
     if after is None:
         return "unknown"
-    if after.state in nm.NEIGH_ABSENT or (
-        after.mac is None and after.state != nm.NEIGH_UNKNOWN
-    ):
+    if after.absent:
         return "absent"
     if not after.mac or nm.mac_is_null(after.mac) or after.state == nm.NEIGH_PERMANENT:
         return "unknown"

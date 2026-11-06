@@ -142,7 +142,3 @@ def get_probe(name: str) -> Optional[Type[Probe]]:
 
 def all_probes() -> Dict[str, Type[Probe]]:
     return dict(_REGISTRY)
-
-
-def registry_names() -> List[str]:
-    return sorted(_REGISTRY)

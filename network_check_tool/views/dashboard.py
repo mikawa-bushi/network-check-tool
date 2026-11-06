@@ -100,13 +100,16 @@ def _api_error(e):
     return jsonify({"error": e.message}), e.status
 
 
-def _parse_hours(default=HOURS_DEFAULT):
-    raw = request.args.get("hours", default)
+def _int_arg(name, default, lo, hi):
     try:
-        hours = int(raw)
+        value = int(request.args.get(name, default))
     except (TypeError, ValueError):
-        raise ApiError("Invalid 'hours' parameter; must be an integer", 400)
-    return max(HOURS_MIN, min(hours, HOURS_MAX))
+        raise ApiError(f"Invalid '{name}' parameter; must be an integer", 400)
+    return max(lo, min(value, hi))
+
+
+def _parse_hours(default=HOURS_DEFAULT):
+    return _int_arg("hours", default, HOURS_MIN, HOURS_MAX)
 
 
 def _host_window(require_host=False):
@@ -186,7 +189,7 @@ def get_ping_data():
     results = _window_query(host, since).all()
 
     if not results:
-        return jsonify({"error": "No data found for the specified host"}), 404
+        raise ApiError("No data found for the specified host", 404)
 
     # Plotted series come from the (possibly thinned) points; their timestamps are
     # tz-aware UTC so the browser cannot mis-read them as local time.
@@ -242,7 +245,7 @@ def get_ping_chart():
     results = _window_query(host, since).all()
 
     if not results:
-        return jsonify({"error": words["no_data"]}), 404
+        raise ApiError(words["no_data"], 404)
 
     # Separate successful pings and packet losses. Points carry tz-aware UTC
     # timestamps and are thinned to a bounded count for long windows.
@@ -317,19 +320,6 @@ def get_stats():
 
     total = base.with_entities(func.count()).scalar() or 0
 
-    if total == 0:
-        return jsonify(
-            {
-                "total_pings": 0,
-                "successful_pings": 0,
-                "failed_pings": 0,
-                "packet_loss_rate": 0,
-                "avg_response_time": 0,
-                "min_response_time": 0,
-                "max_response_time": 0,
-            }
-        )
-
     # "Successful" matches the prior definition: not a packet loss and an actual
     # response time was recorded. is_(False) is strict (NULL packet_loss is not
     # treated as success); the column is NOT NULL so NULLs should never occur.
@@ -350,7 +340,7 @@ def get_stats():
             "total_pings": total,
             "successful_pings": successful,
             "failed_pings": total - successful,
-            "packet_loss_rate": ((total - successful) / total) * 100,
+            "packet_loss_rate": (total - successful) / total * 100 if total else 0,
             "avg_response_time": float(avg_v) if avg_v is not None else 0,
             "min_response_time": float(min_v) if min_v is not None else 0,
             "max_response_time": float(max_v) if max_v is not None else 0,
@@ -372,7 +362,7 @@ def export_data():
     """
     fmt = request.args.get("format", "csv").lower()
     if fmt != "csv":
-        return jsonify({"error": "Only format=csv is supported"}), 400
+        raise ApiError("Only format=csv is supported", 400)
     host, _hours, since = _host_window(require_host=True)
     query = _window_query(host, since)
 
@@ -580,10 +570,7 @@ def overview():
 def recent_alerts():
     """Confirmed outages/recoveries, newest first (``?hours=`` default 24)."""
     hours = _parse_hours()
-    try:
-        limit = max(1, min(int(request.args.get("limit", 50)), 500))
-    except (TypeError, ValueError):
-        return jsonify({"error": "Invalid 'limit' parameter; must be an integer"}), 400
+    limit = _int_arg("limit", 50, 1, 500)
     since = utcnow() - timedelta(hours=hours)
     names = {m.host: m.name for m in db.session.query(MonitoredHost).all()}
     events = (
@@ -665,13 +652,13 @@ def add_host():
     data = request.get_json(silent=True) or {}
     host = (data.get("host") or "").strip()
     if not host:
-        return jsonify({"error": "host is required"}), 400
+        raise ApiError("host is required", 400)
     try:
         interval = int(data.get("interval", DEFAULT_MONITOR_INTERVAL))
     except (TypeError, ValueError):
-        return jsonify({"error": "interval must be an integer"}), 400
+        raise ApiError("interval must be an integer", 400)
     if interval < 1:
-        return jsonify({"error": "interval must be >= 1 second"}), 400
+        raise ApiError("interval must be >= 1 second", 400)
     entry = HostConfig(
         name=host,
         interval=interval,

@@ -63,6 +63,15 @@ def _result_line(r: CheckResult, st: Style, name_width: int = 11) -> str:
     return f"{st.status(r.status)} {layer} {r.name.ljust(name_width)} {r.summary}"
 
 
+def _hidden_note(st: Style, hidden: int) -> str:
+    return st.dim(
+        tr(
+            f"  （対象外の項目 {hidden} 件は省略 — --all で表示）",
+            f"  ({hidden} not-applicable checks hidden — use --all)",
+        )
+    )
+
+
 def _hypothesis_lines(diag: Diagnosis, st: Style, indent: str = "") -> List[str]:
     lines: List[str] = []
     for i, h in enumerate(diag.hypotheses, 1):
@@ -111,14 +120,7 @@ def render_terminal(
             continue
         lines.append(_result_line(r, st))
     if hidden:
-        lines.append(
-            st.dim(
-                tr(
-                    f"  （対象外の項目 {hidden} 件は省略 — --all で表示）",
-                    f"  ({hidden} not-applicable checks hidden — use --all)",
-                )
-            )
-        )
+        lines.append(_hidden_note(st, hidden))
 
     lines.append("")
     if diag.healthy:
@@ -296,14 +298,7 @@ def render_check_text(
         lines.append(f"  {st.status(r.status)} {layer} {name}  {r.summary}{extra}")
     hidden = len(report.host.results) - len(shown)
     if hidden:
-        lines.append(
-            st.dim(
-                tr(
-                    f"  （対象外の項目 {hidden} 件は省略 — --all で表示）",
-                    f"  ({hidden} not-applicable checks hidden — use --all)",
-                )
-            )
-        )
+        lines.append(_hidden_note(st, hidden))
 
     # ---- devices
     if report.devices:
