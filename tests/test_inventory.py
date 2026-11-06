@@ -68,6 +68,19 @@ def test_csv_shift_jis_with_japanese_headers(tmp_path):
     assert devs[2].ports == []
 
 
+def test_headers_match_whatever_the_case_spacing_or_brackets():
+    csv_devs = parse_csv_text(
+        "名前,IP Address,RTT Warn (ms),ロス上限（%）,MAC_Address\n"
+        "PLC,192.168.3.39,5,1.5,00-26-92-AA-BB-CC\n"
+    )
+    dict_devs = parse_structured(
+        [{"Name": "PLC", "IP_Address": "192.168.3.39", "RTT Warn (ms)": 5}]
+    )
+    for d in csv_devs + dict_devs:
+        assert (d.name, d.host, d.rtt_warn_ms) == ("PLC", "192.168.3.39", 5.0)
+    assert (csv_devs[0].loss_warn_pct, csv_devs[0].mac) == (1.5, "00-26-92-AA-BB-CC")
+
+
 def test_csv_utf8_bom_tab_separated(tmp_path):
     path = tmp_path / "devices.tsv"
     path.write_bytes("name\thost\tports\nPLC\t10.0.0.5\t502\n".encode("utf-8-sig"))
