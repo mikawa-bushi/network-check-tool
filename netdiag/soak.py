@@ -238,6 +238,14 @@ class DeviceTrack:
         maxima = [b.max for b in self.buckets.values() if b.max is not None]
         return {"median": s.median, "p95": s.p95, "max": max(maxima, default=s.max)}
 
+    @property
+    def never_replied(self) -> bool:
+        return self.sent > 0 and self.received == 0
+
+    @property
+    def sporadic_loss(self) -> bool:
+        return self.lost > 0 and not self.outages and self.received > 0
+
     def longest_outage(self, now: float) -> float:
         return max((o.duration(now) for o in self.outages), default=0.0)
 
@@ -559,7 +567,7 @@ class SoakReport:
                     )
                 )
                 continue
-            if t.sent and t.received == 0:
+            if t.never_replied:
                 out.append(
                     Finding(
                         Status.FAIL,
@@ -616,7 +624,7 @@ class SoakReport:
                         "soak.device_outage",
                     )
                 )
-            elif not t.outages and t.lost:
+            elif t.sporadic_loss:
                 out.append(
                     Finding(
                         Status.WARN,
@@ -753,17 +761,11 @@ def run_soak(
 
     from . import netinfo
     from .measure import ping_stream
-    from .measure.icmp import _literal_family, resolve_all
+    from .measure.icmp import addresses_for
 
     stop = stop or threading.Event()
-    names = [d.host for d in devices if _literal_family(d.host) is None]
-    resolved = resolve_all(names) if names else {}
-    tracks = [
-        DeviceTrack(
-            d, d.host if _literal_family(d.host) else resolved.get(d.host), bucket
-        )
-        for d in devices
-    ]
+    addr = addresses_for(d.host for d in devices)
+    tracks = [DeviceTrack(d, addr[d.host], bucket) for d in devices]
     rec = SoakRecorder(tracks, timeout=timeout, min_lost=min_lost, on_event=on_event)
     hn = netinfo.snapshot()
     wired = [i.name for i in hn.interfaces if i.kind == netinfo.KIND_ETHERNET]

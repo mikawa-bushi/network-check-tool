@@ -73,10 +73,10 @@ def _headline(rep: SoakReport, st: Style) -> str:
             n = sum(1 for i in inc if i.kind == k)
             if n:
                 parts.append(labels[k] + tr(f" {n}回", f" x{n}"))
-        never = sum(1 for t in rep.tracks if t.sent and t.received == 0)
+        never = sum(1 for t in rep.tracks if t.never_replied)
         if never:
             parts.append(tr(f"応答なし {never}台", f"{never} never replied"))
-        sporadic = sum(1 for t in rep.tracks if t.lost and not t.outages and t.received)
+        sporadic = sum(1 for t in rep.tracks if t.sporadic_loss)
         if sporadic:
             parts.append(
                 tr(f"散発的なロス {sporadic}台", f"sporadic loss on {sporadic}")

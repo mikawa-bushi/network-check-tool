@@ -927,3 +927,11 @@ def resolve_all(hosts: Iterable[str], timeout: float = 2.0) -> Dict[str, Optiona
         return {}
     with ThreadPoolExecutor(max_workers=min(16, len(hosts))) as pool:
         return dict(zip(hosts, pool.map(lambda h: _resolve_v4(h, timeout), hosts)))
+
+
+def addresses_for(
+    hosts: Iterable[str], timeout: float = 2.0
+) -> Dict[str, Optional[str]]:
+    hosts = list(hosts)
+    resolved = resolve_all([h for h in hosts if _literal_family(h) is None], timeout)
+    return {h: h if _literal_family(h) else resolved[h] for h in hosts}
