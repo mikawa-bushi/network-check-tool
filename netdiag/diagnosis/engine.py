@@ -238,45 +238,27 @@ class Engine:
 
         collected: Dict[str, Tuple[CheckResult, Optional[str]]] = {}
 
-        if jobs == 1:
-            # Serial: evaluate in topological order, recording each result before
-            # the next probe so dependency gates see it.
-            for name in order:
-                if on_probe is not None:
+        tiers = [[n] for n in order] if jobs == 1 else _dependency_tiers(order, names)
+        for tier in tiers:
+            if on_probe is not None:
+                for name in tier:
                     on_probe(name)
-                res, reason = self._evaluate_probe(name, ctx)
+            if len(tier) == 1:
+                name = tier[0]
+                tier_out = {name: self._evaluate_probe(name, ctx)}
+            else:
+                with ThreadPoolExecutor(max_workers=min(jobs, len(tier))) as pool:
+                    tier_out = dict(
+                        zip(
+                            tier,
+                            pool.map(lambda n: self._evaluate_probe(n, ctx), tier),
+                        )
+                    )
+            for name in tier:
+                res, reason = tier_out[name]
                 if res is not None:
                     ctx.results[name] = res
                     collected[name] = (res, reason)
-        else:
-            # Parallel: probes in one dependency tier are mutually independent, so
-            # run a tier concurrently, then commit the whole tier to ctx.results
-            # before the next tier (whose probes may read these results).
-            # Safety relies on probes treating ctx as read-only during check():
-            # they read ctx.config and earlier tiers' ctx.results but don't mutate
-            # shared state. (The one write, gateway's ctx.config.setdefault of an
-            # unread key, is an atomic, dead side-effect.) Each tier commits in the
-            # main thread between tiers, so reads never race a write.
-            for tier in _dependency_tiers(order, names):
-                if on_probe is not None:
-                    for name in tier:  # announce the whole tier before it runs
-                        on_probe(name)
-                if len(tier) == 1:
-                    name = tier[0]
-                    tier_out = {name: self._evaluate_probe(name, ctx)}
-                else:
-                    with ThreadPoolExecutor(max_workers=min(jobs, len(tier))) as pool:
-                        tier_out = dict(
-                            zip(
-                                tier,
-                                pool.map(lambda n: self._evaluate_probe(n, ctx), tier),
-                            )
-                        )
-                for name in tier:  # commit in deterministic (topo) order
-                    res, reason = tier_out[name]
-                    if res is not None:
-                        ctx.results[name] = res
-                        collected[name] = (res, reason)
 
         # Emit in topological order regardless of completion order, so the
         # Diagnosis is identical to a serial run for any value of ``jobs``.
