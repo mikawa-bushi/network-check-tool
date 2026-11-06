@@ -22,11 +22,8 @@ def default_gateway() -> Optional[str]:
     """The preferred default gateway of this host (lowest metric), if any."""
     from .. import netinfo
 
-    routes = netinfo.snapshot().default_routes()
-    if not routes:
-        return None
-    best = min(routes, key=lambda r: r.metric if r.metric is not None else 1 << 30)
-    return best.gateway
+    best = netinfo.snapshot().preferred_default_route()
+    return best.gateway if best else None
 
 
 @register
@@ -69,7 +66,7 @@ class GatewayProbe(Probe):
                 metrics={"has_gateway": 0.0},
                 code="gateway.none_closed",
             )
-        best = min(routes, key=lambda r: r.metric if r.metric is not None else 1 << 30)
+        best = hn.preferred_default_route()
         gw = best.gateway
         detail = {"gateway": gw, "interface": best.interface}
         st = ping(gw, **ping_settings(ctx.get))

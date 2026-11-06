@@ -98,9 +98,7 @@ class IpConfigProbe(Probe):
         defaults = hn.default_routes()
         gw_ifaces = {r.interface for r in defaults}
         if len(gw_ifaces) > 1:
-            best = min(
-                defaults, key=lambda r: r.metric if r.metric is not None else 1 << 30
-            )
+            best = hn.preferred_default_route()
             listing = ", ".join(f"{r.gateway} ({r.interface})" for r in defaults)
             warns.append(
                 tr(

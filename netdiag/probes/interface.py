@@ -7,26 +7,19 @@ not a cause, and the engine folds them away.
 
 from __future__ import annotations
 
-import socket
 from typing import List, Optional
 
 from ..core import CheckResult, Context, Probe, register
 from ..i18n import Text, tr
-from ..netinfo import KIND_LOOPBACK, KIND_VIRTUAL, Interface
+from ..netinfo import KIND_LOOPBACK, KIND_VIRTUAL, Interface, source_ip_for
 from ._common import oscmd
+
+_RFC5737_OFF_LAN = "203.0.113.1"
 
 
 def _primary_ip() -> Optional[str]:
     """Best-effort local IP used for the default route, without sending traffic."""
-    s = socket.socket(socket.AF_INET, socket.SOCK_DGRAM)
-    try:
-        # 203.0.113.0/24 (TEST-NET-3) — never actually routed/sent for UDP connect.
-        s.connect(("203.0.113.1", 9))
-        return s.getsockname()[0]
-    except OSError:
-        return None
-    finally:
-        s.close()
+    return source_ip_for(_RFC5737_OFF_LAN)
 
 
 def describe_interface(i: Interface) -> str:

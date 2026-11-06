@@ -242,6 +242,14 @@ class HostNetwork:
     def default_routes(self) -> List[Route]:
         return [r for r in self.routes if r.is_default and r.gateway]
 
+    def preferred_default_route(self) -> Optional[Route]:
+        """The default route the OS normally uses: lowest metric, an unset one last."""
+        return min(
+            self.default_routes(),
+            key=lambda r: r.metric if r.metric is not None else 1 << 30,
+            default=None,
+        )
+
     def default_gateways(self) -> List[str]:
         return list(dict.fromkeys(r.gateway for r in self.default_routes()))
 
