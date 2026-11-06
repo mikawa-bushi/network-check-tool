@@ -6,7 +6,6 @@ from .probe import (
     all_probes,
     get_probe,
     register,
-    registry_names,
 )
 from .result import CheckResult, Status
 
@@ -18,5 +17,4 @@ __all__ = [
     "register",
     "get_probe",
     "all_probes",
-    "registry_names",
 ]

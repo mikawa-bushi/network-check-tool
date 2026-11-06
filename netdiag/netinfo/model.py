@@ -161,10 +161,6 @@ class Interface:
             if not a.is_loopback and not a.is_link_local and "duplicate" not in a.flags
         ]
 
-    @property
-    def label(self) -> str:
-        return self.name
-
     def to_dict(self) -> dict:
         d = asdict(self)
         d["addresses"] = [a.cidr for a in self.addresses]

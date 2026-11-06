@@ -92,9 +92,6 @@ class StateMachine:
         cause: Optional[str] = None,
         confidence: Optional[str] = None,
         summary: str = "",
-        evidence: Optional[List[str]] = None,
-        consequences: Optional[List[str]] = None,
-        runbook: Optional[List[str]] = None,
     ) -> Optional[Transition]:
         """Feed one observation; return a Transition iff the state changed."""
         ts = ts if ts is not None else time.time()
@@ -122,9 +119,6 @@ class StateMachine:
                     cause=cause,
                     confidence=confidence,
                     summary=summary,
-                    evidence=evidence or [],
-                    consequences=consequences or [],
-                    runbook=runbook or [],
                     duration_s=duration if prior != State.UNKNOWN else None,
                     host=self.host,
                 )

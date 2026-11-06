@@ -26,6 +26,14 @@ All notable changes to the `netdiag` package are documented in this file.
 - `netdiag.core.util.run_bytes()` runs a command without decoding; `run()` and
   `collect` both build on it.
 
+### Removed
+- Unused code with no caller: `netdiag.core.registry_names()` (use
+  `sorted(all_probes())`), `Status.ok`, `netinfo.model.Interface.label`,
+  `watch.Watcher.save` (the `save` argument stays), and the
+  `evidence`, `consequences` and `runbook` parameters of
+  `alerting.StateMachine.observe` (`watch` still fills those fields in when it
+  escalates).
+
 ## [0.3.0] - 2026-10-28
 
 ### Added

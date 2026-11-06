@@ -41,7 +41,6 @@ _MANUF_RE = re.compile(
 
 _lock = threading.Lock()
 _table: Optional[Dict[str, str]] = None
-_source: Optional[str] = None
 
 
 def parse_oui_text(text: str) -> Dict[str, str]:
@@ -78,7 +77,7 @@ def database_path() -> Optional[str]:
 
 
 def _load() -> Dict[str, str]:
-    global _table, _source
+    global _table
     if _table is None:
         with _lock:
             if _table is None:
@@ -91,7 +90,7 @@ def _load() -> Dict[str, str]:
                         )
                     except OSError:
                         table = {}
-                _table, _source = table, path
+                _table = table
     return _table
 
 
@@ -107,6 +106,6 @@ def lookup(mac: Optional[str]) -> Optional[str]:
 
 def reset() -> None:
     """Forget the loaded table (tests / after changing NETDIAG_OUI_FILE)."""
-    global _table, _source
+    global _table
     with _lock:
-        _table, _source = None, None
+        _table = None
