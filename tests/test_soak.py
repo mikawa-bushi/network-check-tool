@@ -332,3 +332,39 @@ def test_track_threads_are_safe():
         t.join()
     rec.flush()
     assert tracks[0].sent == 1000
+
+
+def test_devices_given_by_name_are_measured_at_their_resolved_address(monkeypatch):
+    import socket
+
+    import netdiag.measure as measure
+    from netdiag.soak import run_soak
+
+    def getaddrinfo(host, port, family=0, *a, **k):
+        if host == "plc.line1":
+            return [(socket.AF_INET, socket.SOCK_STREAM, 6, "", ("10.0.0.2", 0))]
+        raise socket.gaierror("no such name")
+
+    monkeypatch.setattr(socket, "getaddrinfo", getaddrinfo)
+    monkeypatch.setattr(netinfo, "snapshot", lambda max_age=5.0: HostNetwork())
+    monkeypatch.setattr(netinfo, "link_stats", lambda: {})
+    streamed = []
+
+    def fake_stream(targets, on_sample, stop, interval, timeout, **kw):
+        streamed.extend(targets)
+        stop.wait()
+        return {}
+
+    monkeypatch.setattr(measure, "ping_stream", fake_stream)
+    devices = [
+        Device(name="PLC", host="plc.line1"),
+        Device(name="GONE", host="gone.line1"),
+        Device(name="LIT", host="10.0.0.3"),
+    ]
+    rep = run_soak(devices, duration=0.05, tick=0.01)
+    assert streamed == ["10.0.0.2", "10.0.0.3"]
+    assert [(t.address, t.error) for t in rep.tracks] == [
+        ("10.0.0.2", None),
+        (None, "name resolution failed"),
+        ("10.0.0.3", None),
+    ]

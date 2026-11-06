@@ -433,3 +433,40 @@ def test_silent_on_link_devices_get_a_direct_arp_answer(monkeypatch):
     }
     assert codes["GONE"] == "reach.no_arp"
     assert codes["CACHED"] == "reach.no_reply"  # an old cache entry proves nothing
+
+
+def _fake_dns(monkeypatch):
+    import socket
+
+    def getaddrinfo(host, port, family=0, *a, **k):
+        if host == "plc.line1":
+            return [(socket.AF_INET, socket.SOCK_STREAM, 6, "", ("192.168.3.39", 0))]
+        raise socket.gaierror("no such name")
+
+    monkeypatch.setattr(socket, "getaddrinfo", getaddrinfo)
+
+
+def test_devices_given_by_name_are_pinged_at_their_resolved_address(monkeypatch):
+    from netdiag import runner
+
+    hn = _hn()
+    monkeypatch.setattr(netinfo, "snapshot", lambda max_age=5.0: hn)
+    monkeypatch.setattr(netinfo, "link_stats", lambda: {})
+    monkeypatch.setattr(netinfo, "neighbors", lambda: [])
+    monkeypatch.setattr(netinfo, "neighbor", lambda ip: None)
+    _fake_dns(monkeypatch)
+    pinged = []
+
+    def fake_ping_many(targets, count, interval, timeout, **kw):
+        pinged.extend(targets)
+        return {t: _ping(10) for t in targets}
+
+    monkeypatch.setattr(runner, "ping_many", fake_ping_many)
+    devices = [
+        Device(name="PLC", host="plc.line1"),
+        Device(name="GONE", host="gone.line1"),
+        Device(name="V6", host="fe80::1"),
+        Device(name="LIT", host="192.168.3.40"),
+    ]
+    runner.run_check(devices, config={"internet": False}, only=["interface"])
+    assert pinged == ["192.168.3.39", "fe80::1", "192.168.3.40"]
