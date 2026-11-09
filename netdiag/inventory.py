@@ -12,7 +12,7 @@ that list as-is:
 * Ports may be numbers (``502``, ``502;4840``) or protocol names
   (``modbus``, ``opcua``, ``enip`` ...).
 
-The same list drives ``netdiag check`` and ``network-checker start-monitoring``.
+The same list drives ``netdiag check -f`` and ``netdiag soak -f``.
 """
 
 from __future__ import annotations
@@ -248,7 +248,7 @@ def device_from_mapping(row: Dict[str, Any], where: str = "") -> Device:
     host = _cell(canon.get("host"))
     name = _cell(canon.get("name"))
     if "host" not in canon and name:
-        host = name  # network-checker hosts.toml: ``name`` *is* the host
+        host = name  # hosts.toml (``[[host]] name = ...``): ``name`` *is* the host
     if not host:
         raise InventoryError(f"{where}missing IP address/host")
     try:

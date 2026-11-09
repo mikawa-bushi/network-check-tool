@@ -1,11 +1,9 @@
 # Contributing to network-check-tool
 
-Thanks for helping! This project ships two tools from one package:
-
-- **`netdiag`** — network checks for production engineers: this PC plus every
-  device on the line (route, ping statistics, ARP presence, service ports),
-  diagnosed down to a root cause and next steps. Standard library + `click` only.
-- **`network-checker`** — long-term ping monitoring with a Flask/Plotly dashboard.
+Thanks for helping! This project ships one tool, **`netdiag`**: network checks
+for production engineers, covering this PC plus every device on the line (route,
+ping statistics, ARP presence, service ports), diagnosed down to a root cause and
+next steps. Standard library + `click` only.
 
 Please read the [Code of Conduct](CODE_OF_CONDUCT.md) first.
 
@@ -22,7 +20,7 @@ Run the tests and the same checks CI runs:
 
 ```bash
 poetry run pytest
-poetry run black --check netdiag/ network_check_tool/ tests/
+poetry run black --check netdiag/ tests/
 poetry run ruff check .          # import order (isort rules)
 ```
 

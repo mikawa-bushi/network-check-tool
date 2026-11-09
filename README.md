@@ -19,14 +19,12 @@ netdiag check -f 台帳.csv          # このPC + 台帳の全機器を点検
 - **高精度** — 応答時間はマイクロ秒精度、損失率は「95%上限」付きで表示（10回中0件のロスでも
   「28%以下」としか言えない、という事実を正直に示します）。遅延は中央値・p95・最大・ジッタで評価。
 - **網羅的** — LANリンク品質（速度・全二重/半二重・CRCエラー）、IP設定の矛盾、ゲートウェイ、ARP、
-  機器ごとの経路・応答・ARP・サービスポート、ネットワーク上の機器発見、長期監視まで1つのパッケージで。
+  機器ごとの経路・応答・ARP・サービスポート、ネットワーク上の機器発見、数時間の瞬断記録まで1つのコマンドで。
 
-同梱のコマンドは2つです。
+コマンドは `netdiag` ひとつで、標準ライブラリと click だけで動きます。
 
-| コマンド | 役割 |
-|---|---|
-| **`netdiag`** | その場の点検・原因の切り分け（標準ライブラリ + click のみ、オフライン） |
-| **`network-checker`** | 長期監視（定期ping・Webダッシュボード・しきい値アラート・劣化時の自動診断） |
+> 定期pingのWebダッシュボード `network-checker` は削除しました。最後に含んでいた版は 0.5.0 です
+> （`pip install "network-check-tool==0.5.0"`）。
 
 ---
 
@@ -54,11 +52,15 @@ py -m netdiag
 ```
 
 インターネットに出られない工場PCには、別のPCで部品をダウンロードして持ち込みます。
+部品はすべてOS・Pythonのバージョンを問わないファイルなので、ダウンロードするPCのOSや
+Pythonのバージョンが工場PCと違ってもかまいません。
 
 ```bash
-pip download network-check-tool -d wheels          # ネットにつながるPCで
+pip download network-check-tool toml -d wheels                  # ネットにつながるPCで
 pip install --no-index --find-links wheels network-check-tool   # 工場PCで
 ```
+
+`toml` は Python 3.10 の工場PCだけが使います。ダウンロードするPCが 3.11 以上だと自動では取得されないので、名前を指定して取得します。
 
 YAML形式の台帳・シナリオを使う場合のみ `pip install "network-check-tool[yaml]"`（CSV/JSON/TOMLは不要）。
 
@@ -115,7 +117,6 @@ IoTゲートウェイ,192.168.3.50,modbus;opcua,共通,,
 | グループ / ライン | まとめ表示用 |
 | MACアドレス / mac | 書いておくと、別の機器が応答したとき（機器交換・IP重複）に検出 |
 | 遅延上限 / rtt_warn_ms、ロス上限 / loss_warn_pct | 機器ごとの判定しきい値 |
-| 監視間隔 / interval | `network-checker` で監視するときの間隔[秒] |
 | 備考 / note | メモ |
 
 見出し行が無い単純なIPの一覧も読めます。YAML/JSON/TOML（`devices:` のリスト）も使えます。
@@ -228,53 +229,6 @@ zip にまとめます。IPアドレス・MAC・PC名・ユーザー名・SSID�
 
 ---
 
-## network-checker — 長期監視とダッシュボード
-
-夜間だけ通信が切れる、といった問題には常設の監視が有効です。`netdiag` と同じ台帳がそのまま使えます。
-
-```bash
-network-checker run-server --devices 台帳.csv                    # 監視 + ダッシュボード（1コマンド）
-#   → http://localhost:9991 をブラウザで開く
-network-checker start-monitoring --config 台帳.csv --diagnose   # 監視だけを常駐させる場合
-```
-
-- **ライン一覧**: 台帳の機器を名前・グループ（ライン）ごとのタイルで表示し、
-  正常／注意／停止／不明をアイコンと文字で示します。停止したタイルには最後に応答した時刻と、
-  `--diagnose` で調べた原因（例:「PLC-2 がARPに応答しません」）を表示します。
-  下には最近のアラート（停止・復旧と停止していた時間、次に確認すること）が並びます。
-  タイルをクリックすると、その機器の応答時間とロスのグラフに切り替わります。
-- 画面は日本語（ブラウザが英語なら英語。右上で切替）。
-
-- 同じ監視間隔の機器はまとめて一斉に ping します。止まっている機器がいくつあっても、
-  ほかの機器の測定が遅れたり抜けたりしません。
-- 機器ごとの間隔・しきい値（台帳の `監視間隔` `遅延上限` `ロス上限`）で `DEGRADED`/`RECOVERED` アラートを
-  JSONLに記録します。`--diagnose` を付けると、劣化した**その機器**について netdiag が原因
-  （このPCのリンク断・サブネット不一致・ARP応答なし など）を調べてアラートに添付します。
-- ダッシュボードは応答時間とパケットロスの推移を表示し、CSVエクスポート（`/api/export`）と
-  Prometheus 形式（`/metrics`）も提供します。
-- Docker での常設例: [docker/README.md](docker/README.md)
-
-| コマンド | 内容 |
-|---|---|
-| `network-checker start-monitoring [hosts...] [--config FILE] [--diagnose] [--alert-file F]` | 監視を開始 |
-| `network-checker run-server [--devices 台帳] [--host H] [--port P]` | ダッシュボード（既定 127.0.0.1:9991）。`--devices` で台帳の機器名・グループを表示し、127.0.0.1 で起動したときはその機器を監視 |
-| `network-checker ping <host> [--count N] [--json]` | pingして監視DBに記録 |
-| `network-checker status [--host H] [--json]` | 監視DBの最近の結果 |
-| `network-checker clear` | 監視DBの全削除（DBはどのコマンドでも自動で作成） |
-
-> **セキュリティ**: ダッシュボードとAPIには認証がありません。`run-server` は既定でこのPC（127.0.0.1）だけで
-> 待ち受けます。ネットワークに公開する（`--host 0.0.0.0`）場合は、認証付きのリバースプロキシを前段に置いてください。
-> `--debug` は 127.0.0.1 以外では起動を拒否します。他オリジンからの `/api/*` 利用は `CORS_ORIGINS` で明示的に許可した場合のみです。
-
-主な環境変数: `DATABASE_URL`（既定 `sqlite:///network_check_tool.db`）、`PING_TIMEOUT`（4.0秒）、
-`SQLITE_BUSY_TIMEOUT_MS`（5000）、`CORS_ORIGINS`。
-
-API: `GET /api/overview?hours=`（ライン一覧: 機器ごとの状態）, `/api/alerts?hours=&limit=`, `/api/hosts`,
-`/api/stats?host=&hours=`, `/api/ping_data?host=&hours=`, `/api/export?host=&hours=&format=csv`, `/metrics`、
-ホスト管理（ループバック起動時のみ）`GET /api/jobs`, `POST /api/hosts`（`name`/`group`/`note` も指定可）, `DELETE /api/hosts/<host>`。
-
----
-
 ## English summary
 
 **network-check-tool** helps production engineers check plant networks quickly and precisely:
@@ -299,10 +253,12 @@ API: `GET /api/overview?hours=`（ライン一覧: 機器ごとの状態）, `/a
 - Windows: a single `netdiag.exe` (no Python): double-click to check this PC, or drop a device
   list on it to check the line; an HTML report opens in the browser. Precise pings use the
   Windows ICMP API (no admin rights).
-- `netdiag scan` discovers devices on a subnet (ICMP + ARP only); `network-checker` adds long-term
-  monitoring with a dashboard — a line board of every device by name and group with its state
-  and the last diagnosed cause (Japanese/English UI) — threshold alerts and automatic per-device
-  diagnosis. `network-checker run-server --devices devices.csv` does it in one command.
+- `netdiag scan` discovers devices on a subnet (ICMP + ARP only).
+- Offline install: run `pip download network-check-tool toml -d wheels` on any PC with
+  internet access, then `pip install --no-index --find-links wheels network-check-tool` on the
+  plant PC. Every wheel is pure Python, so the two PCs' OS and Python version need not match.
+- The `network-checker` ping dashboard is removed. The last release with it is 0.5.0
+  (`pip install "network-check-tool==0.5.0"`).
 
 Exit codes: `0` healthy, `1` problem found, `2` warnings only. See [docs/netdiag.md](docs/netdiag.md).
 
