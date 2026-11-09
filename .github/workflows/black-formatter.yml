@@ -26,7 +26,7 @@ jobs:
         python-version: '3.10'
 
     - name: Install Poetry
-      uses: snok/install-poetry@v1
+      uses: snok/install-poetry@a783c322200f0519c7926aa6faa857c4e23e9263  # v1.4.2
       with:
         version: latest
         virtualenvs-create: true
@@ -44,14 +44,7 @@ jobs:
       run: poetry install --only=dev
 
     - name: Run Black check
-      run: poetry run black --check --diff network_check_tool/ netdiag/
-
-    - name: Run Black check on tests (if exists)
-      run: |
-        if [ -d "tests" ]; then
-          poetry run black --check --diff tests/
-        fi
-      continue-on-error: false
+      run: poetry run black --check --diff network_check_tool/ netdiag/ tests/
 
     - name: Run Ruff import-order check
       # Enforce in CI the same import ordering the pre-commit gate applies, so a
@@ -81,7 +74,7 @@ jobs:
         python-version: '3.10'
 
     - name: Install Poetry
-      uses: snok/install-poetry@v1
+      uses: snok/install-poetry@a783c322200f0519c7926aa6faa857c4e23e9263  # v1.4.2
       with:
         version: latest
         virtualenvs-create: true
@@ -91,11 +84,7 @@ jobs:
       run: poetry install --only=dev
 
     - name: Run Black formatter
-      run: |
-        poetry run black network_check_tool/ netdiag/
-        if [ -d "tests" ]; then
-          poetry run black tests/
-        fi
+      run: poetry run black network_check_tool/ netdiag/ tests/
 
     - name: Commit changes
       run: |
