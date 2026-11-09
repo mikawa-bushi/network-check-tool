@@ -13,6 +13,7 @@ from flask import Flask
 import network_check_tool.cli as nct_cli
 from netdiag.cli import cli as netdiag_cli
 from network_check_tool.cli import cli as nct_cli_group
+from network_check_tool.config.config import Config, DevelopmentConfig
 from network_check_tool.models import PingResult, db
 from network_check_tool.utils import utcnow
 
@@ -31,13 +32,13 @@ def test_netdiag_help_lists_commands():
     result = CliRunner().invoke(netdiag_cli, ["--help"])
     assert result.exit_code == 0
     assert "explain" in result.output
-    assert "list-probes" in result.output
 
 
-def test_netdiag_list_probes():
-    result = CliRunner().invoke(netdiag_cli, ["list-probes"])
-    assert result.exit_code == 0, result.output
-    assert "gateway" in result.output
+def test_netdiag_monitor_and_list_probes_are_gone():
+    for args in (["monitor"], ["list-probes"]):
+        result = CliRunner().invoke(netdiag_cli, args)
+        assert result.exit_code == 2
+        assert "No such command" in result.output
 
 
 def test_netdiag_explain_no_arg_lists():
@@ -89,17 +90,19 @@ def _seed_one(app):
         db.session.commit()
 
 
-def test_init_creates_database(tmp_path, monkeypatch):
-    app = _nct_app(tmp_path / "init.db")
-    monkeypatch.setattr(nct_cli, "create_app", lambda *a, **k: app)
+def test_commands_create_the_database_so_init_is_gone(tmp_path, monkeypatch):
+    fresh = tmp_path / "fresh.db"
+    monkeypatch.setattr(Config, "SQLALCHEMY_DATABASE_URI", f"sqlite:///{fresh}")
+    monkeypatch.setattr(DevelopmentConfig, "SQLALCHEMY_ECHO", False)
 
-    result = CliRunner().invoke(nct_cli_group, ["init"])
+    result = CliRunner().invoke(nct_cli_group, ["status"])
 
     assert result.exit_code == 0, result.output
-    assert "initialized successfully" in result.output
-    # The table now exists: a count() succeeds (would raise if not created).
-    with app.app_context():
-        assert PingResult.query.count() == 0
+    assert "No ping results found." in result.output
+    assert fresh.exists()
+    result = CliRunner().invoke(nct_cli_group, ["init"])
+    assert result.exit_code == 2
+    assert "No such command" in result.output
 
 
 def test_clear_confirmed_deletes_rows(tmp_path, monkeypatch):

@@ -1,4 +1,4 @@
-"""Always-on commands: ``monitor``, ``watch``, ``status``, ``history``, ``prune``."""
+"""Always-on commands: ``watch``, ``status``, ``history``, ``prune``."""
 
 from __future__ import annotations
 
@@ -17,45 +17,6 @@ logger = logging.getLogger("netdiag.cli")
 
 def _verdict(diag) -> str:
     return "OK" if diag.healthy else (diag.primary.cause if diag.primary else "WARN")
-
-
-@cli.command()
-@click.option(
-    "--interval",
-    default=60,
-    type=int,
-    help=H("診断の間隔[秒]", "Seconds between sweeps."),
-)
-@click.option("--external-ip", default="1.1.1.1")
-@click.option(
-    "--only",
-    help=H(
-        "毎回実行するチェック（カンマ区切り）",
-        "Comma-separated probes to run each tick.",
-    ),
-)
-def monitor(interval, external_ip, only):
-    """定期的に診断して履歴DBに記録 / Periodically diagnose and record metrics."""
-    from ..scheduler import Monitor
-
-    only_list = _split_csv(only)
-    cfg = dict(DEFAULT_CONFIG, external_ip=external_ip)
-
-    def on_tick(diag):
-        click.echo(f"[{time.strftime('%H:%M:%S')}] {_verdict(diag)}")
-
-    mon = Monitor(config=cfg, interval=interval, only=only_list, on_tick=on_tick)
-    click.echo(
-        tr(
-            f"{interval}秒ごとに監視中 — Ctrl-C で停止",
-            f"monitoring every {interval}s — Ctrl-C to stop",
-        )
-    )
-    try:
-        mon.start(background=False)
-    except KeyboardInterrupt:
-        mon.stop()
-        click.echo(tr("\n停止しました", "\nstopped"))
 
 
 @cli.command()
@@ -293,9 +254,9 @@ def history(probe, metric, target, hours):
     if not series:
         click.echo(
             tr(
-                f"直近{hours}時間の {probe}/{metric} の履歴がありません（先に 'netdiag check --save' や 'netdiag monitor' を実行）。",
+                f"直近{hours}時間の {probe}/{metric} の履歴がありません（先に 'netdiag check --save' や 'netdiag watch' を実行）。",
                 f"no history for {probe}/{metric} in the last {hours}h "
-                f"(run 'netdiag check --save' or 'netdiag monitor' first).",
+                f"(run 'netdiag check --save' or 'netdiag watch' first).",
             )
         )
         return

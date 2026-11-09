@@ -20,8 +20,8 @@ DEFAULT_DB = Path.home() / ".netdiag" / "history.db"
 def _synchronized(method):
     """Serialize a Storage method on ``self._lock``.
 
-    The single sqlite connection is shared across threads (Monitor/Watcher run
-    their loops in a background thread), so every method that touches it holds
+    The single sqlite connection is shared across threads (Watcher runs its
+    loop in a background thread), so every method that touches it holds
     the re-entrant lock for the duration of its work.
     """
 
@@ -70,7 +70,7 @@ class Storage:
     def __init__(self, path: Optional[Path] = None) -> None:
         self.path = Path(path) if path else DEFAULT_DB
         self.path.parent.mkdir(parents=True, exist_ok=True)
-        # check_same_thread=False lets the background loops (Monitor/Watcher
+        # check_same_thread=False lets the background loop (Watcher
         # start(background=True)) use this connection. A single sqlite connection
         # object is not safe for *concurrent* use, so a re-entrant lock serializes
         # every access below. RLock (not Lock) because some public methods call
@@ -266,7 +266,7 @@ class Storage:
         dropped = self.prune_rollups(older_than_days=rollup_days)
         # Reclaim file space after large deletes. VACUUM runs under the lock on
         # purpose: it shares the single connection object, so a concurrent write
-        # from a Monitor/Watcher worker thread would corrupt it. retention() is a
+        # from a Watcher worker thread would corrupt it. retention() is a
         # periodic maintenance call (hourly by default), so the bounded hold
         # (up to busy_timeout) is acceptable; releasing the lock here would not be.
         try:

@@ -1,10 +1,10 @@
 """Shared periodic-loop scaffolding for the stdlib-only daemons.
 
-netdiag's ``Monitor`` and ``Watcher`` and network-checker's device monitor all
-run a tick on a fixed interval in a daemon thread, swallow-and-log per-tick
-errors, and wake promptly on ``stop()``. That machinery lives here so they
-cannot drift apart; subclasses only implement ``_tick()`` (and may override
-``_on_stop()`` for teardown).
+netdiag's ``Watcher`` and network-checker's device monitor both run a tick on
+a fixed interval in a daemon thread, swallow-and-log per-tick errors, and wake
+promptly on ``stop()``. That machinery lives here so they cannot drift apart;
+subclasses only implement ``_tick()`` (and may override ``_on_stop()`` for
+teardown).
 """
 
 from __future__ import annotations
@@ -37,8 +37,8 @@ class PeriodicLoop:
         """Teardown after the loop ends (default: nothing)."""
 
     def _loop(self) -> None:
-        # Log under the subclass's own module so callers can filter by it
-        # (e.g. "netdiag.scheduler" vs "netdiag.watch").
+        # Log under the subclass's own module (e.g. "netdiag.watch") so callers
+        # can filter by it.
         log = logging.getLogger(type(self).__module__)
         # Sleep until the next tick is due, waking promptly on stop().
         while not self._stop.wait(max(0.0, self.next_run - time.time())):
