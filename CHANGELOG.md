@@ -4,6 +4,11 @@ All notable changes to this project are documented in this file.
 
 ## [Unreleased]
 
+## [0.5.0] - 2026-11-09
+
+The first release on PyPI since 0.1.1, so it also brings everything listed
+under 0.2.0 to 0.4.0 below.
+
 ### Fixed
 - **Monitoring no longer drops devices when some are unreachable.** Each device
   used to be its own APScheduler job on a 4-thread pool; an unreachable device
