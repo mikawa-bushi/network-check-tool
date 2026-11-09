@@ -1,5 +1,3 @@
-"""Always-on commands: ``watch``, ``status``, ``history``, ``prune``."""
-
 from __future__ import annotations
 
 import json

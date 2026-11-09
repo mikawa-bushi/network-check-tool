@@ -203,7 +203,6 @@ def setup(
 
 
 def _next_steps() -> str:
-    """Commands to try after the quick check that a bare ``netdiag`` runs."""
     from ..report.common import pad, width
 
     steps = [
@@ -290,10 +289,8 @@ def cli(
     """
     setup(lang, verbose, log_file)
     if ctx.invoked_subcommand is None:
-        from .cmd_check import check  # cmd_check imports cli from this module
-
         try:
-            ctx.invoke(check)
+            ctx.invoke(ctx.command.get_command(ctx, "check"))
         except SystemExit:
             click.echo(_next_steps(), err=True)
             raise

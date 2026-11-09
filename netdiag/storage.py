@@ -18,13 +18,6 @@ DEFAULT_DB = Path.home() / ".netdiag" / "history.db"
 
 
 def _synchronized(method):
-    """Serialize a Storage method on ``self._lock``.
-
-    The single sqlite connection is shared across threads (Watcher runs its
-    loop in a background thread), so every method that touches it holds
-    the re-entrant lock for the duration of its work.
-    """
-
     @functools.wraps(method)
     def wrapper(self, *args, **kwargs):
         with self._lock:
@@ -70,11 +63,9 @@ class Storage:
     def __init__(self, path: Optional[Path] = None) -> None:
         self.path = Path(path) if path else DEFAULT_DB
         self.path.parent.mkdir(parents=True, exist_ok=True)
-        # check_same_thread=False lets the background loop (Watcher
-        # start(background=True)) use this connection. A single sqlite connection
-        # object is not safe for *concurrent* use, so a re-entrant lock serializes
-        # every access below. RLock (not Lock) because some public methods call
-        # others (record_diagnosis -> record_result, retention -> downsample).
+        # check_same_thread=False lets other threads use this connection, but a
+        # single sqlite connection object is not safe for *concurrent* use, so a
+        # lock serializes every access below.
         self._lock = threading.RLock()
         self.conn = sqlite3.connect(str(self.path), check_same_thread=False)
         self.conn.row_factory = sqlite3.Row
@@ -264,11 +255,6 @@ class Storage:
             older_than_days=raw_days, bucket_seconds=bucket_seconds
         )
         dropped = self.prune_rollups(older_than_days=rollup_days)
-        # Reclaim file space after large deletes. VACUUM runs under the lock on
-        # purpose: it shares the single connection object, so a concurrent write
-        # from a Watcher worker thread would corrupt it. retention() is a
-        # periodic maintenance call (hourly by default), so the bounded hold
-        # (up to busy_timeout) is acceptable; releasing the lock here would not be.
         try:
             self.conn.execute("VACUUM")
         except sqlite3.OperationalError:

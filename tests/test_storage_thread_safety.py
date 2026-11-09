@@ -1,11 +1,3 @@
-"""Tests for issue #12 (M4): Storage thread safety.
-
-`Storage` opened a single sqlite connection on the main thread, but
-`Watcher.start()` defaults to ``background=True`` and writes from a worker
-thread -- which raised ``sqlite3.ProgrammingError`` (swallowed by the loop, so
-nothing was recorded). These tests pin safe cross-thread use.
-"""
-
 import threading
 import time
 from types import SimpleNamespace
