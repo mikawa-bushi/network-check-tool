@@ -194,6 +194,7 @@ def setup(
     lang: Optional[str] = None, verbose: bool = False, log_file: Optional[str] = None
 ) -> None:
     """Per-run setup shared by the ``netdiag`` group and the exe launcher."""
+    from .. import probes  # noqa: F401  (registers the built-in probes)
     from ..plugins import load_plugins
 
     set_language(lang)
