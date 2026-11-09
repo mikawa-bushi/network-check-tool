@@ -337,14 +337,9 @@ def parse_csv_text(text: str) -> List[Device]:
 
 
 def _load_toml(text: str) -> Any:
-    try:
-        import tomllib  # Python 3.11+
+    import tomllib
 
-        return tomllib.loads(text)
-    except ModuleNotFoundError:  # pragma: no cover - Python 3.10
-        import toml
-
-        return toml.loads(text)
+    return tomllib.loads(text)
 
 
 def parse_structured(data: Any) -> List[Device]:

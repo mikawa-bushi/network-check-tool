@@ -1,6 +1,6 @@
 # network-check-tool — 生産技術者のためのネットワーク点検ツール
 
-![Python Version](https://img.shields.io/badge/Python-3.10%2B-blue)
+![Python Version](https://img.shields.io/badge/Python-3.11%2B-blue)
 ![License](https://img.shields.io/badge/License-MIT-yellow)
 ![PyPI](https://img.shields.io/pypi/v/network-check-tool)
 
@@ -53,14 +53,13 @@ py -m netdiag
 
 インターネットに出られない工場PCには、別のPCで部品をダウンロードして持ち込みます。
 部品はすべてOS・Pythonのバージョンを問わないファイルなので、ダウンロードするPCのOSや
-Pythonのバージョンが工場PCと違ってもかまいません。
+Pythonのバージョンが工場PCと違ってもかまいません。ただし、どちらのPCも Python 3.11 以上にしてください。
+ダウンロードするPCが 3.10 だと、古い 0.5.0 がダウンロードされます。
 
 ```bash
-pip download network-check-tool toml -d wheels                  # ネットにつながるPCで
+pip download network-check-tool -d wheels                       # ネットにつながるPCで
 pip install --no-index --find-links wheels network-check-tool   # 工場PCで
 ```
-
-`toml` は Python 3.10 の工場PCだけが使います。ダウンロードするPCが 3.11 以上だと自動では取得されないので、名前を指定して取得します。
 
 YAML形式の台帳・シナリオを使う場合のみ `pip install "network-check-tool[yaml]"`（CSV/JSON/TOMLは不要）。
 
@@ -254,9 +253,10 @@ zip にまとめます。IPアドレス・MAC・PC名・ユーザー名・SSID�
   list on it to check the line; an HTML report opens in the browser. Precise pings use the
   Windows ICMP API (no admin rights).
 - `netdiag scan` discovers devices on a subnet (ICMP + ARP only).
-- Offline install: run `pip download network-check-tool toml -d wheels` on any PC with
+- Offline install: run `pip download network-check-tool -d wheels` on any PC with
   internet access, then `pip install --no-index --find-links wheels network-check-tool` on the
-  plant PC. Every wheel is pure Python, so the two PCs' OS and Python version need not match.
+  plant PC. Every wheel is pure Python, so the two PCs' OS and Python version need not match,
+  but both need Python 3.11 or newer (pip on 3.10 downloads 0.5.0).
 - The `network-checker` ping dashboard is removed. The last release with it is 0.5.0
   (`pip install "network-check-tool==0.5.0"`).
 

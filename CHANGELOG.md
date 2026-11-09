@@ -4,11 +4,16 @@ All notable changes to this project are documented in this file.
 
 ## [Unreleased]
 
+### Changed
+- Python 3.11 or newer is required. netdiag reads TOML device lists with the
+  standard library, so the `toml` dependency is gone. On Python 3.10, pip keeps
+  installing 0.5.0, the last release that supports it.
+
 ### Removed
 - `network-checker`, the ping-monitoring web dashboard, with its dependencies
   (flask, flask-sqlalchemy, flask-cors, plotly) and the `docker/` setup that ran
-  it. `pip install network-check-tool` now installs `netdiag` only (click, plus
-  toml on Python 3.10). The last release with `network-checker` is 0.5.0:
+  it. `pip install network-check-tool` now installs `netdiag` only (click).
+  The last release with `network-checker` is 0.5.0:
   `pip install "network-check-tool==0.5.0"`.
 
 ## [0.5.0] - 2026-11-09
