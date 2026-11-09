@@ -12,7 +12,13 @@ from contextlib import closing
 
 
 def _netdiag(home, *args):
-    env = dict(os.environ, HOME=str(home), USERPROFILE=str(home), NETDIAG_LANG="en")
+    env = dict(
+        os.environ,
+        HOME=str(home),
+        USERPROFILE=str(home),
+        NETDIAG_LANG="en",
+        PYTHONIOENCODING="utf-8",
+    )
     return subprocess.run(
         [sys.executable, "-m", "netdiag", *args],
         env=env,
