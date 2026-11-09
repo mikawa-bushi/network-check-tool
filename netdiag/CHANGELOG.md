@@ -4,6 +4,8 @@ All notable changes to the `netdiag` package are documented in this file.
 
 ## [Unreleased]
 
+## [0.4.0] - 2026-11-09
+
 ### Fixed
 - On an English Windows, the first Japanese alert stopped `watch` with
   `UnicodeEncodeError`. Alerts, the alert log, the watch state, snapshots and
