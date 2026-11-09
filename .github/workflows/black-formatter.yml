@@ -44,14 +44,7 @@ jobs:
       run: poetry install --only=dev
 
     - name: Run Black check
-      run: poetry run black --check --diff network_check_tool/ netdiag/
-
-    - name: Run Black check on tests (if exists)
-      run: |
-        if [ -d "tests" ]; then
-          poetry run black --check --diff tests/
-        fi
-      continue-on-error: false
+      run: poetry run black --check --diff network_check_tool/ netdiag/ tests/
 
     - name: Run Ruff import-order check
       # Enforce in CI the same import ordering the pre-commit gate applies, so a
@@ -91,11 +84,7 @@ jobs:
       run: poetry install --only=dev
 
     - name: Run Black formatter
-      run: |
-        poetry run black network_check_tool/ netdiag/
-        if [ -d "tests" ]; then
-          poetry run black tests/
-        fi
+      run: poetry run black network_check_tool/ netdiag/ tests/
 
     - name: Commit changes
       run: |
