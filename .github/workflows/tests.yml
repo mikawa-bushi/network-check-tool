@@ -82,26 +82,18 @@ jobs:
     - name: Run pytest
       run: python -m pytest -q
 
-    - name: Smoke — check this PC (exit 0/1/2 = verdict; anything else = crash)
+    - name: Smoke — check this PC
       run: |
-        set +e
-        python -m netdiag --lang en check --format json -o check.json
-        rc=$?
-        echo "exit code: $rc"
-        test "$rc" -le 2 || exit 1
+        bash scripts/expect_verdict.sh python -m netdiag --lang en check --format json -o check.json
         python -c "import json; d=json.load(open('check.json', encoding='utf-8')); print(d['status'], [r['code'] for r in d['host']['results']])"
 
     - name: Smoke — ping, device check and a short soak against loopback
       run: |
-        set +e
-        python -m netdiag --lang ja ping 127.0.0.1 -c 5
-        python -m netdiag --lang en ping 127.0.0.1 -c 5 --json > ping.json
+        bash scripts/expect_verdict.sh python -m netdiag --lang ja ping 127.0.0.1 -c 5
+        bash scripts/expect_verdict.sh python -m netdiag --lang en ping 127.0.0.1 -c 5 --json > ping.json
         python -c "import json; d=json.load(open('ping.json')); print(d['method'], d['received'], '/', d['sent']); assert d['received'] == d['sent'] == 5"
-        rc=$?; test "$rc" -eq 0 || exit 1
-        python -m netdiag --lang ja check --no-host 127.0.0.1 LOOP=127.0.0.1:1
-        rc=$?; echo "exit code: $rc"; test "$rc" -le 2 || exit 1
-        python -m netdiag soak 127.0.0.1 --duration 5 --bucket 2 --format json -o soak.json
-        rc=$?; echo "exit code: $rc"; test "$rc" -le 2 || exit 1
+        bash scripts/expect_verdict.sh python -m netdiag --lang ja check --no-host 127.0.0.1 LOOP=127.0.0.1:1
+        bash scripts/expect_verdict.sh python -m netdiag soak 127.0.0.1 --duration 5 --bucket 2 --format json -o soak.json
 
     - name: Smoke — collect raw tool output
       run: python -m netdiag --lang ja collect -o collect-${{ matrix.os }}.zip

@@ -13,6 +13,7 @@ on:
       - 'packaging/windows/**'
       - 'examples/devices.csv'
       - 'pyproject.toml'
+      - 'scripts/expect_verdict.sh'
       - '.github/workflows/windows-exe.yml'
   workflow_dispatch:
 
@@ -53,19 +54,16 @@ jobs:
       env:
         NETDIAG_NO_OPEN: '1'
       run: |
-        set +e
-        ./dist/netdiag.exe --version || exit 1
-        ./dist/netdiag.exe --lang en check --format json -o check.json
-        rc=$?; echo "check exit code: $rc"; test "$rc" -le 2 || exit 1
-        ./dist/netdiag.exe --lang en ping 127.0.0.1 -c 5 --json > ping.json || exit 1
-        python -c "import json; d=json.load(open('ping.json')); print(d['method'], d['received'], '/', d['sent']); assert d['received'] == d['sent'] == 5" || exit 1
+        ./dist/netdiag.exe --version
+        bash scripts/expect_verdict.sh ./dist/netdiag.exe --lang en check --format json -o check.json
+        ./dist/netdiag.exe --lang en ping 127.0.0.1 -c 5 --json > ping.json
+        python -c "import json; d=json.load(open('ping.json')); print(d['method'], d['received'], '/', d['sent']); assert d['received'] == d['sent'] == 5"
         # Drag-and-drop mode: a device list as the only argument, Enter to close.
         mkdir -p dropped
         python -c "open('dropped/line.csv', 'w', encoding='cp932', newline='').write('名前,IPアドレス\r\nLOOP,127.0.0.1\r\n')"
-        echo | ./dist/netdiag.exe "$(cygpath -w "$PWD/dropped/line.csv")"
-        rc=$?; echo "drop exit code: $rc"; test "$rc" -le 2 || exit 1
+        echo | bash scripts/expect_verdict.sh ./dist/netdiag.exe "$(cygpath -w "$PWD/dropped/line.csv")"
         ls dropped
-        test -n "$(ls dropped/*.html)" || exit 1
+        test -n "$(ls dropped/*.html)"
 
     - name: Package
       id: pkg
