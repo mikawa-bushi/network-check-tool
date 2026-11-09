@@ -1,4 +1,4 @@
-"""Every text file the packages read or write names its encoding.
+"""Every text file netdiag reads or writes names its encoding.
 
 Without one, Python uses the locale's: cp1252 on an English Windows, which can't
 hold the Japanese in alerts, logs and snapshots. CI on Linux never sees that.
@@ -30,8 +30,7 @@ def _unencoded_text_io(call: ast.Call) -> bool:
 def test_every_text_file_access_names_an_encoding():
     offenders = [
         f"{path.relative_to(_ROOT)}:{node.lineno}"
-        for pkg in ("netdiag", "network_check_tool")
-        for path in sorted((_ROOT / pkg).rglob("*.py"))
+        for path in sorted((_ROOT / "netdiag").rglob("*.py"))
         for node in ast.walk(ast.parse(path.read_text(encoding="utf-8")))
         if isinstance(node, ast.Call) and _unencoded_text_io(node)
     ]

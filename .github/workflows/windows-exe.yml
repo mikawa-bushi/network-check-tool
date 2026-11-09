@@ -45,8 +45,7 @@ jobs:
       run: |
         pyinstaller --noconfirm --clean --onefile --console --name netdiag \
           --copy-metadata network-check-tool \
-          --exclude-module tkinter --exclude-module flask --exclude-module plotly \
-          --exclude-module network_check_tool \
+          --exclude-module tkinter \
           packaging/windows/netdiag_exe.py
         ls -l dist
 

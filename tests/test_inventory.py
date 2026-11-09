@@ -140,14 +140,63 @@ def test_structured_formats_and_defaults(tmp_path):
     assert len(load_devices(p)) == 3
 
 
-def test_network_checker_hosts_toml_is_a_device_list(tmp_path):
+def test_hosts_toml_is_a_device_list(tmp_path):
     p = tmp_path / "hosts.toml"
     p.write_text(
-        '[[host]]\nname = "192.168.3.39"\ninterval = 30\nrtt_warn_ms = 200\n',
+        "[[host]]\n"
+        'name = "192.168.3.39"\n'
+        "interval = 30\n"
+        "rtt_warn_ms = 200\n"
+        "loss_warn_pct = 5\n\n"
+        "[[host]]\n"
+        'name = "192.168.3.40"\n',
         encoding="utf-8",
     )
-    d = load_devices(p)[0]
-    assert (d.host, d.interval, d.rtt_warn_ms) == ("192.168.3.39", 30, 200.0)
+    devs = load_devices(p)
+    assert [(d.host, d.interval, d.rtt_warn_ms, d.loss_warn_pct) for d in devs] == [
+        ("192.168.3.39", 30, 200.0, 5.0),
+        ("192.168.3.40", None, None, None),
+    ]
+
+
+@pytest.mark.parametrize("key", ["host", "hosts"])
+def test_hosts_json_takes_bare_names_and_tables(tmp_path, key):
+    p = tmp_path / "hosts.json"
+    p.write_text(
+        json.dumps({key: ["a.example", {"name": "b.example", "interval": 10}]}),
+        encoding="utf-8",
+    )
+    assert [(d.host, d.interval) for d in load_devices(p)] == [
+        ("a.example", None),
+        ("b.example", 10),
+    ]
+
+
+def test_csv_interval_and_rtt_limit_columns(tmp_path):
+    path = tmp_path / "line1.csv"
+    path.write_bytes(
+        "名前,IPアドレス,監視間隔,遅延上限\r\nPLC-1,192.168.3.39,10,5\r\nHMI,192.168.3.40,,\r\n".encode(
+            "cp932"
+        )
+    )
+    assert [
+        (d.name, d.host, d.interval, d.rtt_warn_ms) for d in load_devices(path)
+    ] == [
+        ("PLC-1", "192.168.3.39", 10, 5.0),
+        ("HMI", "192.168.3.40", None, None),
+    ]
+
+
+def test_structured_list_errors_say_what_is_missing(tmp_path):
+    missing_host = tmp_path / "bad.toml"
+    missing_host.write_text("[[host]]\ninterval = 5\n", encoding="utf-8")
+    with pytest.raises(InventoryError, match="missing IP address/host"):
+        load_devices(missing_host)
+
+    no_list = tmp_path / "empty.json"
+    no_list.write_text(json.dumps({"other": []}), encoding="utf-8")
+    with pytest.raises(InventoryError, match="expected a 'devices' list"):
+        load_devices(no_list)
 
 
 def test_yaml_device_list(tmp_path):

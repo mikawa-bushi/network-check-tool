@@ -139,10 +139,8 @@ cython_debug/
 # PyCharm
 .idea/
 
-# Network Checker specific
+# Local databases
 *.db
-network_check_tool.db
-instance/
 
 # VS Code
 .vscode/
