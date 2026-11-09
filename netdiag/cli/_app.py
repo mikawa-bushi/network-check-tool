@@ -10,7 +10,7 @@ from typing import List, Optional
 import click
 
 from .. import __version__
-from ..i18n import detect, set_language
+from ..i18n import detect, set_language, tr
 
 logger = logging.getLogger("netdiag.cli")
 
@@ -202,6 +202,31 @@ def setup(
     load_plugins()
 
 
+def _next_steps() -> str:
+    """Commands to try after the quick check that a bare ``netdiag`` runs."""
+    from ..report.common import pad, width
+
+    steps = [
+        (
+            tr("台帳の機器もまとめて診断", "check every device in a list"),
+            tr("netdiag check -f 台帳.csv", "netdiag check -f devices.csv"),
+        ),
+        (
+            tr("同じネットワークの機器を探す", "find devices on this network"),
+            "netdiag scan",
+        ),
+        (
+            tr("ときどき切れる原因を探す", "catch intermittent drops"),
+            "netdiag soak 192.168.3.39 --duration 1h",
+        ),
+        (tr("使えるコマンドの一覧", "list every command"), "netdiag --help"),
+    ]
+    cols = max(width(what) for what, _ in steps)
+    lines = ["", tr("次にできること:", "What next:")]
+    lines += [f"  {pad(what, cols)}  {cmd}" for what, cmd in steps]
+    return "\n".join(lines)
+
+
 class Progress:
     """One overwriting status line on stderr (only on an interactive terminal)."""
 
@@ -220,7 +245,10 @@ class Progress:
             self._shown = False
 
 
-@click.group(context_settings={"help_option_names": ["-h", "--help"]})
+@click.group(
+    context_settings={"help_option_names": ["-h", "--help"]},
+    invoke_without_command=True,
+)
 @click.version_option(version=_resolve_version(), prog_name="netdiag")
 @click.option(
     "--lang",
@@ -248,13 +276,24 @@ class Progress:
         "Write netdiag logs to this file instead of stderr.",
     ),
 )
-def cli(lang: Optional[str], verbose: bool, log_file: Optional[str]) -> None:
+@click.pass_context
+def cli(
+    ctx: click.Context, lang: Optional[str], verbose: bool, log_file: Optional[str]
+) -> None:
     """netdiag — 設備ネットワークの診断 / network & device diagnosis.
 
     \b
-    netdiag check                  このPCのネットワークを診断
+    netdiag                        このPCのネットワークを診断（netdiag check と同じ）
     netdiag check 192.168.3.39:502 機器（PLC等）への到達性とポートを診断
     netdiag check -f devices.csv   台帳の全機器をまとめて診断
     netdiag scan                   同じネットワーク上の機器を一覧
     """
     setup(lang, verbose, log_file)
+    if ctx.invoked_subcommand is None:
+        from .cmd_check import check  # cmd_check imports cli from this module
+
+        try:
+            ctx.invoke(check)
+        except SystemExit:
+            click.echo(_next_steps(), err=True)
+            raise

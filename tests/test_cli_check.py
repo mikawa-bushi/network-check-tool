@@ -134,6 +134,56 @@ def test_check_output_file_format_from_extension(monkeypatch, tmp_path):
     assert json.loads(res.output)["devices"][0]["device"]["host"] == "192.168.3.39"
 
 
+def _patch_problem_on_this_pc(monkeypatch):
+    seen = {}
+
+    def fake_run_check(devices, config=None, **kw):
+        seen["devices"], seen["kw"] = devices, kw
+        host = Diagnosis(
+            results=[
+                CheckResult(
+                    name="gateway",
+                    status=Status.FAIL,
+                    summary="no reply from 192.168.3.1",
+                    code="gateway.down",
+                    layer="L3",
+                )
+            ],
+            hypotheses=[],
+            healthy=False,
+        )
+        return CheckReport(host=host, hostname="pc", platform="test")
+
+    monkeypatch.setattr(runner_mod, "run_check", fake_run_check)
+    return seen
+
+
+def test_bare_netdiag_checks_this_pc_then_suggests_next_commands(monkeypatch):
+    seen = _patch_problem_on_this_pc(monkeypatch)
+    res = CliRunner().invoke(cli, [])
+    assert seen["devices"] == [] and seen["kw"]["include_host"] is True
+    assert "no reply from 192.168.3.1" in res.stdout
+    for cmd in ("netdiag check -f", "netdiag scan", "netdiag soak", "netdiag --help"):
+        assert cmd in res.stderr
+    assert res.exit_code == 1
+
+
+def test_bare_netdiag_takes_the_group_options(monkeypatch):
+    _patch_problem_on_this_pc(monkeypatch)
+    res = CliRunner().invoke(cli, ["--lang", "ja"])
+    assert "結論" in res.stdout and "netdiag check -f 台帳.csv" in res.stderr
+    res = CliRunner().invoke(cli, ["--lang", "en"])
+    assert "Result:" in res.stdout and "netdiag check -f devices.csv" in res.stderr
+
+
+def test_netdiag_help_does_not_run_the_check(monkeypatch):
+    seen = _patch_run(monkeypatch)
+    for flag in ("--help", "-h"):
+        res = CliRunner().invoke(cli, [flag])
+        assert res.exit_code == 0 and "Usage:" in res.stdout
+    assert seen == {}
+
+
 def test_check_lang_option(monkeypatch):
     _patch_run(monkeypatch)
     res = CliRunner().invoke(cli, ["--lang", "ja", "check", "192.168.3.39"])
