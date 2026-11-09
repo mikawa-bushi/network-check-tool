@@ -456,56 +456,6 @@ def reconcile_device(engine: Engine, diag: Diagnosis) -> Diagnosis:
     return diag
 
 
-# Quick host-side probes for an on-demand diagnosis of one target (no internet
-# assumptions, no slow optional checks).
-QUICK_HOST_PROBES = ["interface", "link", "ipconfig", "gateway", "neighbor"]
-
-
-def diagnose_target(
-    host: str,
-    ports: Optional[List[int]] = None,
-    config: Optional[Dict[str, Any]] = None,
-):
-    """Why is *host* unreachable? Returns the most relevant :class:`Hypothesis`.
-
-    Used by monitors when a device degrades: checks this PC's own network first
-    (a broken local link explains every device at once), then the device itself
-    (route, ARP presence, ping statistics, ports). Returns None when nothing is
-    wrong any more.
-    """
-    device = Device(name=host, host=host, ports=list(ports or []))
-    return _diagnose([device], config)[host]
-
-
-def diagnose_targets(
-    hosts: List[str], config: Optional[Dict[str, Any]] = None
-) -> Dict[str, Any]:
-    """:func:`diagnose_target` for several hosts at once: ``{host: Hypothesis}``.
-
-    One check covers them all -- this PC's network is examined once and the
-    devices side by side -- so a whole line going down costs one diagnosis,
-    not one per device.
-    """
-    hosts = list(dict.fromkeys(hosts))
-    return _diagnose([Device(name=h, host=h) for h in hosts], config) if hosts else {}
-
-
-def _diagnose(devices: List[Device], config: Optional[Dict[str, Any]]):
-    cfg = {"internet": False, **(config or {})}
-    rep = run_check(devices, config=cfg, only=QUICK_HOST_PROBES)
-    host_fail = [h for h in rep.host.hypotheses if h.is_fault]
-    found = {}
-    for r in rep.devices:
-        dev = r.diagnosis
-        if host_fail:
-            found[r.device.host] = host_fail[0]
-        elif dev is not None and dev.primary is not None:
-            found[r.device.host] = dev.primary
-        else:
-            found[r.device.host] = rep.host.primary
-    return found
-
-
 def _absent_or_none(ip: str, hn: netinfo.HostNetwork, table: Dict[str, Any]):
     """No ARP entry after pinging an on-link address means ARP got no answer.
 
