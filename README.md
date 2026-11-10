@@ -10,6 +10,7 @@
 
 ```bash
 pip install network-check-tool
+netdiag                            # このPCを点検し、次に試すコマンドも表示（まずはこれ）
 netdiag check -f 台帳.csv          # このPC + 台帳の全機器を点検
 ```
 
@@ -49,7 +50,7 @@ netdiag check -f 台帳.csv          # このPC + 台帳の全機器を点検
 pip install network-check-tool
 # Windows で netdiag にパスが通っていない場合:
 py -m pip install network-check-tool
-py -m netdiag check
+py -m netdiag
 ```
 
 インターネットに出られない工場PCには、別のPCで部品をダウンロードして持ち込みます。
@@ -66,7 +67,8 @@ YAML形式の台帳・シナリオを使う場合のみ `pip install "network-ch
 ### 1. このPCのネットワークを点検
 
 ```bash
-netdiag check
+netdiag            # netdiag check と同じ点検のあと、次に試すコマンドを表示
+netdiag check      # 点検だけ
 ```
 
 LANケーブルのリンク速度・全二重/半二重・エラー、IPアドレス（169.254.x.x になっていないか、
@@ -209,17 +211,18 @@ zip にまとめます。IPアドレス・MAC・PC名・ユーザー名・SSID�
 
 | コマンド | 内容 |
 |---|---|
+| `netdiag` | このPCを点検（`netdiag check` と同じ）し、次に試すコマンドを表示 |
 | `netdiag check [機器...] [-f 台帳] [-p ポート]` | このPCと機器を点検（`--count` `--duration` `--internet` `-o` `--format text/json/html/csv` `--all`） |
 | `netdiag scan [ネットワーク]` | 同じネットワーク上の機器を一覧（`--save 台帳.csv`、`-p` でポートも確認） |
 | `netdiag ping <host>` | pingの精密統計（損失の95%上限・中央値/p95/最大・ジッタ） |
 | `netdiag soak [機器...] [-f 台帳] --duration 2h` | 長時間の連続監視。瞬断の時刻・長さ・範囲（全機器/一部/1台）とPC側のリンク断を時系列で（`--format text/json/html/csv` `-o`） |
 | `netdiag collect [--target IP]` | 不具合報告用に、OSコマンドの生出力と解釈結果をzipに収集（既定でIP・MAC等を伏せる） |
-| `netdiag explain [項目]` | 各チェックの内容と、同じことを手で確かめるコマンド |
+| `netdiag explain [項目]` | チェックの一覧。項目を指定すると、その内容と同じことを手で確かめるコマンド |
 | `netdiag scenario <file>` | YAML/JSONのシナリオ（このPCの確認項目 + 機器）で点検。例: [`examples/line1.yaml`](examples/line1.yaml) |
 | `netdiag snapshot save/diff` | 正常時のネットワーク設定を保存し、「何が変わったか」を比較 |
 | `netdiag peer serve/test` | 2台のPC間でLAN品質（ロス・ジッタ・スループット）を測定 |
-| `netdiag watch` | 常時監視し、状態が変わったときだけ通知（閉じたネットワークでは `--no-internet`） |
-| `netdiag status / history / prune / monitor / service` | 監視状態・履歴分析・履歴整理・systemdサービス化 |
+| `netdiag watch` | 常時監視し、状態が変わったときだけ通知。毎回の結果を履歴DBに記録（閉じたネットワークでは `--no-internet`） |
+| `netdiag status / history / prune / service` | 監視状態・履歴分析・履歴整理・systemdサービス化 |
 
 詳しい設計と全オプションは [docs/netdiag.md](docs/netdiag.md) を参照してください。
 
@@ -257,7 +260,7 @@ network-checker start-monitoring --config 台帳.csv --diagnose   # 監視だけ
 | `network-checker run-server [--devices 台帳] [--host H] [--port P]` | ダッシュボード（既定 127.0.0.1:9991）。`--devices` で台帳の機器名・グループを表示し、127.0.0.1 で起動したときはその機器を監視 |
 | `network-checker ping <host> [--count N] [--json]` | pingして監視DBに記録 |
 | `network-checker status [--host H] [--json]` | 監視DBの最近の結果 |
-| `network-checker init` / `clear` | DBの初期化 / 全削除 |
+| `network-checker clear` | 監視DBの全削除（DBはどのコマンドでも自動で作成） |
 
 > **セキュリティ**: ダッシュボードとAPIには認証がありません。`run-server` は既定でこのPC（127.0.0.1）だけで
 > 待ち受けます。ネットワークに公開する（`--host 0.0.0.0`）場合は、認証付きのリバースプロキシを前段に置いてください。
@@ -276,6 +279,7 @@ API: `GET /api/overview?hours=`（ライン一覧: 機器ごとの状態）, `/a
 
 **network-check-tool** helps production engineers check plant networks quickly and precisely:
 
+- `netdiag` alone checks this PC and then suggests the next commands to try.
 - `netdiag check -f devices.csv` checks **this PC** (link speed/duplex/errors, IP-setting conflicts,
   gateway, ARP) and **every device on the line** (subnet/route, ping statistics with a 95 % upper
   bound on loss, median/p95/max latency and jitter, fresh ARP evidence that separates "device off"

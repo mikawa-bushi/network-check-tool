@@ -12,7 +12,6 @@ import time
 import pytest
 
 from netdiag.alerting import MultiSink
-from netdiag.scheduler import Monitor
 from netdiag.storage import Storage
 
 
@@ -76,32 +75,6 @@ def test_multisink_logs_failure_and_continues(caplog):
     warnings = [r for r in caplog.records if r.levelno >= logging.WARNING]
     assert warnings, "expected a warning log for the failing sink"
     assert any(r.exc_info for r in warnings), "expected a traceback (exc_info)"
-
-
-def test_monitor_loop_logs_tick_failure(tmp_path, caplog):
-    st = Storage(tmp_path / "m.db")
-    mon = Monitor(interval=0.05, storage=st)
-    mon.engine = _BoomEngine()
-
-    with caplog.at_level(logging.WARNING, logger="netdiag"):
-        mon.start()  # background
-        try:
-            deadline = time.time() + 3
-            got = False
-            while time.time() < deadline:
-                if any(
-                    r.name.startswith("netdiag.scheduler")
-                    and r.levelno >= logging.WARNING
-                    for r in caplog.records
-                ):
-                    got = True
-                    break
-                time.sleep(0.05)
-        finally:
-            mon.stop()
-
-    assert got, "expected a warning log from the monitor loop on tick failure"
-    st.close()
 
 
 def test_watcher_loop_logs_tick_failure(tmp_path, caplog):

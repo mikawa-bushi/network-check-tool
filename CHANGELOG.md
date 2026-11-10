@@ -4,6 +4,9 @@ All notable changes to this project are documented in this file.
 
 ## [Unreleased]
 
+### Removed
+- `network-checker init`. Every command already creates the database.
+
 ## [0.5.0] - 2026-11-09
 
 The first release on PyPI since 0.1.1, so it also brings everything listed

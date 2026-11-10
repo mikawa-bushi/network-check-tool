@@ -5,10 +5,21 @@ All notable changes to the `netdiag` package are documented in this file.
 ## [Unreleased]
 
 ### Fixed
-- `watch`, `monitor`, `scenario`, `explain` and `list-probes` ran with no
-  checks at all: only `check` registered the built-in probes. `watch` reported
-  OK on every sweep and recorded nothing, whatever the network did. Every
-  command registers them again, as before 0.3.0.
+- `watch`, `scenario` and `explain` ran with no checks at all: only `check`
+  registered the built-in probes. `watch` reported OK on every sweep and
+  recorded nothing, whatever the network did. Every command registers them
+  again, as before 0.3.0.
+
+### Changed
+- `netdiag` with no command runs `netdiag check` (this PC) and then lists the
+  next commands to try. `netdiag --help` still prints the help.
+
+### Removed
+- `netdiag list-probes`. `netdiag explain` with no argument lists every check
+  with its layer.
+- `netdiag monitor`. Use `netdiag watch`, which records every sweep to the same
+  history database and also alerts.
+- `netdiag.scheduler.Monitor`, which only `monitor` used.
 
 ## [0.4.0] - 2026-11-09
 

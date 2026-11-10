@@ -328,18 +328,6 @@ def status(host, limit, as_json):
 
 
 @cli.command()
-def init():
-    """Initialize the database"""
-    app = create_app()
-
-    with app.app_context():
-        from .models import db
-
-        db.create_all()
-        click.echo("Database initialized successfully.")
-
-
-@cli.command()
 @click.confirmation_option(prompt="Are you sure you want to clear all ping data?")
 def clear():
     """Clear all ping data from the database"""

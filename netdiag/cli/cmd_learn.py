@@ -1,5 +1,3 @@
-"""Teaching commands: ``netdiag explain`` and ``netdiag list-probes``."""
-
 from __future__ import annotations
 
 import sys
@@ -9,8 +7,6 @@ import click
 from ..core import all_probes, get_probe
 from ..i18n import tr
 from ._app import cli
-
-_LAYERS = ("L1", "L2", "L3", "L4", "L7", "SYSTEM", "?")
 
 
 @cli.command()
@@ -70,14 +66,3 @@ def explain(probe_name):
         )
         for s in steps:
             click.echo(f"  - {s}")
-
-
-@cli.command(name="list-probes")
-def list_probes():
-    """登録されているチェックを層ごとに一覧 / List registered probes by layer."""
-    by_layer: dict = {}
-    for name, cls in all_probes().items():
-        by_layer.setdefault(cls.layer, []).append(name)
-    for layer in _LAYERS:
-        if layer in by_layer:
-            click.echo(f"{layer}: {', '.join(sorted(by_layer[layer]))}")

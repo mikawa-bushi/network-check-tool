@@ -1,16 +1,7 @@
-"""Tests for issue #12 (M4): Storage thread safety.
-
-`Storage` opened a single sqlite connection on the main thread, but
-`Monitor.start()` / `Watcher.start()` default to ``background=True`` and write
-from a worker thread -- which raised ``sqlite3.ProgrammingError`` (swallowed by
-the loop, so nothing was recorded). These tests pin safe cross-thread use.
-"""
-
 import threading
 import time
 from types import SimpleNamespace
 
-from netdiag.scheduler import Monitor
 from netdiag.storage import Storage
 from netdiag.watch import Watcher
 
@@ -99,19 +90,6 @@ def _wait_for_samples(st, deadline=3.0):
             return True
         time.sleep(0.05)
     return False
-
-
-def test_monitor_background_records(tmp_path):
-    st = Storage(tmp_path / "m.db")
-    mon = Monitor(interval=0.05, storage=st)
-    mon.engine = _FakeEngine()
-    mon.start()  # background=True by default
-    try:
-        assert _wait_for_samples(st)
-    finally:
-        mon.stop()
-    # Monitor.stop() does not own storage (unlike Watcher.stop()), so close here.
-    st.close()
 
 
 def test_watcher_background_records(tmp_path):

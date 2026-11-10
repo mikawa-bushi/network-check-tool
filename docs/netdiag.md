@@ -91,17 +91,18 @@ from before proves nothing — the device may have died seconds ago.
 
 | Command | Purpose |
 |---|---|
+| `netdiag` | Same as `netdiag check` (this PC only), then the next commands to try |
 | `netdiag check [TARGET...] [-f FILE] [-p PORT]` | Check this PC and devices. `TARGET` = `192.168.3.39`, `192.168.3.39:502`, `PLC1=192.168.3.39:modbus,4840` |
 | `netdiag scan [NETWORK...] [--save FILE]` | Discover devices (ICMP + ARP; ports only with `-p`). `NETWORK` = CIDR, `a.b.c.d-e`, or the PC's own subnets |
 | `netdiag ping HOST [-c N] [-i S] [--json]` | Precise ping statistics |
 | `netdiag soak [TARGET...] [-f FILE] [--duration 2h]` | Hours-long continuous measurement: outage timeline, correlation across devices, this PC's link drops/NIC errors |
 | `netdiag collect [--target IP] [--no-mask] [--no-ping]` | Zip the raw output of the OS commands netdiag parses (masked) for bug reports |
-| `netdiag explain [PROBE]` / `list-probes` | What each check does, the manual commands, and the next steps |
+| `netdiag explain [PROBE]` | With no `PROBE`, every check with its layer; with one, what it does, the manual commands, and the next steps |
 | `netdiag scenario FILE` | A YAML/JSON scenario: `checks` (host probes), `devices` (device list), `config` |
 | `netdiag snapshot save/list/diff [NAME]` | Save the network configuration while it works; diff later ("what changed?") |
 | `netdiag peer serve` / `peer test ADDR` | Two-host LAN quality (loss/jitter/throughput) for closed networks |
-| `netdiag watch` | Always-on: light loop, alerts only on state change (`--no-internet` on closed networks), webhook/Slack/desktop sinks |
-| `netdiag status` / `history` / `prune` / `monitor` | Watcher state, baseline & change-point analysis, retention, periodic recording |
+| `netdiag watch` | Always-on: light loop, alerts only on state change (`--no-internet` on closed networks), webhook/Slack/desktop sinks; records every sweep to the history DB (`--no-save` to skip) |
+| `netdiag status` / `history` / `prune` | Watcher state, baseline & change-point analysis, retention |
 | `netdiag service print/install` | systemd unit for `watch` |
 
 Global options: `--lang ja|en` (default: `NETDIAG_LANG`, then the locale, else
