@@ -4,6 +4,12 @@ All notable changes to the `netdiag` package are documented in this file.
 
 ## [Unreleased]
 
+### Fixed
+- `watch`, `monitor`, `scenario`, `explain` and `list-probes` ran with no
+  checks at all: only `check` registered the built-in probes. `watch` reported
+  OK on every sweep and recorded nothing, whatever the network did. Every
+  command registers them again, as before 0.3.0.
+
 ## [0.4.0] - 2026-11-09
 
 ### Fixed
