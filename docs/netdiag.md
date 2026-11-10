@@ -6,9 +6,8 @@ should I check next?"** — for this PC and for every device on the line (PLCs,
 HMIs, robot controllers, sensors, gateways). It runs offline, unprivileged, on
 Windows, Linux and macOS, with the standard library and `click` only.
 
-It ships in the same package as `network-checker`; installing the package gives
-you both commands. For a task-oriented introduction (in Japanese) see the
-[README](../README.md).
+It is installed with `pip install network-check-tool`. For a task-oriented
+introduction (in Japanese) see the [README](../README.md).
 
 ## Design in one picture
 
@@ -216,8 +215,9 @@ devices:
 
 Recognised columns/keys: name, host, ports, group, note, mac, rtt_warn_ms,
 loss_warn_pct, interval (Japanese aliases such as 名前・IPアドレス・ポート・
-ライン・備考・MACアドレス・遅延上限・ロス上限・監視間隔 are accepted). The same
-files drive `network-checker start-monitoring --config`.
+ライン・備考・MACアドレス・遅延上限・ロス上限・監視間隔 are accepted). A
+`[[host]]` / `hosts` list whose entries give only `name` loads too, and each
+name is used as the host.
 
 ## Always-on watching (`netdiag watch`)
 
@@ -229,13 +229,6 @@ files drive `network-checker start-monitoring --config`.
 - Alerts: `~/.netdiag/alerts.jsonl` (+ `.log`), optional `--webhook-url`,
   `--slack-url`, `--desktop`; state in `~/.netdiag/state.json`.
 - History is downsampled hourly after 7 days and kept 90 days (`prune`).
-
-For per-device long-term monitoring with a dashboard, use
-`network-checker run-server --devices devices.csv` (monitor + dashboard in one
-process) or `network-checker start-monitoring --config devices.csv --diagnose`:
-when a device degrades, `netdiag.runner.diagnose_target()` checks this PC's
-network first and then that device, and the root cause is attached to the
-alert — and shown on the dashboard's line board next to the device.
 
 ## Extending with plugins
 
@@ -262,7 +255,7 @@ netdiag/
 ├── probes/        interface, link, ipconfig, gateway, neighbor, icmp/external, dns, dualstack,
 │                  tcp, firewall, http, tls, system/clock, wifi, traceroute, device (route/reach/ports)
 ├── diagnosis/     engine (dep-graph, transitive gating), rules (advice), baseline, changepoint
-├── runner.py      run_check(), diagnose_target(), live NIC-error / link-flap probe
+├── runner.py      run_check(), live NIC-error / link-flap probe
 ├── soak.py        long-run recorder: outages, incidents, NIC events (report/soak.py renders it)
 ├── collect.py     raw command capture + structure-preserving masking
 ├── launcher.py    netdiag.exe: double-click / drag & drop

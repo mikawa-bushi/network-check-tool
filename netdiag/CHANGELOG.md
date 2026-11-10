@@ -20,6 +20,8 @@ All notable changes to the `netdiag` package are documented in this file.
 - `netdiag monitor`. Use `netdiag watch`, which records every sweep to the same
   history database and also alerts.
 - `netdiag.scheduler.Monitor`, which only `monitor` used.
+- `netdiag.runner.diagnose_target()` and `diagnose_targets()`, which only the
+  removed `network-checker` monitor used.
 
 ## [0.4.0] - 2026-11-09
 

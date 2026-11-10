@@ -33,26 +33,3 @@ def ja():
     i18n.set_language("ja")
     yield
     i18n.set_language("en")
-
-
-class RecordingSink:
-    """Alert sink that keeps every emitted transition."""
-
-    def __init__(self):
-        self.events = []
-
-    def emit(self, transition):
-        self.events.append(transition)
-
-
-@pytest.fixture
-def recording_sink():
-    return RecordingSink()
-
-
-@pytest.fixture
-def idle_monitor(monkeypatch):
-    """Monitors a test starts register hosts but never ping (no network, no rows)."""
-    from network_check_tool.services import SchedulerService
-
-    monkeypatch.setattr(SchedulerService, "_sweep", lambda self, interval: None)
