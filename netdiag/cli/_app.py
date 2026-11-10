@@ -56,14 +56,11 @@ def _resolve_version() -> str:
     Lets ``netdiag --version`` work both when pip-installed and when run from a
     source checkout (where the distribution metadata isn't present).
     """
-    try:
-        from importlib.metadata import PackageNotFoundError, version
+    from importlib.metadata import PackageNotFoundError, version
 
-        try:
-            return version("network-check-tool")
-        except PackageNotFoundError:
-            return __version__
-    except ImportError:  # pragma: no cover
+    try:
+        return version("network-check-tool")
+    except PackageNotFoundError:
         return __version__
 
 

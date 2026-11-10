@@ -24,7 +24,7 @@ poetry run black --check netdiag/ tests/
 poetry run ruff check .          # import order (isort rules)
 ```
 
-CI runs on Python 3.10; please keep the code 3.10-compatible.
+CI runs on Python 3.11 and 3.14; please keep the code 3.11-compatible.
 
 ## Where things live (netdiag)
 
