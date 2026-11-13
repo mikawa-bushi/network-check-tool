@@ -9,6 +9,7 @@ import io
 import json
 import sys
 from pathlib import Path
+from types import SimpleNamespace
 
 import pytest
 
@@ -202,3 +203,62 @@ def test_usage_error_after_lang_is_in_that_language(run, monkeypatch):
     monkeypatch.setenv("NETDIAG_LANG", "en")
     code, _, err = run("--lang", "ja", "--bogus")
     assert code == 4 and err.startswith("指定に誤りがあります")
+
+
+# ------------------------------------------------- Windows console (simulated)
+
+
+class _Console(io.TextIOWrapper):
+    def isatty(self):
+        return True
+
+    def fileno(self):
+        return 1
+
+
+class _Kernel32:
+    """GetConsoleMode/SetConsoleMode of a console that may refuse VT mode."""
+
+    def __init__(self, vt_supported):
+        self.vt_supported = vt_supported
+        self.mode = 0x0003
+
+    def GetConsoleMode(self, handle, mode_ref):
+        mode_ref._obj.value = self.mode
+        return 1
+
+    def SetConsoleMode(self, handle, mode):
+        if not self.vt_supported:
+            return 0
+        self.mode = mode
+        return 1
+
+
+def _check_on_windows_console(run, monkeypatch, vt_supported):
+    import ctypes
+
+    from netdiag.cli import _app
+
+    kernel32 = _Kernel32(vt_supported)
+    monkeypatch.setattr(_app, "_WINDOWS", True, raising=False)
+    monkeypatch.setattr(ctypes, "windll", SimpleNamespace(kernel32=kernel32), False)
+    monkeypatch.setitem(sys.modules, "msvcrt", SimpleNamespace(get_osfhandle=id))
+    console = _Console(io.BytesIO(), encoding="utf-8")
+    real, sys.stdout = sys.stdout, console
+    try:
+        assert run("check")[0] == 0
+        console.flush()
+        return console.buffer.getvalue().decode("utf-8"), kernel32
+    finally:
+        sys.stdout = real
+
+
+def test_windows_console_is_switched_to_vt_mode_before_colour(run, monkeypatch):
+    out, kernel32 = _check_on_windows_console(run, monkeypatch, vt_supported=True)
+    assert kernel32.mode & 0x0004
+    assert "\x1b[" in out
+
+
+def test_windows_console_without_vt_mode_gets_no_escape_codes(run, monkeypatch):
+    out, _ = _check_on_windows_console(run, monkeypatch, vt_supported=False)
+    assert "Result:" in out and "\x1b" not in out

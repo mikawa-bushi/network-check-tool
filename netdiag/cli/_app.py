@@ -274,8 +274,44 @@ def format_from_path(
     return default
 
 
-def color_wanted(no_color: bool) -> bool:
-    return sys.stdout.isatty() and not no_color
+_WINDOWS = os.name == "nt"
+_ENABLE_VIRTUAL_TERMINAL_PROCESSING = 0x0004
+
+
+def _enable_vt(stream) -> bool:
+    """Switch a Windows console to VT mode; False where it cannot be (pre-Win10)."""
+    try:
+        import ctypes
+        import msvcrt
+
+        kernel32 = ctypes.windll.kernel32  # type: ignore[attr-defined]
+        handle = msvcrt.get_osfhandle(stream.fileno())  # type: ignore[attr-defined]
+        mode = ctypes.c_ulong()
+        if not kernel32.GetConsoleMode(handle, ctypes.byref(mode)):
+            return False
+        vt = _ENABLE_VIRTUAL_TERMINAL_PROCESSING
+        return bool(mode.value & vt or kernel32.SetConsoleMode(handle, mode.value | vt))
+    except (ImportError, AttributeError, OSError, ValueError):
+        return False
+
+
+def ansi_ok(stream) -> bool:
+    """True when *stream* is a terminal that renders ANSI escape codes.
+
+    A Windows 10 console prints them raw (``←[32m``) until VT processing is
+    switched on, and click no longer does that through colorama.
+    """
+    try:
+        if not stream.isatty():
+            return False
+    except (AttributeError, ValueError):
+        return False
+    return not _WINDOWS or _enable_vt(stream)
+
+
+def color_wanted(no_color: bool, err: bool = False) -> bool:
+    """Colour for stdout (or stderr with *err*) unless --no-color."""
+    return not no_color and ansi_ok(sys.stderr if err else sys.stdout)
 
 
 # Typographic characters netdiag prints, with stand-ins for encodings that
@@ -375,10 +411,10 @@ def _next_steps() -> str:
 
 
 class Progress:
-    """One overwriting status line on stderr (only on an interactive terminal)."""
+    """One overwriting status line on stderr (only on a terminal that renders ANSI)."""
 
     def __init__(self, enabled: Optional[bool] = None) -> None:
-        self.enabled = sys.stderr.isatty() if enabled is None else enabled
+        self.enabled = ansi_ok(sys.stderr) if enabled is None else enabled
         self._shown = False
 
     def __call__(self, message: str) -> None:
