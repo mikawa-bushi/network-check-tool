@@ -101,6 +101,11 @@ _NEIGH_STATE_INTS = {
 }
 
 
+# NDIS media that carry IP without Ethernet framing, so no ARP: WireGuard and
+# Tailscale (wintun), mobile broadband, dial-up/VPN miniports.
+_NO_ARP_MEDIA = {"ip", "tunnel", "wan", "wireless wan", "cowan"}
+
+
 def _powershell() -> Optional[str]:
     for exe in ("powershell", "pwsh"):
         if have(exe):
@@ -239,6 +244,10 @@ def parse_collect_json(data: Dict[str, Any]) -> HostNetwork:
             or parse_link_speed(a.get("LinkSpeed")),
             mtu=_int(a.get("MtuSize")),
         )
+        iface.arp = (
+            iface.mac is not None
+            and str(a.get("MediaType") or "").lower() not in _NO_ARP_MEDIA
+        )
         if iface.up and isinstance(a.get("FullDuplex"), bool):
             iface.duplex = "full" if a["FullDuplex"] else "half"
         iface.stats = stats_by_name.get(iface.name)
@@ -250,8 +259,10 @@ def parse_collect_json(data: Dict[str, Any]) -> HostNetwork:
         idx = _int(ip.get("InterfaceIndex"))
         iface = by_index.get(idx) if idx is not None else None
         if iface is None:
+            # Not a network adapter: loopback, or a dial-up/VPN connection,
+            # which carries IP without ARP.
             alias = str(ip.get("InterfaceAlias") or f"if{idx}")
-            iface = Interface(name=alias, index=idx, up=True)
+            iface = Interface(name=alias, index=idx, up=True, arp=False)
             if alias.lower().startswith("loopback"):
                 iface.kind = KIND_LOOPBACK
             if idx is not None:
@@ -416,7 +427,10 @@ def parse_route_print(text: str) -> HostNetwork:
                 iface.addresses.append(Address(ip=iface_ip, prefixlen=net.prefixlen))
     for ip, iface in by_ip.items():
         if not iface.addresses:
+            # Only a host route: a point-to-point link (PPP, WireGuard), no
+            # subnet to ARP on.
             iface.addresses.append(Address(ip=ip, prefixlen=32))
+            iface.arp = False
         hn.interfaces.append(iface)
     return hn
 

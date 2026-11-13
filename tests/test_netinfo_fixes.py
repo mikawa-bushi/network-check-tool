@@ -10,9 +10,10 @@ import json
 import pytest
 
 from netdiag import probes  # noqa: F401  (registers the probes)
+from netdiag.core.util import decode_output
 from netdiag.diagnosis.engine import Engine
 from netdiag.measure import PingStats
-from netdiag.netinfo import linux, windows
+from netdiag.netinfo import linux, macos, windows
 from netdiag.netinfo.model import KIND_ETHERNET, HostNetwork
 from netdiag.probes import gateway as gateway_probe
 
@@ -225,3 +226,131 @@ def test_route_and_gateway_checks_name_the_same_gateway(pinged):
     assert pinged == ["192.0.2.1"]
     assert res["route"].detail["gateway"] == "192.0.2.1"
     assert res["route"].summary == "routed via gateway 192.0.2.1"
+
+
+# ------------------------------------------------- links without ARP (tunnels)
+
+
+def _p2p_json(name, ip, index, link_type="none"):
+    return {
+        "ifindex": index,
+        "ifname": name,
+        "flags": ["POINTOPOINT", "MULTICAST", "NOARP", "UP", "LOWER_UP"],
+        "operstate": "UNKNOWN",
+        "link_type": link_type,
+        "addr_info": [{"family": "inet", "local": ip, "prefixlen": 32}],
+    }
+
+
+def test_linux_tunnel_and_ppp_routes_are_not_arp_links(tmp_path):
+    hn = _linux(
+        [
+            _eth_json("eth0", "192.0.2.20", 25, index=2),
+            _p2p_json("wg0", "192.0.2.130", 7),
+            _p2p_json("ppp0", "192.0.2.140", 9, link_type="ppp"),
+        ],
+        [
+            {"dst": "default", "dev": "ppp0", "scope": "link", "flags": []},
+            {"dst": "203.0.113.0/24", "dev": "wg0", "scope": "link", "flags": []},
+            {"dst": "192.0.2.0/25", "dev": "eth0", "scope": "link", "flags": []},
+        ],
+        tmp_path,
+    )
+    lan = hn.decide_route("192.0.2.39")
+    assert lan.on_link and lan.arp
+    plc = hn.decide_route("203.0.113.10")
+    assert plc.on_link and plc.interface.name == "wg0" and not plc.arp
+    internet = hn.decide_route("198.51.100.9")
+    assert internet.interface.name == "ppp0" and not internet.arp
+
+
+def test_linux_text_link_flags_mark_tunnels():
+    ifaces = linux.parse_addr_text(
+        "5: tun0    inet 192.0.2.130/32 scope global tun0\n",
+        "5: tun0: <POINTOPOINT,MULTICAST,NOARP,UP,LOWER_UP> mtu 1500 qdisc "
+        "fq_codel state UNKNOWN mode DEFAULT group default qlen 500\\    "
+        "link/none \n",
+    )
+    assert not ifaces[0].arp
+
+
+def test_macos_utun_is_not_an_arp_link():
+    hn = HostNetwork(
+        interfaces=macos.parse_ifconfig(
+            "en0: flags=8863<UP,BROADCAST,SMART,RUNNING,SIMPLEX,MULTICAST> mtu 1500\n"
+            "\tether 00:00:5e:00:53:01\n"
+            "\tinet 192.0.2.23 netmask 0xffffff00 broadcast 192.0.2.255\n"
+            "\tstatus: active\n"
+            "utun4: flags=8051<UP,POINTOPOINT,RUNNING,MULTICAST> mtu 1400\n"
+        ),
+        routes=macos.parse_netstat_routes(
+            "Destination        Gateway            Flags        Netif Expire\n"
+            "203.0.113.10       utun4              UHS          utun4\n"
+        ),
+    )
+    assert hn.decide_route("192.0.2.39").arp
+    tunnel = hn.decide_route("203.0.113.10")
+    assert tunnel.on_link and not tunnel.arp
+
+
+def test_windows_wireguard_and_dialup_vpn_are_not_arp_links():
+    hn = _windows(
+        adapters=[
+            _adapter("イーサネット", 12, "Intel(R) Ethernet Connection I219-LM"),
+            _adapter(
+                "wg-plant",
+                31,
+                "WireGuard Tunnel",
+                media="IP",
+                mac="",
+                HardwareInterface=False,
+            ),
+        ],
+        addresses=[
+            _address("192.0.2.100", 24, 12, "イーサネット"),
+            _address("198.51.100.2", 32, 31, "wg-plant"),
+            _address("198.51.100.66", 32, 40, "工場VPN"),
+        ],
+        routes=[
+            _route("192.0.2.0/24", "0.0.0.0", 12, "イーサネット", 256, 25),
+            _route("203.0.113.0/24", "0.0.0.0", 31, "wg-plant", 0, 5),
+            _route("198.51.100.128/25", "0.0.0.0", 40, "工場VPN", 0, 26),
+        ],
+    )
+    assert hn.decide_route("192.0.2.39").arp
+    wg = hn.decide_route("203.0.113.10")
+    assert wg.on_link and wg.interface.name == "wg-plant" and not wg.arp
+    vpn = hn.decide_route("198.51.100.200")
+    assert vpn.on_link and vpn.interface.name == "工場VPN" and not vpn.arp
+
+
+ROUTE_PRINT_TUNNEL_JA = """\
+===========================================================================
+インターフェイス一覧
+ 12...00 00 5e 00 53 0c ......Intel(R) Ethernet Connection I219-LM
+ 31...........................WireGuard Tunnel
+  1...........................Software Loopback Interface 1
+===========================================================================
+
+IPv4 ルート テーブル
+===========================================================================
+アクティブ ルート:
+ネットワーク宛先        ネットマスク          ゲートウェイ       インターフェイス  メトリック
+          0.0.0.0          0.0.0.0        192.0.2.1      192.0.2.100     25
+        192.0.2.0    255.255.255.0            リンク上       192.0.2.100    281
+      192.0.2.100  255.255.255.255            リンク上       192.0.2.100    281
+      203.0.113.0    255.255.255.0            リンク上      198.51.100.2      5
+     198.51.100.2  255.255.255.255            リンク上      198.51.100.2    261
+        127.0.0.0        255.0.0.0            リンク上         127.0.0.1    331
+===========================================================================
+固定ルート:
+  なし
+"""
+
+
+def test_windows_route_print_marks_a_host_route_only_link_as_tunnel():
+    raw = ROUTE_PRINT_TUNNEL_JA.replace("\n", "\r\n").encode("cp932")
+    hn = windows.parse_route_print(decode_output(raw))
+    assert hn.decide_route("192.0.2.39").arp
+    wg = hn.decide_route("203.0.113.10")
+    assert wg.on_link and not wg.arp

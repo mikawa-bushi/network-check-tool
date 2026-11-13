@@ -28,6 +28,7 @@ from .model import (
     NEIGH_REACHABLE,
     NEIGH_STALE,
     NEIGH_UNKNOWN,
+    NO_ARP_FLAGS,
     Address,
     HostNetwork,
     Interface,
@@ -145,6 +146,7 @@ def parse_addr_json(data: list, base: Path = SYS_NET) -> List[Interface]:
             # UNKNOWN is what loopback/tun report while working; trust LOWER_UP.
             up="LOWER_UP" in flags and oper in ("UP", "UNKNOWN"),
             mtu=rec.get("mtu"),
+            arp=not NO_ARP_FLAGS & set(flags),
         )
         iface.kind = _kind(name, rec.get("link_type"), flags, base)
         for a in rec.get("addr_info", []):
@@ -235,6 +237,8 @@ def parse_addr_text(addr_text: str, link_text: str = "") -> List[Interface]:
         iface = by_name.setdefault(name, Interface(name=name))
         iface.up = "LOWER_UP" in line or "state UP" in line
         iface.admin_up = "<" in line and ",UP" in line or "<UP" in line
+        m = re.search(r"<([^>]*)>", line)
+        iface.arp = not NO_ARP_FLAGS & set(m.group(1).split(",") if m else [])
         if "LOOPBACK" in line:
             iface.kind = KIND_LOOPBACK
         m = re.search(r"link/\S+\s+([0-9a-f:]{17})", line)

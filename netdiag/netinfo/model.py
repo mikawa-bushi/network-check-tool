@@ -32,6 +32,9 @@ KIND_LOOPBACK = "loopback"
 KIND_VIRTUAL = "virtual"
 KIND_OTHER = "other"
 
+# Interface flags (Linux ``ip``, macOS ``ifconfig``) of links without ARP.
+NO_ARP_FLAGS = frozenset({"NOARP", "POINTOPOINT"})
+
 
 def normalize_mac(mac: Optional[str]) -> Optional[str]:
     """``AA-BB-CC-D-E-F`` / ``aa:bb:cc:dd:ee:ff`` -> ``aa:bb:cc:0d:0e:0f``.
@@ -149,6 +152,9 @@ class Interface:
     mtu: Optional[int] = None
     addresses: List[Address] = field(default_factory=list)
     stats: Optional[LinkStats] = None
+    # False on links that resolve no neighbours (WireGuard, PPP, tun, other
+    # tunnels): a missing ARP entry there says nothing about the peer.
+    arp: bool = True
 
     @property
     def ipv4(self) -> List[Address]:
@@ -235,6 +241,20 @@ class RouteDecision:
     gateway: Optional[str] = None  # set when the target is reached via a router
     candidates: List[Tuple[Interface, Address]] = field(default_factory=list)
     special: Optional[str] = None  # self | network | broadcast | loopback | ...
+
+    @property
+    def arp(self) -> bool:
+        """ARP can confirm or rule out the target: it sits on an ARP link of this PC.
+
+        False for targets behind a gateway, behind a tunnel or point-to-point
+        link, or on a link the collector could not identify.
+        """
+        return (
+            self.on_link
+            and self.special is None
+            and self.interface is not None
+            and self.interface.arp
+        )
 
 
 @dataclass

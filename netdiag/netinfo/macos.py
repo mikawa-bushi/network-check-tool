@@ -19,6 +19,7 @@ from .model import (
     NEIGH_INCOMPLETE,
     NEIGH_PERMANENT,
     NEIGH_STALE,
+    NO_ARP_FLAGS,
     Address,
     HostNetwork,
     Interface,
@@ -56,6 +57,7 @@ def parse_ifconfig(
                 name=name, admin_up="UP" in flags, mtu=int(mtu) if mtu else None
             )
             cur.up = "UP" in flags and "RUNNING" in flags
+            cur.arp = not NO_ARP_FLAGS & set(flags)
             if "LOOPBACK" in flags:
                 cur.kind = KIND_LOOPBACK
             elif name in wifi:
