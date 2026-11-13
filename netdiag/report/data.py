@@ -20,6 +20,7 @@ def hypothesis_runbook(h) -> List[str]:
 
 def diagnosis_to_dict(diag: Diagnosis) -> Dict[str, Any]:
     return {
+        "status": diag.status.value,
         "healthy": diag.healthy,
         "results": [r.to_dict() for r in diag.results],
         "hypotheses": [

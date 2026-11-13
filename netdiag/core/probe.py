@@ -15,11 +15,14 @@ Probes come in two scopes:
 
 from __future__ import annotations
 
+import logging
 import time
 from typing import Any, Dict, List, Optional, Tuple, Type
 
-from ..i18n import TextLike, render, render_list
+from ..i18n import TextLike, render, render_list, tr
 from .result import CheckResult
+
+logger = logging.getLogger(__name__)
 
 
 class Context:
@@ -55,8 +58,8 @@ class Probe:
     """Base class. Subclasses set the class attributes and implement ``check``.
 
     ``check`` returns a :class:`CheckResult`. The base ``run`` wraps it with
-    timing and a catch-all so a buggy or permission-denied probe degrades to a
-    SKIP/FAIL result instead of aborting the whole diagnosis.
+    timing and a catch-all: a probe that raises was wanted but measured
+    nothing, so it becomes UNKNOWN instead of aborting the whole diagnosis.
 
     Text attributes (``title``, ``what``, ``why``, ``means``, ``runbook``) may be
     plain strings or :class:`netdiag.i18n.Text` (bilingual, resolved lazily).
@@ -107,10 +110,15 @@ class Probe:
         try:
             res = self.check(ctx)
         except Exception as e:  # never let one probe kill the run
-            res = CheckResult.skip(
+            logger.debug("probe %s raised", self.name, exc_info=True)
+            error = f"{type(e).__name__}: {e}"
+            res = CheckResult.unknown(
                 self.name,
-                f"probe error: {e}",
-                error=str(e),
+                tr(
+                    f"測定できませんでした（内部エラー: {error}）",
+                    f"could not be measured (internal error: {error})",
+                ),
+                error=error,
                 code=f"{self.name}.error",
             )
         res.layer = res.layer if res.layer != "?" else self.layer

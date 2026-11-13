@@ -123,35 +123,34 @@ def render_terminal(
         lines.append(_hidden_note(st, hidden))
 
     lines.append("")
-    if diag.healthy:
-        lines.append(
-            st.status(
-                Status.OK,
-                st.bold(
-                    tr(
-                        "診断: 異常は見つかりませんでした。",
-                        "Diagnosis: all checks passed.",
-                    )
-                ),
-            )
+    status = diag.status
+    unmeasured = [r.name for r in diag.results if r.status == Status.UNKNOWN]
+    if status == Status.OK:
+        verdict = tr(
+            "診断: 異常は見つかりませんでした。", "Diagnosis: all checks passed."
         )
-        return "\n".join(lines)
-
-    if not diag.hypotheses:
-        lines.append(
-            st.bold(
-                tr(
-                    "診断: 失敗はありませんが警告があります。",
-                    "Diagnosis: no failures, but warnings.",
-                )
-            )
+    elif unmeasured:
+        names = ", ".join(unmeasured)
+        verdict = tr(
+            f"診断: 測定できなかった項目があります（{names}）。",
+            f"Diagnosis: some checks could not be measured ({names}).",
         )
-        return "\n".join(lines)
-
-    lines.append(
-        st.bold(f"{st.rule} " + tr("診断 (Diagnosis)", "Diagnosis") + f" {st.rule}")
-    )
-    lines.extend(_hypothesis_lines(diag, st))
+    elif status == Status.UNKNOWN:
+        verdict = tr("診断: 何も測定していません。", "Diagnosis: nothing was measured.")
+    elif not diag.hypotheses:
+        verdict = tr(
+            "診断: 失敗はありませんが警告があります。",
+            "Diagnosis: no failures, but warnings.",
+        )
+    else:
+        verdict = ""
+    if verdict:
+        lines.append(st.status(status, st.bold(verdict)))
+    if diag.hypotheses:
+        lines.append(
+            st.bold(f"{st.rule} " + tr("診断 (Diagnosis)", "Diagnosis") + f" {st.rule}")
+        )
+        lines.extend(_hypothesis_lines(diag, st))
     if verbose and diag.reasoning:
         lines.append("")
         lines.append(st.bold(tr("推論過程:", "Reasoning:")))

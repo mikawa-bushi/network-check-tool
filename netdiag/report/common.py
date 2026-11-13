@@ -13,6 +13,7 @@ _COLORS = {
     Status.OK: "\033[32m",
     Status.WARN: "\033[33m",
     Status.FAIL: "\033[31m",
+    Status.UNKNOWN: "\033[35m",
     Status.SKIP: "\033[90m",
 }
 RESET = "\033[0m"
@@ -23,6 +24,7 @@ _ASCII_SYMBOLS = {
     Status.OK: "OK",
     Status.WARN: "!!",
     Status.FAIL: "NG",
+    Status.UNKNOWN: "??",
     Status.SKIP: "--",
 }
 
@@ -118,6 +120,7 @@ def status_word(status: Status) -> str:
         Status.OK: tr("正常", "OK"),
         Status.WARN: tr("注意", "Warning"),
         Status.FAIL: tr("異常", "Problem"),
+        Status.UNKNOWN: tr("測定不可", "Not measured"),
         Status.SKIP: tr("未評価", "Not checked"),
     }[status]
 

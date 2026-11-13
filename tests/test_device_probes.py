@@ -349,7 +349,13 @@ def test_run_check_end_to_end_with_fakes(monkeypatch):
     assert host_codes["link_errors"] == "link_errors.increased"
     assert rep.exit_code == 1
     d = rep.to_dict()
-    assert d["device_counts"] == {"ok": 1, "warn": 1, "fail": 2, "skip": 0}
+    assert d["device_counts"] == {
+        "ok": 1,
+        "warn": 1,
+        "fail": 2,
+        "unknown": 0,
+        "skip": 0,
+    }
 
 
 def test_run_check_skips_devices_when_the_pc_has_no_network(monkeypatch):

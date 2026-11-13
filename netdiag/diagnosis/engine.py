@@ -45,10 +45,26 @@ class Hypothesis:
 
 @dataclass
 class Diagnosis:
+    """The outcome of one run: every result, the ranked causes, the verdict.
+
+    ``healthy`` means no failure and no suspected cause was found. It says
+    nothing about whether everything was measured; ``status`` is the verdict.
+    """
+
     results: List[CheckResult]
     hypotheses: List[Hypothesis]
     healthy: bool
     reasoning: List[str] = field(default_factory=list)  # step-by-step (verbose mode)
+
+    @property
+    def status(self) -> Status:
+        """FAIL > UNKNOWN > WARN > OK; UNKNOWN when no check produced a verdict."""
+        if any(h.is_fault for h in self.hypotheses):
+            return Status.FAIL
+        found = [r.status for r in self.results]
+        if self.hypotheses:
+            found.append(Status.WARN)
+        return Status.worst(found)
 
     @property
     def primary(self) -> Optional[Hypothesis]:
