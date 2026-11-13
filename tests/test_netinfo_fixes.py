@@ -1,11 +1,13 @@
 """Windows and macOS samples here are reconstructed, not captured on real machines."""
 
+import ipaddress
 import json
 import socket
 import struct
 
 import pytest
 
+from netdiag import netinfo, scan
 from netdiag.core.util import CommandResult, decode_output
 from netdiag.diagnosis.engine import Engine
 from netdiag.measure import PingStats
@@ -828,28 +830,53 @@ ARP_INVALID_JA = (
 ).encode("cp932")
 
 
-def test_invalid_arp_row_is_no_answer_not_a_resolved_neighbour():
-    before = {n.ip: n for n in windows.parse_arp_a(decode_output(ARP_INVALID_JA))}
-    assert before["192.0.2.1"].mac == "00:00:5e:00:53:01"
-    plc = before["192.0.2.39"]
-    assert plc.mac is None and plc.absent
-    hn = HostNetwork(
+ARP_RESOLVED_JA = ARP_INVALID_JA.replace(
+    "00-00-00-00-00-00     無効".encode("cp932"),
+    "00-00-5e-00-53-27     動的".encode("cp932"),
+)
+
+
+def _line_pc():
+    return HostNetwork(
         interfaces=windows.parse_route_print(
             "          192.0.2.0    255.255.255.0       On-link     192.0.2.100    281\n"
         ).interfaces
     )
+
+
+def test_device_that_answers_arp_after_an_invalid_row_is_present():
+    before = {n.ip: n for n in windows.parse_arp_a(decode_output(ARP_INVALID_JA))}
+    assert before["192.0.2.1"].mac == "00:00:5e:00:53:01"
     after = Neighbor(ip="192.0.2.39", mac="00:00:5e:00:53:27", state=NEIGH_STALE)
     res = _run(
-        hn,
+        _line_pc(),
         ["route", "reach"],
         target={"name": "PLC1", "host": "192.0.2.39"},
         _address="192.0.2.39",
         _ping=PingStats(target="192.0.2.39", sent=10, received=0),
         _ping_window=3.0,
-        _neighbor_before=plc,
+        _neighbor_before=before.get("192.0.2.39"),
         _neighbor_after=after,
     )
     assert res["reach"].code == "reach.icmp_blocked"
+
+
+def test_scan_finds_a_device_whose_row_was_invalid_before_the_sweep(monkeypatch):
+    tables = iter(
+        windows.parse_arp_a(decode_output(raw))
+        for raw in (ARP_INVALID_JA, ARP_RESOLVED_JA)
+    )
+    monkeypatch.setattr(netinfo, "neighbors", lambda: next(tables))
+    monkeypatch.setattr(netinfo, "snapshot", lambda *a, **k: _line_pc())
+    monkeypatch.setattr(
+        scan,
+        "ping_many",
+        lambda hosts, **kw: {
+            h: PingStats(target=h, address=h, sent=2, received=0) for h in hosts
+        },
+    )
+    res = scan.scan([ipaddress.ip_network("192.0.2.32/28")], count=2)
+    assert [(h.ip, h.arp_only) for h in res.hits] == [("192.0.2.39", True)]
 
 
 def test_disabled_duplicate_address_is_not_used_to_reach_devices():

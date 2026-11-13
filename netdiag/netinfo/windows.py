@@ -384,8 +384,9 @@ _ARP_ENTRY_RE = re.compile(
 def parse_arp_a(text: str) -> List[Neighbor]:
     """``arp -a`` in any language: ``  192.168.1.1   00-11-22-33-44-55   動的``.
 
-    Only IP and MAC tokens are used; the localised type column is ignored. A
-    resolved entry has a real MAC; an invalid one (無効) shows all zeros.
+    Only IP and MAC tokens are used; the localised type column is ignored. An
+    invalid (無効) row shows an all-zero MAC: ARP got no answer, which callers
+    read from a missing row, so only resolved rows are kept.
     """
     out: List[Neighbor] = []
     current_if: Optional[str] = None
@@ -398,10 +399,9 @@ def parse_arp_a(text: str) -> List[Neighbor]:
         if not m:
             continue
         ip, mac = m.group(1), normalize_mac(m.group(2))
-        if mac in ("ff:ff:ff:ff:ff:ff",) or ip.startswith(("224.", "239.", "255.")):
-            continue
-        if mac == "00:00:00:00:00:00":
-            out.append(Neighbor(ip=ip, state=NEIGH_INCOMPLETE, interface=current_if))
+        if mac in ("ff:ff:ff:ff:ff:ff", "00:00:00:00:00:00") or ip.startswith(
+            ("224.", "239.", "255.")
+        ):
             continue
         out.append(Neighbor(ip=ip, mac=mac, state=NEIGH_STALE, interface=current_if))
     return out
