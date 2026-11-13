@@ -6,9 +6,11 @@ CliRunner.
 
 import re
 
+import pytest
 from click.testing import CliRunner
 
 from netdiag.cli import cli as netdiag_cli
+from netdiag.cli import main
 
 
 def test_netdiag_version():
@@ -45,12 +47,8 @@ def test_netdiag_explain_known_probe():
     assert "Why:" in result.output
 
 
-def test_netdiag_explain_unknown_probe():
-    result = CliRunner().invoke(netdiag_cli, ["explain", "no_such_probe"])
-    assert result.exit_code == 1
-    # The message is written to stderr; depending on the click version it surfaces
-    # in .output (combined) or .stderr (separated) — accept either.
-    streams = result.output
-    if getattr(result, "stderr_bytes", None):
-        streams += result.stderr
-    assert "unknown probe" in streams
+def test_netdiag_explain_unknown_probe(capsys):
+    with pytest.raises(SystemExit) as exc:
+        main(["explain", "no_such_probe"], prog_name="netdiag")
+    assert exc.value.code == 4
+    assert "unknown check name: no_such_probe" in capsys.readouterr().err

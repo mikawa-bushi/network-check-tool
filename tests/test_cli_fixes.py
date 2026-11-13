@@ -8,7 +8,9 @@ import csv
 import io
 import json
 import logging
+import os
 import re
+import subprocess
 import sys
 from pathlib import Path
 from types import SimpleNamespace
@@ -335,3 +337,40 @@ def test_log_file_gets_the_debug_log(crashing_check, tmp_path):
 def test_unusable_log_file_is_a_usage_error(crashing_check, tmp_path, capsys):
     assert _main("--log-file", str(tmp_path / "nodir" / "x.log"), "check") == 4
     assert capsys.readouterr().err.startswith("Error: cannot open the log file")
+
+
+# ---------------------------------------------------------------- explain
+
+DOCS = Path(__file__).resolve().parents[1] / "docs" / "netdiag.md"
+
+
+def _documented_checks():
+    text = DOCS.read_text(encoding="utf-8")
+    checks = text.split("\n## Checks", 1)[1].split("\n## ", 1)[0]
+    first_cells = [row.split("|")[1] for row in checks.splitlines() if row[:3] == "| `"]
+    return sorted(
+        {name for cell in first_cells for name in re.findall(r"`(\w+)`", cell)}
+    )
+
+
+def _fresh_netdiag(*args):
+    """A new interpreter, so only what the CLI itself imports is registered."""
+    return subprocess.run(
+        [sys.executable, "-m", "netdiag", "--lang", "en", *args],
+        capture_output=True,
+        env={**os.environ, "PYTHONIOENCODING": "utf-8"},
+        encoding="utf-8",
+    )
+
+
+def test_every_documented_check_is_explained_by_a_fresh_netdiag():
+    names = _documented_checks()
+    assert "link_errors" in names and "route" in names
+    for name in names:
+        res = _fresh_netdiag("explain", name)
+        assert res.returncode == 0 and "What:" in res.stdout, (name, res.stderr)
+
+
+def test_explain_lists_link_errors_in_a_fresh_netdiag():
+    res = _fresh_netdiag("explain")
+    assert re.search(r"^  link_errors +\[L1", res.stdout, re.M)
