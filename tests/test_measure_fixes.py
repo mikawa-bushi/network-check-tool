@@ -8,6 +8,7 @@ import time
 
 import pytest
 
+from netdiag.core.util import CommandResult
 from netdiag.measure import icmp as icmpmod
 from netdiag.measure import tcp as tcpmod
 from netdiag.measure import winicmp
@@ -235,3 +236,65 @@ def test_ctrl_c_stops_a_system_ping_sweep_at_once(monkeypatch):
     monkeypatch.setattr(icmpmod, "have", lambda cmd: True)
     monkeypatch.setattr(icmpmod, "run", lambda args, timeout: time.sleep(30))
     assert _interrupted_sweep() < 3.0  # each ping would run for 30 s
+
+
+# ------------------------------------------------- old iputils, BusyBox, macOS
+
+
+def _silent_device_ping(rejects):
+    """A POSIX ping (reconstructed) that rejects *rejects* and gets no replies.
+
+    It reports "timed out" when its run would outlast the caller's limit, as
+    netdiag.core.util.run does: ping waits ``-i`` (default 1 s) between
+    requests and lingers ``-W`` (default 10 s) for the last reply.
+    """
+    calls = []
+
+    def fake_run(args, timeout):
+        calls.append(args)
+        if rejects in args:
+            usage = (
+                f"ping: invalid option -- '{rejects[1:]}'\nUsage: ping [OPTIONS] HOST\n"
+            )
+            return CommandResult(False, 2, "", usage, True)
+        count = int(args[args.index("-c") + 1])
+        pace = float(args[args.index("-i") + 1]) if "-i" in args else 1.0
+        linger = float(args[args.index("-W") + 1]) if "-W" in args else 10.0
+        if count * pace + linger > timeout:
+            return CommandResult(False, 124, "", "timed out", True, timed_out=True)
+        host = args[-1]
+        out = (
+            f"PING {host} ({host}) 56(84) bytes of data.\n\n"
+            f"--- {host} ping statistics ---\n"
+            f"{count} packets transmitted, 0 received, 100% packet loss, time 1800ms\n"
+        )
+        return CommandResult(False, 1, out, "", True)
+
+    return calls, fake_run
+
+
+@pytest.mark.parametrize(
+    "flavour, rejects",
+    [("old iputils / inetutils", "-4"), ("BusyBox", "-n")],
+)
+def test_silent_device_on_an_old_ping_is_no_reply_not_cannot_measure(
+    monkeypatch, flavour, rejects
+):
+    calls, fake_run = _silent_device_ping(rejects)
+    monkeypatch.setattr(icmpmod, "is_windows", lambda: False)
+    monkeypatch.setattr(icmpmod, "is_macos", lambda: False)
+    monkeypatch.setattr(icmpmod, "have", lambda cmd: cmd == "ping")
+    monkeypatch.setattr(icmpmod, "run", fake_run)
+    st = icmpmod.system_ping("192.0.2.10", count=10, family=4)
+    assert st.error is None, flavour  # was "timed out": SKIP instead of no reply
+    assert (st.sent, st.received) == (10, 0)
+    assert rejects not in calls[1] and "-i" in calls[1] and "-W" in calls[1]
+
+
+def test_macos_ping6_gets_arguments_kame_ping6_accepts():
+    args = icmpmod.build_ping_args(
+        "2001:db8::10", 10, 1.0, 0.2, size=32, family=6, os_name="macos"
+    )
+    assert args[0] == "ping6" and "-W" not in args  # -W takes no value there
+    assert float(args[args.index("-i") + 1]) >= 1.0  # below 1 s needs root
+    assert args[-1] == "2001:db8::10"

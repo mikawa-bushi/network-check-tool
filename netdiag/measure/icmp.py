@@ -37,7 +37,17 @@ import threading
 import time
 from concurrent.futures import ThreadPoolExecutor
 from dataclasses import dataclass, field
-from typing import Any, Callable, Dict, Iterable, List, Optional, Sequence, Tuple
+from typing import (
+    Any,
+    Callable,
+    Dict,
+    Iterable,
+    List,
+    NamedTuple,
+    Optional,
+    Sequence,
+    Tuple,
+)
 
 from ..core.util import have, is_macos, is_windows, run
 from .stats import RttSummary, loss_upper_bound_pct, summarize
@@ -723,42 +733,96 @@ def build_ping_args(
     os_name: Optional[str] = None,
 ) -> List[str]:
     """Argument vector for the platform ``ping`` command."""
-    os_name = os_name or (
-        "windows" if is_windows() else "macos" if is_macos() else "linux"
-    )
+    os_name = os_name or _ping_os()
+    pace = _fmt_interval(_cadence(interval, family, os_name))
     fam = ["-4"] if family == 4 else (["-6"] if family == 6 else [])
     if os_name == "windows":
         args = ["ping", *fam, "-n", str(count), "-w", str(int(timeout * 1000))]
         if size:
             args += ["-l", str(size)]
         return [*args, host]
-    if os_name == "macos":
+    if os_name == "macos" and family == 6:
+        # KAME ping6: -W takes no value, and -i below 1 s needs root.
+        args = ["ping6", "-n", "-c", str(count), "-i", pace]
+    elif os_name == "macos":
         # -W is milliseconds on macOS; -i below 0.1s needs root.
-        args = ["ping", "-n", "-c", str(count), "-i", _fmt_interval(max(interval, 0.1))]
+        args = ["ping", "-n", "-c", str(count), "-i", pace]
         args += ["-W", str(int(timeout * 1000))]
-        if size:
-            args += ["-s", str(size)]
-        if family == 6:
-            args[0] = "ping6"
-        return [*args, host]
-    # Linux iputils: -W is seconds; non-root interval floor is 0.2s on older builds.
-    args = [
-        "ping",
-        *fam,
-        "-n",
-        "-c",
-        str(count),
-        "-i",
-        _fmt_interval(max(interval, 0.2)),
-    ]
-    args += ["-W", str(max(1, int(math.ceil(timeout))))]
+    else:
+        # Linux iputils: -W is seconds; non-root interval floor is 0.2s on older builds.
+        args = ["ping", *fam, "-n", "-c", str(count), "-i", pace]
+        args += ["-W", _wait_seconds(timeout)]
     if size:
         args += ["-s", str(size)]
     return [*args, host]
 
 
+def _ping_os() -> str:
+    return "windows" if is_windows() else "macos" if is_macos() else "linux"
+
+
+def _cadence(interval: float, family: Optional[int], os_name: str) -> float:
+    """Seconds between the requests of one ``ping`` run."""
+    if os_name == "windows":
+        return 1.0  # ping.exe has no interval option
+    if os_name == "macos":
+        return max(interval, 1.0 if family == 6 else 0.1)
+    return max(interval, 0.2)
+
+
+def _wait_seconds(timeout: float) -> str:
+    return str(max(1, int(math.ceil(timeout))))
+
+
 def _fmt_interval(v: float) -> str:
     return f"{v:.3f}".rstrip("0").rstrip(".")
+
+
+class _PingCommand(NamedTuple):
+    """One way to run the OS ``ping``, with the pace it keeps."""
+
+    args: List[str]
+    cadence: float  # seconds between requests
+    linger: float = 0.0  # seconds ping may wait after its last request
+
+    def budget(self, count: int, timeout: float) -> float:
+        return count * (self.cadence + timeout) + self.linger + 5
+
+
+def _ping_commands(
+    host: str,
+    count: int,
+    interval: float,
+    timeout: float,
+    size: Optional[int] = None,
+    family: Optional[int] = None,
+) -> List[_PingCommand]:
+    """The ``ping`` invocations to try in turn while one is a usage error.
+
+    Old iputils and GNU inetutils reject ``-4``/``-6``, BusyBox rejects ``-n``.
+    The second form drops those flags but keeps the pace and the reply wait.
+    Plain ``ping -c N`` comes last: its 1 s pace and its linger of up to 10 s
+    without replies set its time limit.
+    """
+    os_name = _ping_os()
+    full = _PingCommand(
+        build_ping_args(host, count, timeout, interval, size, family, os_name),
+        _cadence(interval, family, os_name),
+        10.0 if os_name == "macos" and family == 6 else 0.0,
+    )
+    if os_name == "windows":
+        return [full]
+    prog = "ping6" if family == 6 and have("ping6") else "ping"
+    plain = _PingCommand([prog, "-c", str(count), host], 1.0, 10.0)
+    if os_name == "macos":
+        return [full, plain]
+    pace = max(interval, 0.2)
+    compat = _PingCommand(
+        [prog, "-c", str(count), "-i", _fmt_interval(pace)]
+        + ["-W", _wait_seconds(timeout), host],
+        pace,
+    )
+    return [full, compat, plain]
 
 
 def system_ping(
@@ -780,16 +844,12 @@ def system_ping(
     if not have("ping"):
         stats.error = "ping command not available"
         return stats
-    budget = count * (max(interval, system_ping_cadence()) + timeout) + 5
-    res = run(
-        build_ping_args(host, count, timeout, interval, size=size, family=family),
-        timeout=budget,
-    )
-    text = res.stdout or res.stderr
-    if not windows and _looks_like_usage_error(text):
-        # BusyBox or an exotic ping rejected an option: retry with the minimum.
-        res = run(["ping", "-c", str(count), host], timeout=budget)
+    text = ""
+    for cmd in _ping_commands(host, count, interval, timeout, size, family):
+        res = run(cmd.args, timeout=cmd.budget(count, timeout))
         text = res.stdout or res.stderr
+        if windows or not _looks_like_usage_error(text):
+            break
     stats.raw = text
     parsed = (
         parse_windows_ping(text, count) if windows else parse_posix_ping(text, count)
