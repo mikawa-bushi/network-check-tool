@@ -12,11 +12,20 @@ Everything above it is a *consequence*, folded out of the headline.
 
 from __future__ import annotations
 
+import difflib
 from concurrent.futures import ThreadPoolExecutor
 from dataclasses import dataclass, field
 from typing import Callable, Dict, List, Optional, Tuple, Type
 
-from ..core import CheckResult, Context, Probe, Status, all_probes, get_probe
+from ..core import (
+    CheckResult,
+    Context,
+    InputError,
+    Probe,
+    Status,
+    all_probes,
+    get_probe,
+)
 from ..i18n import tr
 
 # Upper bound on probe concurrency. Active probes (gateway/external/dualstack)
@@ -72,6 +81,15 @@ class Diagnosis:
 
     def results_by_name(self) -> Dict[str, CheckResult]:
         return {r.name: r for r in self.results}
+
+
+def _with_suggestion(name: str, valid: List[str]) -> str:
+    close = difflib.get_close_matches(name, valid, n=1)
+    if not close:
+        return name
+    return tr(
+        f"{name}（{close[0]} のことですか？）", f"{name} (did you mean {close[0]}?)"
+    )
 
 
 def _topo_order(names: List[str]) -> List[str]:
@@ -157,8 +175,12 @@ class Engine:
         network should reach the internet (``internet``, default True for library
         use), none of the internet-only probes. Target-scoped probes need a
         device and only run when named explicitly (see :mod:`netdiag.runner`).
+
+        Raises :class:`InputError` for a name that is not a check, or for a
+        device check when the config has no device (``target``).
         """
         probes = all_probes()
+        self._reject_unusable_names(probes, list(only or []) + list(skip or []))
         if only:
             wanted = set(only)
             names = [n for n in probes if n in wanted]
@@ -174,6 +196,40 @@ class Engine:
         if skip:
             names = [n for n in names if n not in set(skip)]
         return names
+
+    def _reject_unusable_names(
+        self, probes: Dict[str, Type[Probe]], names: List[str]
+    ) -> None:
+        has_target = bool(self.config.get("target"))
+        usable = [
+            n
+            for n, cls in probes.items()
+            if has_target or getattr(cls, "scope", "host") == "host"
+        ]
+        unknown = [n for n in dict.fromkeys(names) if n not in probes]
+        device = [n for n in dict.fromkeys(names) if n in probes and n not in usable]
+        problems: List[str] = []
+        if unknown:
+            problems.append(
+                tr("不明なチェック名: ", "unknown check name: ")
+                + ", ".join(_with_suggestion(n, usable) for n in unknown)
+                + tr(
+                    f"。使えるチェック名: {', '.join(sorted(usable))}",
+                    f". Valid names: {', '.join(sorted(usable))}",
+                )
+            )
+        if device:
+            names_text = ", ".join(device)
+            problems.append(
+                tr(
+                    f"{names_text} は機器ごとのチェックです。"
+                    "機器を指定すると機器ごとに自動で実行されます",
+                    f"{names_text}: device checks, which run automatically "
+                    "for every device you check",
+                )
+            )
+        if problems:
+            raise InputError(tr("。", ". ").join(problems) + tr("。", "."))
 
     def _evaluate_probe(
         self, name: str, ctx: Context

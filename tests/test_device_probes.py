@@ -282,7 +282,8 @@ def test_default_selection_honours_scope_default_and_internet(isolated_registry)
         isolated_registry[p.name] = p
     assert Engine(config={"internet": False}).select() == ["host"]
     assert sorted(Engine(config={"internet": True}).select()) == ["host", "wan"]
-    assert Engine().select(only=["dev", "optin"]) == ["dev", "optin"]
+    with_device = Engine(config={"target": {"host": "192.0.2.1"}})
+    assert with_device.select(only=["dev", "optin"]) == ["dev", "optin"]
 
 
 # ------------------------------------------------------------------ runner
