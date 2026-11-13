@@ -294,10 +294,15 @@ class HostNetwork:
     def default_routes(self) -> List[Route]:
         """Default routes through a gateway (a router this PC can ping).
 
-        Only tables that this PC's traffic is looked up in count; a table that
-        serves one source address (multi-WAN policy routing) does not.
+        Only tables in which a lookup for any target can reach a default route
+        count; a table that serves one source address (multi-WAN policy
+        routing) does not.
         """
-        general = {r.table for r in self.rules if r.destination is None}
+        general = {
+            r.table
+            for r in self.rules
+            if r.destination is None and r.suppress_prefixlength < 0
+        }
         return [
             r
             for r in self.routes

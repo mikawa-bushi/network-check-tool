@@ -693,6 +693,16 @@ def test_source_specific_tables_do_not_add_default_gateways():
     assert hn.decide_route("203.0.113.9").interface.name == "wg0"
 
 
+def test_a_suppressed_main_default_is_no_gateway_to_ping(answered_pings):
+    hn = _wg_quick()
+    hn.rules = [
+        r for r in hn.rules if r.suppress_prefixlength >= 0 or r.table != "main"
+    ]
+    assert hn.default_routes() == [] and hn.preferred_default_route() is None
+    gw = _run(hn, ["gateway"], internet=True)["gateway"]
+    assert gw.code == "gateway.none" and answered_pings == []
+
+
 def _laptop_with_idle_adapters(eth_state="Preferred"):
     return _windows(
         adapters=[
