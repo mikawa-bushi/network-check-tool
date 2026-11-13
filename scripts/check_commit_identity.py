@@ -1,8 +1,9 @@
 #!/usr/bin/env python3
 """push 前に author/committer メールの許可リストを検証する pre-push ガード。
 
-origin のどのブランチにも未到達のコミット（＝これから push されるコミット）を
-走査し、author か committer のメールが許可リスト外なら push を中止する。
+これから push されるコミット（push 先リモートに未到達のもの。範囲は
+_pushed_revs が決める）を走査し、author か committer のメールが
+許可リスト外なら push を中止する。
 秘密情報スキャナはファイル内容しか見ず、コミットの著者メタデータは検査しない
 ため、社用/別 identity の混入（例: ``@company.example``）はこのガードで防ぐ。
 
@@ -35,16 +36,30 @@ def _allowed(email: str) -> bool:
     return any(p.match(email) for p in ALLOWED_PATTERNS)
 
 
+def _pushed_revs() -> list[str]:
+    """これから push されるコミットを選ぶ ``git rev-list`` 引数。
+
+    pre-commit の pre-push ステージは push する先頭コミットを PRE_COMMIT_TO_REF
+    （root コミットを含む push では PRE_COMMIT_LOCAL_BRANCH）に、push 先を
+    PRE_COMMIT_REMOTE_NAME に入れる。今いるブランチではなくそれを検査し、除外は
+    push 先に既にあるコミットだけにする（別リモートにしかない履歴も検査する）。
+    手で実行した場合は HEAD を origin と比べる。
+    """
+    env = os.environ
+    tip = env.get("PRE_COMMIT_TO_REF") or env.get("PRE_COMMIT_LOCAL_BRANCH") or "HEAD"
+    remote = env.get("PRE_COMMIT_REMOTE_NAME") or "origin"
+    on_remote = env.get("PRE_COMMIT_FROM_REF")
+    return [tip, "--not", f"--remotes={remote}", *([on_remote] if on_remote else [])]
+
+
 def _outgoing_commits() -> list[tuple[str, str, str, str]]:
-    """origin に未到達のコミットを (sha, author_email, committer_email, subject) で返す。"""
+    """push されるコミットを (sha, author_email, committer_email, subject) で返す。"""
     result = subprocess.run(
         [
             "git",
             "rev-list",
-            "HEAD",
-            "--not",
-            "--remotes=origin",
             f"--format=%H{_FS}%ae{_FS}%ce{_FS}%s",
+            *_pushed_revs(),
         ],
         capture_output=True,
         text=True,

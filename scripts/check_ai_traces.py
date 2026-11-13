@@ -9,7 +9,7 @@
 
 モード:
   scripts/check_ai_traces.py <file>...   # pre-commit: 渡された staged ファイルを検査
-  scripts/check_ai_traces.py --pre-push  # push されるコミット(origin 未到達)を検査
+  scripts/check_ai_traces.py --pre-push  # push されるコミット(push 先に未到達)を検査
   scripts/check_ai_traces.py --all       # 全追跡ファイル + 全コミット履歴を一括監査
 
 いずれも痕跡を見つけたら一覧を表示して終了コード 1 を返す。
@@ -176,8 +176,24 @@ def scan_commits(shas: list[str]) -> list[Finding]:
     return findings
 
 
+def _pushed_revs() -> list[str]:
+    """これから push されるコミットを選ぶ ``git rev-list`` 引数。
+
+    pre-commit の pre-push ステージは push する先頭コミットを PRE_COMMIT_TO_REF
+    （root コミットを含む push では PRE_COMMIT_LOCAL_BRANCH）に、push 先を
+    PRE_COMMIT_REMOTE_NAME に入れる。今いるブランチではなくそれを検査し、除外は
+    push 先に既にあるコミットだけにする（別リモートにしかない履歴も検査する）。
+    手で実行した場合は HEAD を origin と比べる。
+    """
+    env = os.environ
+    tip = env.get("PRE_COMMIT_TO_REF") or env.get("PRE_COMMIT_LOCAL_BRANCH") or "HEAD"
+    remote = env.get("PRE_COMMIT_REMOTE_NAME") or "origin"
+    on_remote = env.get("PRE_COMMIT_FROM_REF")
+    return [tip, "--not", f"--remotes={remote}", *([on_remote] if on_remote else [])]
+
+
 def _outgoing_shas() -> list[str]:
-    return _git(["rev-list", "HEAD", "--not", "--remotes=origin"]).split()
+    return _git(["rev-list", *_pushed_revs()]).split()
 
 
 def _report(findings: list[Finding], header: str) -> int:
