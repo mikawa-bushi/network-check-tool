@@ -6,6 +6,7 @@ import logging
 import sys
 from pathlib import Path
 from typing import List, Optional
+from urllib.parse import urlparse
 
 import click
 
@@ -70,6 +71,34 @@ DEFAULT_CONFIG = {
 }
 
 
+class HttpUrl(click.ParamType):
+    """An http:// or https:// URL. A bare ``host[:port][/path]`` means http://."""
+
+    name = "URL"
+
+    def convert(self, value, param, ctx) -> str:
+        url = value if "://" in value else "http://" + value
+        try:
+            parsed = urlparse(url)
+            usable = (
+                parsed.scheme.lower() in ("http", "https")
+                and bool(parsed.hostname)
+                and parsed.port != 0  # .port raises ValueError when out of range
+            )
+        except ValueError:
+            usable = False
+        if not usable:
+            self.fail(
+                tr(
+                    f"http:// か https:// で始まる URL を指定してください: {value}",
+                    f"give an http:// or https:// URL: {value}",
+                ),
+                param,
+                ctx,
+            )
+        return url
+
+
 def _build_config(external_ip, dns_name, tcp, http_url, count, internet=False) -> dict:
     cfg = dict(DEFAULT_CONFIG)
     # Naming an external target or DNS name means "I expect internet access".
@@ -82,7 +111,8 @@ def _build_config(external_ip, dns_name, tcp, http_url, count, internet=False) -
         cfg["tcp_targets"] = list(tcp)
     if http_url:
         cfg["http_url"] = http_url
-        cfg.setdefault("tls_target", http_url)
+        if urlparse(http_url).scheme.lower() == "https":
+            cfg["tls_target"] = http_url
     if count:
         cfg["count"] = count
     return cfg

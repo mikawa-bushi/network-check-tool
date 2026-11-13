@@ -17,6 +17,7 @@ from ..inventory import (
 )
 from ._app import (
     H,
+    HttpUrl,
     Progress,
     _build_config,
     _split_csv,
@@ -150,6 +151,7 @@ def _collect_devices(targets, device_files, ports) -> List[Device]:
 )
 @click.option(
     "--http-url",
+    type=HttpUrl(),
     help=H(
         "HTTP/TLSの段階別タイミングを測るURL",
         "URL for the HTTP/TLS phase-timing check.",
