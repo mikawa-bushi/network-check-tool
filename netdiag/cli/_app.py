@@ -3,14 +3,16 @@
 from __future__ import annotations
 
 import logging
+import os
 import sys
 from pathlib import Path
-from typing import List, Optional
+from typing import Iterable, List, Optional
 from urllib.parse import urlparse
 
 import click
 
 from .. import __version__
+from ..core import InputError
 from ..i18n import detect, set_language, tr
 
 logger = logging.getLogger("netdiag.cli")
@@ -123,19 +125,90 @@ def _split_csv(value: Optional[str]) -> Optional[List[str]]:
     return [s.strip() for s in value.split(",") if s.strip()] if value else None
 
 
-def write_output(text: str, output: Optional[str], fmt: str) -> None:
-    """Print *text*, or save it (CSV with a BOM so Excel reads Japanese)."""
-    if output:
-        encoding = "utf-8-sig" if fmt == "csv" else "utf-8"
-        Path(output).write_text(
-            text, encoding=encoding, newline="" if fmt == "csv" else None
-        )
-        click.echo(
-            H(f"レポートを保存しました: {output}", f"report written to {output}"),
-            err=True,
-        )
-    else:
+def _report_bytes(text: str, fmt: str) -> bytes:
+    """A report as it goes into a file or a pipe: always UTF-8.
+
+    CSV gets a BOM so Excel reads Japanese, and keeps its own CRLF rows. Only
+    the text report takes the platform's line ends, for old Notepad.
+    """
+    if fmt == "csv":
+        return text.encode("utf-8-sig")
+    if fmt == "text":
+        text = text.replace("\n", os.linesep)
+    return text.encode("utf-8")
+
+
+def _print_report(text: str, fmt: str) -> None:
+    """Text goes to the console as text. html/json/csv go out as the same bytes
+    a file gets: redirected stdout on Windows would otherwise re-encode them to
+    the ANSI code page and turn CSV's CRLF into CR CR LF."""
+    if fmt == "text":
         click.echo(text)
+        return
+    data = _report_bytes(text, fmt)
+    if not data.endswith(b"\n"):
+        data += b"\n"
+    sys.stdout.flush()
+    sys.stdout.buffer.write(data)
+    sys.stdout.buffer.flush()
+
+
+def output_path(output: Optional[str], inputs: Iterable[str] = ()) -> Optional[str]:
+    """Check ``-o`` before anything is measured. ``None`` and ``-`` mean stdout.
+
+    Raises InputError for a folder that does not exist, and for a path that is
+    one of *inputs*: a device list must never be overwritten by its report.
+    """
+    if output is None or output == "-":
+        return None
+    path = Path(output)
+    if path.exists() and any(os.path.samefile(path, src) for src in inputs):
+        raise InputError(
+            tr(
+                f"保存先 {output} は読み込む台帳そのものです。"
+                "台帳を上書きしないよう、レポートには別のファイル名を指定してください。",
+                f"{output} is the device list being read. Give the report "
+                "another file name so the list is not overwritten.",
+            )
+        )
+    if not path.parent.is_dir():
+        raise InputError(
+            tr(
+                f"保存先のフォルダーがありません: {path.parent}。"
+                "先にフォルダーを作るか、別の場所を指定してください。",
+                f"the folder to save into does not exist: {path.parent}. "
+                "Create it first or choose another place.",
+            )
+        )
+    return output
+
+
+def write_output(text: str, output: Optional[str], fmt: str) -> None:
+    """Print *text*, or save it to *output* (``-`` is stdout).
+
+    A report that cannot be saved (the file is open in Excel, the disk is
+    full) still reaches the user on stdout, and InputError says why (exit 4).
+    """
+    if output is None or output == "-":
+        _print_report(text, fmt)
+        return
+    try:
+        Path(output).write_bytes(_report_bytes(text, fmt))
+    except OSError as e:
+        _print_report(text, fmt)
+        reason = e.strerror or str(e)
+        raise InputError(
+            tr(
+                f"レポートを {output} に保存できませんでした（{reason}）。"
+                "代わりに標準出力へ出しました。",
+                f"could not save the report to {output} ({reason}). "
+                "It went to standard output instead.",
+            )
+        ) from e
+    click.echo(
+        tr(f"レポートを保存しました: {output}", f"report written to {output}"),
+        err=True,
+    )
 
 
 def format_from_path(

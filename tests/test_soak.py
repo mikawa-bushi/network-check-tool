@@ -308,7 +308,7 @@ def test_soak_csv_goes_to_stdout_without_a_file(fake_soak):
     assert res.exit_code == 1
     assert (
         res.output.splitlines()[0]
-        == "time,name,host,sent,lost,loss_pct,rtt_median_ms,rtt_p95_ms,rtt_max_ms"
+        == "﻿time,name,host,sent,lost,loss_pct,rtt_median_ms,rtt_p95_ms,rtt_max_ms"
     )
 
 

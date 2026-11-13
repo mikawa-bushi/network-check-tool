@@ -24,6 +24,7 @@ from ._app import (
     cli,
     color_wanted,
     format_from_path,
+    output_path,
     write_output,
 )
 
@@ -181,8 +182,11 @@ def _collect_devices(targets, device_files, ports) -> List[Device]:
 @click.option(
     "-o",
     "--output",
-    type=click.Path(dir_okay=False),
-    help=H("レポートをファイルに保存", "Write the report to a file."),
+    type=click.Path(dir_okay=False, allow_dash=True),
+    help=H(
+        "レポートをファイルに保存（- は標準出力）",
+        "Write the report to a file (- for stdout).",
+    ),
 )
 @click.option(
     "--all",
@@ -258,6 +262,7 @@ def check(
     from ..runner import run_check
 
     fmt = format_from_path(output, fmt)
+    output = output_path(output, inputs=device_files)
     devices = _collect_devices(targets, device_files, ports)
     cfg = _build_config(external_ip, dns_name, tcp, http_url, count, internet=internet)
     if interval:

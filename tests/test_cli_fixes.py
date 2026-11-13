@@ -4,6 +4,12 @@ The measurement layer is replaced by a fake; every test drives the real
 ``netdiag.cli.main`` entry point, the same one the console script and the exe use.
 """
 
+import csv
+import io
+import json
+import sys
+from pathlib import Path
+
 import pytest
 
 import netdiag.runner as runner_mod
@@ -15,11 +21,17 @@ from netdiag.runner import CheckReport
 
 def _report(status=Status.OK):
     result = CheckResult(
-        name="interface", status=status, summary="eth0", code="interface.x"
+        name="interface",
+        status=status,
+        summary="eth0 — ≤1 ms",
+        code="interface.x",
+        timestamp=1e9,
     )
     healthy = status == Status.OK
     host = Diagnosis(results=[result], hypotheses=[], healthy=healthy)
-    return CheckReport(host=host, hostname="pc", platform="test")
+    return CheckReport(
+        host=host, hostname="pc", platform="test", started_at=1e9, finished_at=1e9
+    )
 
 
 @pytest.fixture
@@ -71,3 +83,80 @@ def test_unusable_http_url_is_a_usage_error(run, url):
     code, out, err = run("check", "--http-url", url)
     assert code == 4 and "config" not in run.seen
     assert "http:// or https://" in err
+
+
+# ------------------------------------------------------------ report output
+
+
+def _windows_redirected(run, *args):
+    """Run with stdout as Python sets it up on Japanese Windows when redirected
+    to a file (the ANSI code page, newline translation); return its bytes."""
+    stream = io.TextIOWrapper(io.BytesIO(), encoding="cp932", newline="\r\n")
+    real, sys.stdout = sys.stdout, stream
+    try:
+        assert run(*args)[0] == 0
+        stream.flush()
+        return stream.buffer.getvalue()
+    finally:
+        sys.stdout = real
+
+
+@pytest.mark.parametrize("fmt", ["html", "json", "csv"])
+def test_machine_formats_reach_redirected_stdout_as_the_file_bytes(run, tmp_path, fmt):
+    saved = tmp_path / f"r.{fmt}"
+    assert run("check", "-o", str(saved))[0] == 0
+    piped = _windows_redirected(run, "check", "--format", fmt)
+    assert piped.rstrip(b"\r\n") == saved.read_bytes().rstrip(b"\r\n")
+
+
+def test_csv_on_redirected_stdout_has_one_line_end_per_row(run):
+    data = _windows_redirected(run, "check", "--format", "csv")
+    assert data.startswith(b"\xef\xbb\xbf") and b"\r\r\n" not in data
+    rows = list(csv.reader(io.StringIO(data.decode("utf-8-sig"), newline="")))
+    assert [] not in rows and len(rows) == 2
+
+
+def test_output_dash_is_stdout(run, tmp_path, monkeypatch):
+    monkeypatch.chdir(tmp_path)
+    code, out, err = run("--lang", "en", "check", "-o", "-")
+    assert code == 0 and "Result:" in out and "report written" not in err
+    assert not (tmp_path / "-").exists()
+
+
+def test_output_into_a_missing_folder_is_refused_before_measuring(run, tmp_path):
+    code, _, err = run("check", "-o", str(tmp_path / "nodir" / "r.html"))
+    assert code == 4 and "config" not in run.seen
+    assert "does not exist" in err
+
+
+def test_report_never_overwrites_the_device_list_it_reads(run, tmp_path):
+    ledger = tmp_path / "ledger.csv"
+    ledger.write_text("name,host\nPLC-1,192.0.2.10\n", encoding="utf-8")
+    before = ledger.read_bytes()
+    code, _, err = run("check", "-f", str(ledger), "-o", str(ledger))
+    assert code == 4 and "config" not in run.seen
+    assert "device list being read" in err
+    assert ledger.read_bytes() == before
+
+
+def test_report_that_cannot_be_saved_still_reaches_the_user(run, tmp_path, monkeypatch):
+    locked = tmp_path / "r.json"
+
+    def refuse(self, data):
+        raise PermissionError(13, "Permission denied", str(self))
+
+    monkeypatch.setattr(Path, "write_bytes", refuse)
+    monkeypatch.setattr(Path, "write_text", refuse)
+    code, out, err = run("check", "-o", str(locked))
+    assert code == 4
+    assert json.loads(out)["status"] == "ok"
+    assert err.strip() == (
+        f"Error: could not save the report to {locked} (Permission denied). "
+        "It went to standard output instead."
+    )
+
+
+def test_saved_message_follows_lang(run, tmp_path, monkeypatch):
+    monkeypatch.setenv("NETDIAG_LANG", "en")
+    _, _, err = run("--lang", "ja", "check", "-o", str(tmp_path / "r.json"))
+    assert "レポートを保存しました" in err
