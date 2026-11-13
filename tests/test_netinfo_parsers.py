@@ -39,7 +39,7 @@ def test_link_stats_delta():
     after = LinkStats(rx_packets=150, rx_errors=4, rx_crc_errors=2)
     d = after.delta(before)
     assert (d.rx_packets, d.rx_errors, d.rx_crc_errors, d.tx_errors) == (50, 3, 2, None)
-    assert d.errors_total() == 5
+    assert d.errors_total() == 3  # the 2 CRC errors are part of rx_errors
 
 
 # ------------------------------------------------------------------- route model

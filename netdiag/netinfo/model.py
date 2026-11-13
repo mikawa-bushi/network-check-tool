@@ -112,7 +112,9 @@ class LinkStats:
     # this PC's own cable/port/NIC flapped.
     carrier_changes: Optional[int] = None
 
-    ERROR_FIELDS = ("rx_errors", "tx_errors", "rx_crc_errors", "collisions")
+    # rx_crc_errors is a subset of rx_errors (Linux counts it in both), so it
+    # stays out of the total.
+    ERROR_FIELDS = ("rx_errors", "tx_errors", "collisions")
 
     def link_drops(self) -> int:
         """Down-and-up events implied by ``carrier_changes`` (rounded up)."""
