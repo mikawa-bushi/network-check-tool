@@ -7,6 +7,7 @@ The measurement layer is replaced by a fake; every test drives the real
 import csv
 import io
 import json
+import logging
 import sys
 from pathlib import Path
 from types import SimpleNamespace
@@ -15,7 +16,7 @@ import pytest
 
 import netdiag.runner as runner_mod
 from netdiag.cli import main
-from netdiag.core import CheckResult, Status
+from netdiag.core import CheckResult, Context, Probe, Status
 from netdiag.diagnosis import Diagnosis
 from netdiag.runner import CheckReport
 
@@ -262,3 +263,59 @@ def test_windows_console_is_switched_to_vt_mode_before_colour(run, monkeypatch):
 def test_windows_console_without_vt_mode_gets_no_escape_codes(run, monkeypatch):
     out, _ = _check_on_windows_console(run, monkeypatch, vt_supported=False)
     assert "Result:" in out and "\x1b" not in out
+
+
+# ------------------------------------------------------- -v and --log-file
+
+
+class _Crashing(Probe):
+    name = "crashing"
+
+    def check(self, ctx):
+        raise RuntimeError("parser fell over")
+
+
+@pytest.fixture
+def crashing_check(monkeypatch):
+    """A check run in which one probe crashes; restores the netdiag logger."""
+    lg = logging.getLogger("netdiag")
+    handlers, level = lg.handlers[:], lg.level
+
+    def fake_run_check(devices, config=None, **kw):
+        result = _Crashing().run(Context(config))
+        host = Diagnosis(results=[result], hypotheses=[], healthy=True)
+        return CheckReport(host=host, hostname="pc", platform="test")
+
+    monkeypatch.setattr(runner_mod, "run_check", fake_run_check)
+    yield
+    for h in lg.handlers[:]:
+        if h not in handlers:
+            h.close()
+    lg.handlers[:] = handlers
+    lg.setLevel(level)
+
+
+def _main(*args):
+    with pytest.raises(SystemExit) as exc:
+        main(list(args), prog_name="netdiag")
+    return exc.value.code
+
+
+def test_verbose_shows_the_traceback_of_a_crashed_check(crashing_check, capsys):
+    _main("check")
+    assert "Traceback" not in capsys.readouterr().err
+    _main("-v", "check")
+    err = capsys.readouterr().err
+    assert "Traceback" in err and "RuntimeError: parser fell over" in err
+
+
+def test_log_file_gets_the_debug_log(crashing_check, tmp_path):
+    log = tmp_path / "netdiag.log"
+    _main("--log-file", str(log), "check")
+    logging.getLogger("netdiag").handlers[-1].flush()
+    assert "RuntimeError: parser fell over" in log.read_text(encoding="utf-8")
+
+
+def test_unusable_log_file_is_a_usage_error(crashing_check, tmp_path, capsys):
+    assert _main("--log-file", str(tmp_path / "nodir" / "x.log"), "check") == 4
+    assert capsys.readouterr().err.startswith("Error: cannot open the log file")

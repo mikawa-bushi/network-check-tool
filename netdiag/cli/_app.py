@@ -79,8 +79,8 @@ def _setup_logging(verbose: bool = False, log_file: Optional[str] = None) -> Non
     """Configure the ``netdiag`` logger for CLI use (library code never does this).
 
     Quiet by default: with neither ``verbose`` nor ``log_file`` set, no handler is
-    attached and the package's NullHandler keeps things silent. ``verbose`` lowers
-    the level to DEBUG and logs to stderr; ``log_file`` writes to that file instead.
+    attached and the package's NullHandler keeps things silent. Either one turns
+    on the debug log: ``verbose`` to stderr, ``log_file`` to that file instead.
     """
     if not verbose and not log_file:
         return
@@ -89,12 +89,20 @@ def _setup_logging(verbose: bool = False, log_file: Optional[str] = None) -> Non
     # another one (avoids duplicate lines / leaked file handles on repeat calls).
     if any(not isinstance(h, logging.NullHandler) for h in lg.handlers):
         return
-    lg.setLevel(logging.DEBUG if verbose else logging.WARNING)
-    handler: logging.Handler = (
-        logging.FileHandler(log_file, encoding="utf-8")
-        if log_file
-        else logging.StreamHandler()
-    )
+    handler: logging.Handler
+    if log_file:
+        try:
+            handler = logging.FileHandler(log_file, encoding="utf-8")
+        except OSError as e:
+            raise InputError(
+                tr(
+                    f"ログファイルを開けません: {log_file}（{e.strerror or e}）",
+                    f"cannot open the log file {log_file} ({e.strerror or e})",
+                )
+            ) from e
+    else:
+        handler = logging.StreamHandler()
+    lg.setLevel(logging.DEBUG)
     handler.setFormatter(
         logging.Formatter("%(asctime)s %(levelname)s %(name)s: %(message)s")
     )
@@ -448,16 +456,16 @@ class Progress:
     "-v",
     is_flag=True,
     help=H(
-        "netdiag の内部ログを標準エラーへ出力（既定は出力なし）",
-        "Verbose netdiag logging to stderr (or --log-file). Quiet by default.",
+        "デバッグログ（内部エラーになったチェックのトレースバックなど）を標準エラーへ出力",
+        "Write the debug log (such as the traceback of a check that crashed) to stderr.",
     ),
 )
 @click.option(
     "--log-file",
-    type=click.Path(),
+    type=click.Path(dir_okay=False),
     help=H(
-        "ログを標準エラーではなくこのファイルへ出力",
-        "Write netdiag logs to this file instead of stderr.",
+        "デバッグログを標準エラーではなくこのファイルへ出力",
+        "Write the debug log to this file instead of stderr.",
     ),
 )
 @click.pass_context
