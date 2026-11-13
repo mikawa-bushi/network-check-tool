@@ -353,13 +353,26 @@ def _headline(report, st: Style) -> str:
     n = len(report.devices)
     bad = [d for d in report.devices if d.status == Status.FAIL]
     warn = [d for d in report.devices if d.status == Status.WARN]
+    unknown = [d for d in report.devices if d.status == Status.UNKNOWN]
     skipped = [d for d in report.devices if d.status == Status.SKIP]
     host_status = report.host_status
+    unmeasured = sum(1 for r in report.host.results if r.status == Status.UNKNOWN)
     parts: List[str] = []
     if host_status == Status.FAIL:
         parts.append(tr("このPCのネットワークに異常", "a problem on this PC's network"))
     elif host_status == Status.WARN:
         parts.append(tr("このPCに注意点", "warnings on this PC"))
+    if unmeasured:
+        parts.append(
+            tr(
+                f"このPCの {unmeasured} 項目は測定不可",
+                f"{unmeasured} check(s) on this PC not measured",
+            )
+        )
+    elif host_status == Status.UNKNOWN:
+        parts.append(
+            tr("このPCは何も測定していません", "nothing on this PC was measured")
+        )
     if bad:
         names = ", ".join(d.device.name for d in bad[:3]) + (
             " …" if len(bad) > 3 else ""
@@ -372,6 +385,8 @@ def _headline(report, st: Style) -> str:
         )
     if warn:
         parts.append(tr(f"{len(warn)}台に注意", f"{len(warn)} with warnings"))
+    if unknown:
+        parts.append(tr(f"{len(unknown)}台は測定不可", f"{len(unknown)} not measured"))
     if skipped:
         parts.append(tr(f"{len(skipped)}台は未評価", f"{len(skipped)} not checked"))
     if status == Status.OK:

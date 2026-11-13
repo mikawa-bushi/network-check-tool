@@ -148,16 +148,20 @@ def render_check_html(report, show_all: bool = True) -> str:
     took = max(0.0, report.finished_at - report.started_at)
     bad = sum(1 for d in report.devices if d.status == Status.FAIL)
     warn = sum(1 for d in report.devices if d.status == Status.WARN)
+    unknown = sum(1 for d in report.devices if d.status == Status.UNKNOWN)
     if status == Status.OK:
         verdict = tr("異常は見つかりませんでした", "No problems found")
     else:
         verdict = status_word(status)
         if report.devices:
             verdict += tr(
-                f" — 機器 {len(report.devices)}台中 異常 {bad}台・注意 {warn}台",
-                f" — {bad} failing, {warn} warning of {len(report.devices)} devices",
+                f" — 機器 {len(report.devices)}台中 異常 {bad}台・注意 {warn}台"
+                + (f"・測定不可 {unknown}台" if unknown else ""),
+                f" — {bad} failing, {warn} warning"
+                + (f", {unknown} not measured" if unknown else "")
+                + f" of {len(report.devices)} devices",
             )
-        if report.host_status in (Status.FAIL, Status.WARN):
+        if report.host_status in (Status.FAIL, Status.WARN, Status.UNKNOWN):
             verdict += tr("（このPCにも指摘あり）", " (and findings on this PC)")
     meta = (
         f"PC: {_esc(report.hostname)} · {_esc(report.platform)} · {when} · "
