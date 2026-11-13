@@ -45,9 +45,7 @@ def _header(query_bytes, answers):
 
 def _a_record(i):
     return (
-        b"\xc0\x0c"
-        + struct.pack("!HHIH", 1, 1, 60, 4)
-        + bytes([10, 0, i // 256, i % 256])
+        b"\xc0\x0c" + struct.pack("!HHIH", 1, 1, 60, 4) + bytes([198, 51, 100, i % 256])
     )
 
 
@@ -79,7 +77,7 @@ def test_dns_stray_datagram_with_another_id_is_skipped():
     srv, port = _serve_once(stray_then_ours)
     with srv:
         ans = query("plc.example", "127.0.0.1", timeout=1.0, port=port)
-    assert ans.addresses == ["10.0.0.7"]
+    assert ans.addresses == ["198.51.100.7"]
 
 
 # ------------------------------------------------------------------ TCP connect
