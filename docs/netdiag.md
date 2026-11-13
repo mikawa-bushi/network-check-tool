@@ -226,10 +226,30 @@ devices:
 ```
 
 Recognised columns/keys: name, host, ports, group, note, mac, rtt_warn_ms,
-loss_warn_pct, interval (Japanese aliases such as 名前・IPアドレス・ポート・
-ライン・備考・MACアドレス・遅延上限・ロス上限・監視間隔 are accepted). A
-`[[host]]` / `hosts` list whose entries give only `name` loads too, and each
-name is used as the host.
+loss_warn_pct (Japanese aliases such as 名前・IPアドレス・ポート・使用ポート・
+ライン・備考・MACアドレス・遅延上限・ロス上限 are accepted, in full-width
+letters too). A `[[host]]` / `hosts` list whose entries give only `name` loads
+too, and each name is used as the host. In YAML/TOML, a device's own keys win
+over `defaults`, whichever alias either uses.
+
+How a CSV list is read:
+
+- The header is the first row that names a host column, so a title row or
+  blank rows above it are fine. Without a header, the cell that holds an IPv4
+  address is the host, the first cell after it that reads as ports holds the
+  ports, and a number before the address is a row number.
+- A row whose first cell is `#` followed by a space, or a commented-out row
+  such as `#192.168.3.38,...`, is a comment. A name such as `#1プレス` is a
+  device.
+- A zero-padded address such as `192.168.001.010` is read as decimal
+  (`192.168.1.10`), and the report shows that form. A cell of digits and dots
+  that is not a valid IPv4 address is an error.
+- MAC addresses may use colons, hyphens, Cisco dots (`0026.92aa.bbcc`) or no
+  separator; the report shows `00:26:92:aa:bb:cc`.
+- Anything netdiag cannot read is an error that names the file and line, and
+  `check` exits 4: an unknown port or protocol name, a MAC it cannot read, a
+  row without an address, or a column that looks like ports under a header it
+  does not know. An Excel workbook (`.xlsx`) must be saved as CSV first.
 
 ## Always-on watching (`netdiag watch`)
 
