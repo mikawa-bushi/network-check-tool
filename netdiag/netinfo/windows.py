@@ -277,7 +277,9 @@ def parse_collect_json(data: Dict[str, Any]) -> HostNetwork:
         origin = {"1": "manual", "3": "dhcp"}.get(origin, origin)
         if state == "duplicate":
             flags.append("duplicate")  # Windows' own IPv4 conflict detection
-        elif state == "tentative":
+        elif state == "tentative" and iface.up:
+            # A disconnected adapter keeps its address Tentative until it gets
+            # a link; that is its normal resting state, not a pending check.
             flags.append("tentative")
         if origin == "dhcp":
             flags.append("dhcp")

@@ -719,3 +719,53 @@ def test_source_specific_tables_do_not_add_default_gateways():
     )
     assert hn.default_gateways() == ["192.0.2.1"]
     assert hn.decide_route("203.0.113.9").interface.name == "wg0"
+
+
+# ------------------------------------------------ Windows adapter state
+
+
+def _laptop_with_idle_adapters(eth_state="Preferred"):
+    # Bluetooth PAN and an unplugged USB NIC keep an APIPA address in the
+    # Tentative state while they have no link.
+    return _windows(
+        adapters=[
+            _adapter("イーサネット", 12, "Intel(R) Ethernet Connection I219-LM"),
+            _adapter(
+                "Bluetooth ネットワーク接続",
+                9,
+                "Bluetooth Device (Personal Area Network)",
+                status="Disconnected",
+            ),
+            _adapter(
+                "イーサネット 2",
+                22,
+                "Realtek USB GbE Family Controller",
+                status="Disconnected",
+            ),
+        ],
+        addresses=[
+            _address("192.0.2.100", 24, 12, "イーサネット", state=eth_state),
+            _address(
+                "169.254.183.20",
+                16,
+                9,
+                "Bluetooth ネットワーク接続",
+                state="Tentative",
+                origin="WellKnown",
+            ),
+            _address(
+                "169.254.77.5", 16, 22, "イーサネット 2", "Tentative", "WellKnown"
+            ),
+        ],
+        routes=[
+            _route("0.0.0.0/0", "192.0.2.1", 12, "イーサネット", 0, 25),
+            _route("192.0.2.0/24", "0.0.0.0", 12, "イーサネット", 256, 25),
+        ],
+    )
+
+
+def test_disconnected_adapters_are_not_reported_tentative():
+    res = _run(_laptop_with_idle_adapters(), ["interface", "ipconfig"])
+    assert res["ipconfig"].code == "ipconfig.ok", res["ipconfig"].summary
+    busy = _run(_laptop_with_idle_adapters("Tentative"), ["interface", "ipconfig"])
+    assert busy["ipconfig"].summary == "192.0.2.100 on イーサネット is still tentative"
