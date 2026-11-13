@@ -185,14 +185,16 @@ def parse_route_json(data: list) -> List[Route]:
             dst = f"{dst}/32"
         if ":" in dst:
             continue  # IPv4 table only
-        routes.append(
-            Route(
-                destination=dst,
-                gateway=rec.get("gateway"),
-                interface=rec.get("dev"),
-                metric=rec.get("metric", 0),  # iproute2 omits a metric of 0
+        # A multipath (ECMP) route lists its gateways under "nexthops".
+        for hop in rec.get("nexthops") or [rec]:
+            routes.append(
+                Route(
+                    destination=dst,
+                    gateway=hop.get("gateway"),
+                    interface=hop.get("dev"),
+                    metric=rec.get("metric", 0),  # iproute2 omits a metric of 0
+                )
             )
-        )
     return routes
 
 
@@ -261,28 +263,41 @@ def parse_addr_text(addr_text: str, link_text: str = "") -> List[Interface]:
     return list(by_name.values())
 
 
+def _word_after(parts: List[str], key: str) -> Optional[str]:
+    return parts[parts.index(key) + 1] if key in parts[:-1] else None
+
+
 def parse_route_text(text: str) -> List[Route]:
     routes: List[Route] = []
+    head: Optional[Route] = None
     for line in text.splitlines():
         parts = line.split()
         if not parts:
+            continue
+        if parts[0] == "nexthop" and head is not None:  # a multipath gateway
+            routes.append(
+                Route(
+                    destination=head.destination,
+                    gateway=_word_after(parts, "via"),
+                    interface=_word_after(parts, "dev"),
+                    metric=head.metric,
+                )
+            )
             continue
         dst = parts[0]
         if dst == "default":
             dst = "0.0.0.0/0"
         elif "/" not in dst:
             dst = f"{dst}/32"
-        r = Route(destination=dst, metric=0)
-        if "via" in parts:
-            r.gateway = parts[parts.index("via") + 1]
-        if "dev" in parts:
-            r.interface = parts[parts.index("dev") + 1]
-        if "metric" in parts:
-            try:
-                r.metric = int(parts[parts.index("metric") + 1])
-            except (ValueError, IndexError):
-                pass
-        routes.append(r)
+        metric = _word_after(parts, "metric")
+        head = Route(
+            destination=dst,
+            gateway=_word_after(parts, "via"),
+            interface=_word_after(parts, "dev"),
+            metric=int(metric) if metric and metric.isdigit() else 0,
+        )
+        if head.gateway or head.interface:  # else its nexthop lines follow
+            routes.append(head)
     return routes
 
 

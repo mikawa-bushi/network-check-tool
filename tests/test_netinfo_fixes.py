@@ -354,3 +354,79 @@ def test_windows_route_print_marks_a_host_route_only_link_as_tunnel():
     assert hn.decide_route("192.0.2.39").arp
     wg = hn.decide_route("203.0.113.10")
     assert wg.on_link and not wg.arp
+
+
+# --------------------------------------------- multipath and link defaults
+
+
+def _two_nic_addr():
+    return [
+        _eth_json("eth0", "192.0.2.20", 24, index=2),
+        _eth_json("eth1", "198.51.100.20", 24, index=3),
+    ]
+
+
+def test_multipath_default_route_has_gateways(tmp_path, pinged):
+    hn = _linux(
+        _two_nic_addr(),
+        [
+            {
+                "dst": "default",
+                "protocol": "static",
+                "metric": 100,
+                "flags": [],
+                "nexthops": [
+                    {"gateway": "192.0.2.1", "dev": "eth0", "weight": 1, "flags": []},
+                    {
+                        "gateway": "198.51.100.1",
+                        "dev": "eth1",
+                        "weight": 1,
+                        "flags": [],
+                    },
+                ],
+            },
+            {"dst": "192.0.2.0/24", "dev": "eth0", "scope": "link", "flags": []},
+            {"dst": "198.51.100.0/24", "dev": "eth1", "scope": "link", "flags": []},
+        ],
+        tmp_path,
+    )
+    gw = _run(hn, ["gateway"], internet=True)["gateway"]
+    assert gw.code == "gateway.ok" and pinged == ["192.0.2.1"]
+    assert hn.default_gateways() == ["192.0.2.1", "198.51.100.1"]
+    assert not hn.decide_route("203.0.113.9").on_link
+
+
+def test_multipath_default_route_in_text_output():
+    routes = linux.parse_route_text(
+        "default proto static metric 100 \n"
+        "\tnexthop via 192.0.2.1 dev eth0 weight 1 \n"
+        "\tnexthop via 198.51.100.1 dev eth1 weight 1 \n"
+        "192.0.2.0/24 dev eth0 proto kernel scope link src 192.0.2.20 \n"
+    )
+    hn = HostNetwork(routes=routes)
+    assert hn.default_gateways() == ["192.0.2.1", "198.51.100.1"]
+    assert hn.preferred_default_route().metric == 100
+    assert {r.destination for r in routes} == {"0.0.0.0/0", "192.0.2.0/24"}
+
+
+def test_default_route_without_gateway_is_a_link_default(tmp_path):
+    hn = _linux(
+        [
+            _eth_json("eth0", "192.0.2.20", 24, index=2),
+            _p2p_json("ppp0", "198.51.100.7", 9, link_type="ppp"),
+        ],
+        [
+            {"dst": "default", "dev": "ppp0", "scope": "link", "flags": []},
+            {"dst": "192.0.2.0/24", "dev": "eth0", "scope": "link", "flags": []},
+        ],
+        tmp_path,
+    )
+    assert hn.default_routes() == []  # no router to ping
+    assert hn.link_default_route().interface == "ppp0"
+    mobile = _windows(
+        adapters=[_adapter("携帯電話", 21, "Mobile Broadband", media="Wireless WAN")],
+        addresses=[_address("198.51.100.7", 30, 21, "携帯電話")],
+        routes=[_route("0.0.0.0/0", "0.0.0.0", 21, "携帯電話", 0, 40)],
+    )
+    assert mobile.link_default_route().interface == "携帯電話"
+    assert HostNetwork().link_default_route() is None

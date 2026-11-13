@@ -278,7 +278,21 @@ class HostNetwork:
         return None
 
     def default_routes(self) -> List[Route]:
+        """Default routes through a gateway (a router this PC can ping)."""
         return [r for r in self.routes if r.is_default and r.gateway]
+
+    def link_default_route(self) -> Optional[Route]:
+        """A default route with no gateway, lowest metric first.
+
+        PPP, mobile broadband and full-tunnel VPNs send off-LAN traffic straight
+        into a point-to-point link: there is a route off the LAN, but no router
+        on it to ping.
+        """
+        return min(
+            (r for r in self.routes if r.is_default and not r.gateway and r.interface),
+            key=lambda r: r.rank,
+            default=None,
+        )
 
     def preferred_default_route(self) -> Optional[Route]:
         """The default route the OS normally uses: lowest metric, an unset one last."""
