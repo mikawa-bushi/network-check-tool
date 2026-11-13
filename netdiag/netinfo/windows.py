@@ -48,8 +48,6 @@ _PS_PREAMBLE = (
     "[Console]::OutputEncoding=New-Object System.Text.UTF8Encoding($false);"
 )
 
-# Every frame counts towards the error ratio, as Linux rx_packets does: an
-# EtherNet/IP or PROFINET line is mostly multicast.
 _STATS_SELECT = (
     "@(Get-NetAdapterStatistics | Select-Object Name,ReceivedUnicastPackets,"
     "ReceivedMulticastPackets,ReceivedBroadcastPackets,SentUnicastPackets,"
@@ -219,7 +217,6 @@ def _kind(adapter: Dict[str, Any]) -> str:
 
 
 def _frames(row: Dict[str, Any], direction: str) -> Optional[int]:
-    """Unicast + multicast + broadcast frames in one direction."""
     counts = [
         _int(row.get(f"{direction}{cast}Packets"))
         for cast in ("Unicast", "Multicast", "Broadcast")
@@ -403,7 +400,7 @@ def parse_arp_a(text: str) -> List[Neighbor]:
         ip, mac = m.group(1), normalize_mac(m.group(2))
         if mac in ("ff:ff:ff:ff:ff:ff",) or ip.startswith(("224.", "239.", "255.")):
             continue
-        if mac == "00:00:00:00:00:00":  # an invalid (無効) row: ARP got no answer
+        if mac == "00:00:00:00:00:00":
             out.append(Neighbor(ip=ip, state=NEIGH_INCOMPLETE, interface=current_if))
             continue
         out.append(Neighbor(ip=ip, mac=mac, state=NEIGH_STALE, interface=current_if))

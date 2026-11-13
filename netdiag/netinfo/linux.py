@@ -75,11 +75,6 @@ def _ip_json(*args: str) -> Optional[list]:
 
 
 def _read(path: Path) -> Optional[str]:
-    """A text file's content, or None if it cannot be read.
-
-    Bytes that are not UTF-8 (a Shift_JIS comment in resolv.conf) are replaced
-    rather than losing the whole file.
-    """
     try:
         return path.read_text(encoding="utf-8", errors="replace").strip()
     except OSError:
@@ -142,17 +137,24 @@ def _apply_sysfs(iface: Interface, base: Path = SYS_NET) -> None:
 
 _IFF_FLAGS = ((0x1, "UP"), (0x8, "LOOPBACK"), (0x10, "POINTOPOINT"), (0x80, "NOARP"))
 _ARPHRD = {"1": "ether", "512": "ppp", "772": "loopback", "65534": "none"}
+SIOCGIFADDR = 0x8915
+SIOCGIFNETMASK = 0x891B
+IFREQ_SIN_ADDR = slice(20, 24)  # ifr_name[16], then sockaddr_in's family, port
+RTF_UP = 0x1
+RTF_GATEWAY = 0x2
+ATF_COM = 0x2
+ATF_PERM = 0x4
 
 
 def _ioctl_ipv4(name: str) -> Optional[Address]:
-    """The primary IPv4 address of *name*, asked of the kernel directly."""
+    """The first IPv4 address of *name*: the ioctl returns only one."""
     import fcntl  # Unix only; this module is imported on every OS by the tests
 
     req = struct.pack("256s", name.encode()[:15])
     with socket.socket(socket.AF_INET, socket.SOCK_DGRAM) as s:
         try:
-            ip = fcntl.ioctl(s.fileno(), 0x8915, req)[20:24]  # SIOCGIFADDR
-            mask = fcntl.ioctl(s.fileno(), 0x891B, req)[20:24]  # SIOCGIFNETMASK
+            ip = fcntl.ioctl(s.fileno(), SIOCGIFADDR, req)[IFREQ_SIN_ADDR]
+            mask = fcntl.ioctl(s.fileno(), SIOCGIFNETMASK, req)[IFREQ_SIN_ADDR]
         except OSError:
             return None
     return Address(
@@ -264,9 +266,7 @@ def parse_route_json(data: list) -> List[Route]:
     return routes
 
 
-# Rule selectors netdiag's own probes never match on in general (an input or
-# output interface, a user, a protocol or port, a ToS/DSCP or tunnel id).
-_RULE_SELECTORS = (
+_SKIPPED_RULE_SELECTORS = (
     "iif",
     "oif",
     "l3mdev",
@@ -281,22 +281,23 @@ _RULE_SELECTORS = (
 )
 
 
-def parse_rule_json(data: list) -> List[RouteRule]:
-    """``ip -j rule show``: the lookups this PC's own traffic goes through, in order.
+def _matches_unmarked(rec: dict) -> bool:
+    """Does the rule select packets without a firewall mark, as netdiag sends?"""
+    matches = int(str(rec.get("fwmark", "0")), 16) == 0
+    return not matches if "not" in rec else matches
 
-    A rule counts when it looks up a table for packets from any source with no
-    firewall mark, which is what netdiag's probes send. Tailscale (table 52)
-    and wg-quick (a fwmark rule plus ``suppress_prefixlength 0``) both route
-    that way.
-    """
+
+def parse_rule_json(data: list) -> List[RouteRule]:
+    """``ip -j rule show``: the lookups this PC's own traffic goes through, in order."""
     out: List[RouteRule] = []
     for rec in sorted(data, key=lambda r: r.get("priority", 0)):
         if not rec.get("table") or rec.get("src", "all") != "all":
             continue
-        if any(key.startswith(_RULE_SELECTORS) for key in rec):
+        if any(key.startswith(_SKIPPED_RULE_SELECTORS) for key in rec):
             continue
         try:
-            unmarked = int(str(rec.get("fwmark", "0")), 16) == 0
+            if not _matches_unmarked(rec):
+                continue
             dst = rec.get("dst", "all")
             destination = (
                 None
@@ -304,8 +305,6 @@ def parse_rule_json(data: list) -> List[RouteRule]:
                 else str(ipaddress.ip_network(f"{dst}/{rec.get('dstlen', 32)}", False))
             )
         except ValueError:
-            continue
-        if unmarked == ("not" in rec):
             continue
         out.append(
             RouteRule(
@@ -396,7 +395,7 @@ def parse_route_text(text: str) -> List[Route]:
         parts = line.split()
         if not parts:
             continue
-        if parts[0] == "nexthop" and head is not None:  # a multipath gateway
+        if parts[0] == "nexthop" and head is not None:
             routes.append(
                 Route(
                     destination=head.destination,
@@ -438,12 +437,12 @@ def parse_proc_route(text: str) -> List[Route]:
             dst, gw = _proc_ip(f[1]), _proc_ip(f[2])
         except (IndexError, ValueError, struct.error):
             continue
-        if not flags & 0x1:  # RTF_UP
+        if not flags & RTF_UP:
             continue
         routes.append(
             Route(
                 destination=f"{dst}/{bin(mask).count('1')}",
-                gateway=gw if flags & 0x2 else None,  # RTF_GATEWAY
+                gateway=gw if flags & RTF_GATEWAY else None,
                 interface=None if f[0] == "*" else f[0],
                 metric=metric,
             )
@@ -463,10 +462,10 @@ def parse_proc_arp(text: str) -> List[Neighbor]:
         except ValueError:
             continue
         mac = normalize_mac(f[3])
-        if not flags & 0x2 or mac == "00:00:00:00:00:00":  # not ATF_COM
+        if not flags & ATF_COM or mac == "00:00:00:00:00:00":
             state, mac = NEIGH_INCOMPLETE, None
         else:
-            state = NEIGH_PERMANENT if flags & 0x4 else NEIGH_STALE
+            state = NEIGH_PERMANENT if flags & ATF_PERM else NEIGH_STALE
         out.append(Neighbor(ip=f[0], mac=mac, state=state, interface=f[5]))
     return out
 
@@ -526,7 +525,6 @@ def _interfaces() -> Tuple[List[Interface], str]:
 
 
 def _routes() -> Tuple[Optional[List[Route]], List[RouteRule]]:
-    """Routes and policy rules; every table when ``ip rule`` can be read."""
     if have("ip"):
         rules = _ip_json("-4", "rule", "show")
         if rules is not None:

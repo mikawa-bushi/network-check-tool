@@ -1,9 +1,4 @@
-"""How netdiag reads this PC's interfaces, addresses, routes and neighbours.
-
-Windows and macOS samples are reconstructed from the documented output
-formats; the Japanese Windows text is encoded in cp932 with CRLF line ends and
-decoded the way ``run()`` decodes it.
-"""
+"""Windows and macOS samples here are reconstructed, not captured on real machines."""
 
 import json
 import socket
@@ -11,7 +6,6 @@ import struct
 
 import pytest
 
-from netdiag import probes  # noqa: F401  (registers the probes)
 from netdiag.core.util import CommandResult, decode_output
 from netdiag.diagnosis.engine import Engine
 from netdiag.measure import PingStats
@@ -28,8 +22,7 @@ def _run(hn, only, **config):
 
 
 @pytest.fixture
-def pinged(monkeypatch):
-    """Answer every gateway ping and record which addresses were pinged."""
+def answered_pings(monkeypatch):
     seen = []
 
     def fake_ping(target, **kw):
@@ -92,7 +85,6 @@ def _route(dst, hop, index, alias, route_metric, if_metric):
 
 
 def _windows(**sections):
-    """PowerShell COLLECT_SCRIPT output, round-tripped through JSON text."""
     data = {"adapters": [], "addresses": [], "routes": [], "dns": [], "stats": []}
     data.update(sections)
     return windows.parse_collect_json(json.loads(json.dumps(data, ensure_ascii=False)))
@@ -100,7 +92,6 @@ def _windows(**sections):
 
 @pytest.fixture
 def linux_host(monkeypatch, tmp_path):
-    """Run linux.collect() against canned command output and a fake /sys."""
     outputs = {}
     sysfs = tmp_path / "sys"
     sysfs.mkdir()
@@ -141,9 +132,6 @@ def _eth_json(name, ip, plen, index=2, flags=("BROADCAST", "MULTICAST")):
     }
 
 
-# ------------------------------------------------------------- NIC counters
-
-
 def test_crc_errors_are_counted_once(tmp_path):
     _sysfs_nic(
         tmp_path,
@@ -168,10 +156,7 @@ def test_crc_errors_are_counted_once(tmp_path):
     assert "7 errors since boot" in link.summary
 
 
-# ------------------------------------------------------------ default route
-
-
-def test_metric_0_static_default_beats_a_dhcp_wifi_default(tmp_path, pinged):
+def test_metric_0_static_default_beats_a_dhcp_wifi_default(tmp_path, answered_pings):
     # `ip route add default via ...` and ifupdown give metric 0, which
     # `ip -j route` leaves out; NetworkManager's Wi-Fi default has 600.
     hn = _linux(
@@ -201,7 +186,7 @@ def test_metric_0_static_default_beats_a_dhcp_wifi_default(tmp_path, pinged):
         tmp_path,
     )
     res = _run(hn, ["gateway", "ipconfig"], internet=True)
-    assert pinged == ["192.0.2.1"]
+    assert answered_pings == ["192.0.2.1"]
     assert res["gateway"].detail["gateway"] == "192.0.2.1"
     assert "192.0.2.1 normally wins" in res["ipconfig"].summary
     assert hn.decide_route("203.0.113.9").gateway == "192.0.2.1"
@@ -237,7 +222,7 @@ def _two_gateway_laptop():
     )
 
 
-def test_route_and_gateway_checks_name_the_same_gateway(pinged):
+def test_route_and_gateway_checks_name_the_same_gateway(answered_pings):
     hn = _two_gateway_laptop()
     res = _run(
         hn,
@@ -245,12 +230,9 @@ def test_route_and_gateway_checks_name_the_same_gateway(pinged):
         internet=True,
         target={"name": "PLC-B", "host": "203.0.113.5"},
     )
-    assert pinged == ["192.0.2.1"]
+    assert answered_pings == ["192.0.2.1"]
     assert res["route"].detail["gateway"] == "192.0.2.1"
     assert res["route"].summary == "routed via gateway 192.0.2.1"
-
-
-# ------------------------------------------------- links without ARP (tunnels)
 
 
 def _p2p_json(name, ip, index, link_type="none"):
@@ -378,9 +360,6 @@ def test_windows_route_print_marks_a_host_route_only_link_as_tunnel():
     assert wg.on_link and not wg.arp
 
 
-# --------------------------------------------- multipath and link defaults
-
-
 def _two_nic_addr():
     return [
         _eth_json("eth0", "192.0.2.20", 24, index=2),
@@ -388,7 +367,7 @@ def _two_nic_addr():
     ]
 
 
-def test_multipath_default_route_has_gateways(tmp_path, pinged):
+def test_multipath_default_route_has_gateways(tmp_path, answered_pings):
     hn = _linux(
         _two_nic_addr(),
         [
@@ -413,7 +392,7 @@ def test_multipath_default_route_has_gateways(tmp_path, pinged):
         tmp_path,
     )
     gw = _run(hn, ["gateway"], internet=True)["gateway"]
-    assert gw.code == "gateway.ok" and pinged == ["192.0.2.1"]
+    assert gw.code == "gateway.ok" and answered_pings == ["192.0.2.1"]
     assert hn.default_gateways() == ["192.0.2.1", "198.51.100.1"]
     assert not hn.decide_route("203.0.113.9").on_link
 
@@ -443,7 +422,7 @@ def test_default_route_without_gateway_is_a_link_default(tmp_path):
         ],
         tmp_path,
     )
-    assert hn.default_routes() == []  # no router to ping
+    assert hn.default_routes() == []
     assert hn.link_default_route().interface == "ppp0"
     mobile = _windows(
         adapters=[_adapter("携帯電話", 21, "Mobile Broadband", media="Wireless WAN")],
@@ -453,8 +432,6 @@ def test_default_route_without_gateway_is_a_link_default(tmp_path):
     assert mobile.link_default_route().interface == "携帯電話"
     assert HostNetwork().link_default_route() is None
 
-
-# ---------------------------------------------- Linux without ``ip -j``
 
 IP_O_LINK = (
     "1: lo: <LOOPBACK,UP,LOWER_UP> mtu 65536 qdisc noqueue state UNKNOWN mode "
@@ -491,9 +468,6 @@ def test_text_fallback_finds_the_wired_nic(linux_host):
     assert kinds == {"lo": "loopback", "eth0": "ethernet", "docker0": "virtual"}
     link = _run(hn, ["link"])["link"]
     assert link.code == "link.ok" and link.summary.startswith("eth0 1 Gbps")
-
-
-# ------------------------------------------------- Linux without iproute2
 
 
 def _proc_hex(ip):
@@ -533,7 +507,7 @@ def _sysfs_identity(nic, flags, operstate, arphrd, mac):
 
 
 def test_without_iproute2_routes_and_interfaces_come_from_proc_and_sys(
-    no_iproute2, pinged
+    no_iproute2, answered_pings
 ):
     sysfs, proc = no_iproute2
     _sysfs_nic(sysfs, "eth0", {"rx_packets": 10, "tx_packets": 10, "rx_errors": 0})
@@ -560,7 +534,7 @@ def test_without_iproute2_routes_and_interfaces_come_from_proc_and_sys(
         internet=True,
         target={"name": "PLC1", "host": "192.0.2.39"},
     )
-    assert res["gateway"].code == "gateway.ok" and pinged == ["192.0.2.1"]
+    assert res["gateway"].code == "gateway.ok" and answered_pings == ["192.0.2.1"]
     assert res["route"].summary == "on-link via eth0 192.0.2.20/24"
 
 
@@ -608,8 +582,6 @@ def test_failed_route_commands_on_windows_and_macos_are_reported(monkeypatch):
     mac = macos.collect()
     assert mac.routes == [] and any("routing table" in e for e in mac.errors)
 
-
-# --------------------------------------------------------- policy routing
 
 TAILSCALE_RULES = [
     {"priority": 0, "src": "all", "table": "local"},
@@ -721,12 +693,7 @@ def test_source_specific_tables_do_not_add_default_gateways():
     assert hn.decide_route("203.0.113.9").interface.name == "wg0"
 
 
-# ------------------------------------------------ Windows adapter state
-
-
 def _laptop_with_idle_adapters(eth_state="Preferred"):
-    # Bluetooth PAN and an unplugged USB NIC keep an APIPA address in the
-    # Tentative state while they have no link.
     return _windows(
         adapters=[
             _adapter("イーサネット", 12, "Intel(R) Ethernet Connection I219-LM"),
@@ -772,8 +739,6 @@ def test_disconnected_adapters_are_not_reported_tentative():
 
 
 def test_unplugged_nic_gateway_and_dns_are_not_used(monkeypatch):
-    # The equipment NIC is unplugged; its typed gateway (metric 5) and DNS
-    # server stay in the configuration, Wi-Fi (metric 35) carries the traffic.
     hn = _windows(
         adapters=[
             _adapter("イーサネット", 12, "Intel(R) Ethernet", status="Disconnected"),
@@ -818,7 +783,6 @@ def test_unplugged_nic_gateway_and_dns_are_not_used(monkeypatch):
 
 
 def test_error_ratio_counts_multicast_frames():
-    # A line PC on EtherNet/IP: most frames are multicast I/O traffic.
     stats = {
         "Name": "イーサネット",
         "ReceivedUnicastPackets": 120000,
@@ -845,8 +809,6 @@ def test_error_ratio_counts_multicast_frames():
         assert column in windows.COLLECT_SCRIPT
 
 
-# --------------------------------------------------------- Windows arp -a
-
 ARP_INVALID_JA = (
     "\r\nインターフェイス: 192.0.2.100 --- 0xc\r\n"
     "  インターネット アドレス 物理アドレス           種類\r\n"
@@ -866,7 +828,6 @@ def test_invalid_arp_row_is_no_answer_not_a_resolved_neighbour():
             "          192.0.2.0    255.255.255.0       On-link     192.0.2.100    281\n"
         ).interfaces
     )
-    # The PLC ignores ping but answers SendARP during the test.
     after = Neighbor(ip="192.0.2.39", mac="00:00:5e:00:53:27", state=NEIGH_STALE)
     res = _run(
         hn,
@@ -879,9 +840,6 @@ def test_invalid_arp_row_is_no_answer_not_a_resolved_neighbour():
         _neighbor_after=after,
     )
     assert res["reach"].code == "reach.icmp_blocked"
-
-
-# ------------------------------------------------ duplicate own address
 
 
 def test_disabled_duplicate_address_is_not_used_to_reach_devices():
@@ -903,9 +861,6 @@ def test_disabled_duplicate_address_is_not_used_to_reach_devices():
     assert hn.decide_route("192.0.2.100").special == "self"
 
 
-# ------------------------------------------------------------- resolvers
-
-
 def test_resolv_conf_with_a_shift_jis_comment_still_lists_its_servers(
     monkeypatch, tmp_path
 ):
@@ -917,8 +872,6 @@ def test_resolv_conf_with_a_shift_jis_comment_still_lists_its_servers(
     monkeypatch.setattr(linux, "RESOLV_CONF", conf)
     assert linux.resolvers() == ["192.0.2.53", "192.0.2.54"]
 
-
-# ----------------------------------------------------------------- macOS
 
 MAC_IFCONFIG = """\
 lo0: flags=8049<UP,LOOPBACK,RUNNING,MULTICAST> mtu 16384
@@ -968,15 +921,18 @@ def test_macos_abbreviated_routes_are_followed():
     assert _run(hn, ["route"], target=line_b)["route"].summary == (
         "routed via gateway 192.0.2.254"
     )
-    closed = _mac(  # a line Mac with no default route and no VPN
+    no_default_no_vpn = _mac(
         "\n".join(
             line
             for line in MAC_ROUTES.splitlines()
             if "utun4" not in line and not line.startswith("default")
         )
     )
-    assert not any(r.is_default for r in closed.routes)
-    assert _run(closed, ["route"], target=line_b)["route"].code == "route.via_gateway"
+    assert not any(r.is_default for r in no_default_no_vpn.routes)
+    assert (
+        _run(no_default_no_vpn, ["route"], target=line_b)["route"].code
+        == "route.via_gateway"
+    )
     assert hn.decide_route("198.51.100.77").gateway == "198.51.100.5"
 
 

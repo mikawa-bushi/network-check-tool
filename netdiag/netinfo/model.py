@@ -32,7 +32,6 @@ KIND_LOOPBACK = "loopback"
 KIND_VIRTUAL = "virtual"
 KIND_OTHER = "other"
 
-# Interface flags (Linux ``ip``, macOS ``ifconfig``) of links without ARP.
 NO_ARP_FLAGS = frozenset({"NOARP", "POINTOPOINT"})
 
 
@@ -191,7 +190,6 @@ class Route:
 
     @property
     def network(self) -> Optional[ipaddress.IPv4Network]:
-        """The destination as an IPv4 network (None if it is not one)."""
         try:
             net = ipaddress.ip_network(
                 "0.0.0.0/0" if self.is_default else self.destination, strict=False
@@ -201,8 +199,7 @@ class Route:
         return net if net.version == 4 else None
 
     @property
-    def rank(self) -> int:
-        """Metric order between routes of equal prefix; an unknown metric loses."""
+    def sort_metric(self) -> int:
         return self.metric if self.metric is not None else 1 << 30
 
     def to_dict(self) -> dict:
@@ -221,8 +218,8 @@ class RouteRule:
         return asdict(self)
 
 
-# Where routes are looked up when no policy rules were collected.
-_ONE_TABLE = [RouteRule(table="")]
+EVERY_TABLE = "*"  # a lookup that sees every route (no policy rules collected)
+_ONE_TABLE = [RouteRule(table=EVERY_TABLE)]
 _ANY_ADDRESS = ipaddress.IPv4Address("0.0.0.0")
 
 
@@ -262,11 +259,7 @@ class RouteDecision:
 
     @property
     def arp(self) -> bool:
-        """ARP can confirm or rule out the target: it sits on an ARP link of this PC.
-
-        False for targets behind a gateway, behind a tunnel or point-to-point
-        link, or on a link the collector could not identify.
-        """
+        """ARP can confirm or rule out the target: it sits on an ARP link of this PC."""
         return (
             self.on_link
             and self.special is None
@@ -417,14 +410,16 @@ class HostNetwork:
             matches = [
                 (r, net)
                 for r in self.routes
-                if (not rule.table or r.table == rule.table)
+                if rule.table in (EVERY_TABLE, r.table)
                 and (net := r.network) is not None
                 and ip in net
                 and net.prefixlen > rule.suppress_prefixlength
                 and wanted(r)
             ]
             if matches:
-                return min(matches, key=lambda m: (-m[1].prefixlen, m[0].rank))[0]
+                return min(matches, key=lambda m: (-m[1].prefixlen, m[0].sort_metric))[
+                    0
+                ]
         return None
 
     def to_dict(self) -> dict:
