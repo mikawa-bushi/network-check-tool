@@ -58,7 +58,8 @@ COLLECT_SCRIPT = _PS_PREAMBLE + (
     "PrefixLength,InterfaceIndex,InterfaceAlias,"
     "@{n='AddressState';e={\"$($_.AddressState)\"}},"
     "@{n='PrefixOrigin';e={\"$($_.PrefixOrigin)\"}});"
-    "$r=@(Get-NetRoute -AddressFamily IPv4 | Select-Object DestinationPrefix,"
+    "$r=@(Get-NetRoute -AddressFamily IPv4 -PolicyStore ActiveStore | "
+    "Select-Object DestinationPrefix,"
     "NextHop,InterfaceIndex,InterfaceAlias,RouteMetric,InterfaceMetric);"
     "$d=@(Get-DnsClientServerAddress -AddressFamily IPv4 | Select-Object "
     "InterfaceIndex,ServerAddresses);"
@@ -298,14 +299,17 @@ def parse_collect_json(data: Dict[str, Any]) -> HostNetwork:
             continue
 
     names = {i.index: i.name for i in hn.interfaces}
+    # Windows sends nothing through an adapter without a link, so its routes
+    # and DNS servers are not in use.
+    down = {i.index for i in hn.interfaces if not i.up and i.index is not None}
     if not _as_list(data.get("routes")):  # even an offline PC has loopback routes
         hn.errors.append("could not read the routing table (Get-NetRoute failed)")
     for r in _as_list(data.get("routes")):
         dst = str(r.get("DestinationPrefix") or "")
-        if not dst or ":" in dst:
+        idx = _int(r.get("InterfaceIndex"))
+        if not dst or ":" in dst or idx in down:
             continue
         hop = str(r.get("NextHop") or "")
-        idx = _int(r.get("InterfaceIndex"))
         metric = _int(r.get("RouteMetric"))
         ifm = _int(r.get("InterfaceMetric"))
         if metric is not None and ifm is not None:
@@ -321,6 +325,8 @@ def parse_collect_json(data: Dict[str, Any]) -> HostNetwork:
 
     servers: List[str] = []
     for d in _as_list(data.get("dns")):
+        if _int(d.get("InterfaceIndex")) in down:
+            continue
         for s in _as_list(d.get("ServerAddresses")):
             if s and s not in servers:
                 servers.append(str(s))

@@ -769,3 +769,49 @@ def test_disconnected_adapters_are_not_reported_tentative():
     assert res["ipconfig"].code == "ipconfig.ok", res["ipconfig"].summary
     busy = _run(_laptop_with_idle_adapters("Tentative"), ["interface", "ipconfig"])
     assert busy["ipconfig"].summary == "192.0.2.100 on イーサネット is still tentative"
+
+
+def test_unplugged_nic_gateway_and_dns_are_not_used(monkeypatch):
+    # The equipment NIC is unplugged; its typed gateway (metric 5) and DNS
+    # server stay in the configuration, Wi-Fi (metric 35) carries the traffic.
+    hn = _windows(
+        adapters=[
+            _adapter("イーサネット", 12, "Intel(R) Ethernet", status="Disconnected"),
+            _adapter("Wi-Fi", 18, "Intel(R) Wi-Fi 6E AX211", media="Native 802.11"),
+        ],
+        addresses=[
+            _address("192.0.2.100", 24, 12, "イーサネット"),
+            _address("198.51.100.40", 24, 18, "Wi-Fi", origin="Dhcp"),
+        ],
+        routes=[
+            _route("0.0.0.0/0", "198.51.100.1", 18, "Wi-Fi", 0, 35),
+            _route("0.0.0.0/0", "192.0.2.1", 12, "イーサネット", 0, 5),
+            _route("198.51.100.0/24", "0.0.0.0", 18, "Wi-Fi", 256, 35),
+        ],
+        dns=[
+            {"InterfaceIndex": 12, "ServerAddresses": ["192.0.2.53"]},
+            {"InterfaceIndex": 18, "ServerAddresses": ["198.51.100.53"]},
+        ],
+    )
+
+    def wifi_router_only(target, **kw):
+        up = target == "198.51.100.1"
+        return PingStats(
+            target=target,
+            address=target,
+            sent=4,
+            received=4 if up else 0,
+            rtts_ms=[1.0] * 4 if up else [],
+        )
+
+    monkeypatch.setattr(gateway_probe, "ping", wifi_router_only)
+    res = _run(hn, ["interface", "gateway", "ipconfig"], internet=True)
+    assert res["gateway"].code == "gateway.ok"
+    assert res["gateway"].detail["gateway"] == "198.51.100.1"
+    assert res["ipconfig"].code == "ipconfig.ok"
+    assert hn.resolvers == ["198.51.100.53"]
+    route = hn.decide_route("192.0.2.39")
+    assert route.interface.name == "イーサネット" and not route.interface.up
+    assert "Get-NetRoute -AddressFamily IPv4 -PolicyStore ActiveStore" in (
+        windows.COLLECT_SCRIPT
+    )
