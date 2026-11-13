@@ -188,7 +188,7 @@ def parse_route_json(data: list) -> List[Route]:
                 destination=dst,
                 gateway=rec.get("gateway"),
                 interface=rec.get("dev"),
-                metric=rec.get("metric"),
+                metric=rec.get("metric", 0),  # iproute2 omits a metric of 0
             )
         )
     return routes
@@ -268,7 +268,7 @@ def parse_route_text(text: str) -> List[Route]:
             dst = "0.0.0.0/0"
         elif "/" not in dst:
             dst = f"{dst}/32"
-        r = Route(destination=dst)
+        r = Route(destination=dst, metric=0)
         if "via" in parts:
             r.gateway = parts[parts.index("via") + 1]
         if "dev" in parts:

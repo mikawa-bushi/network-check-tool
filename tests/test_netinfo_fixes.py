@@ -5,10 +5,14 @@ formats; the Japanese Windows text is encoded in cp932 with CRLF line ends and
 decoded the way ``run()`` decodes it.
 """
 
+import pytest
+
 from netdiag import probes  # noqa: F401  (registers the probes)
 from netdiag.diagnosis.engine import Engine
+from netdiag.measure import PingStats
 from netdiag.netinfo import linux
 from netdiag.netinfo.model import KIND_ETHERNET, HostNetwork
+from netdiag.probes import gateway as gateway_probe
 
 
 def _run(hn, only, **config):
@@ -16,6 +20,29 @@ def _run(hn, only, **config):
         r.name: r
         for r in Engine(config={"_netinfo": hn, **config}).run(only=only).results
     }
+
+
+@pytest.fixture
+def pinged(monkeypatch):
+    """Answer every gateway ping and record which addresses were pinged."""
+    seen = []
+
+    def fake_ping(target, **kw):
+        seen.append(target)
+        return PingStats(
+            target=target, address=target, sent=4, received=4, rtts_ms=[1.0] * 4
+        )
+
+    monkeypatch.setattr(gateway_probe, "ping", fake_ping)
+    return seen
+
+
+def _linux(addr, routes, base):
+    return HostNetwork(
+        interfaces=linux.parse_addr_json(addr, base=base),
+        routes=linux.parse_route_json(routes),
+        source="linux:ip-json",
+    )
 
 
 def _sysfs_nic(base, name, counters):
@@ -66,3 +93,51 @@ def test_crc_errors_are_counted_once(tmp_path):
     link = _run(hn, ["link"])["link"]
     assert link.code == "link.errors"
     assert "7 errors since boot" in link.summary
+
+
+# ------------------------------------------------------------ default route
+
+
+def test_metric_0_static_default_beats_a_dhcp_wifi_default(tmp_path, pinged):
+    # `ip route add default via ...` and ifupdown give metric 0, which
+    # `ip -j route` leaves out; NetworkManager's Wi-Fi default has 600.
+    hn = _linux(
+        [
+            _eth_json("eth0", "192.0.2.5", 24, index=2),
+            _eth_json("wlan0", "198.51.100.20", 24, index=3),
+        ],
+        [
+            {"dst": "default", "gateway": "192.0.2.1", "dev": "eth0", "flags": []},
+            {
+                "dst": "default",
+                "gateway": "198.51.100.1",
+                "dev": "wlan0",
+                "protocol": "dhcp",
+                "metric": 600,
+                "flags": [],
+            },
+            {"dst": "192.0.2.0/24", "dev": "eth0", "scope": "link", "flags": []},
+            {
+                "dst": "198.51.100.0/24",
+                "dev": "wlan0",
+                "scope": "link",
+                "metric": 600,
+                "flags": [],
+            },
+        ],
+        tmp_path,
+    )
+    res = _run(hn, ["gateway", "ipconfig"], internet=True)
+    assert pinged == ["192.0.2.1"]
+    assert res["gateway"].detail["gateway"] == "192.0.2.1"
+    assert "192.0.2.1 normally wins" in res["ipconfig"].summary
+    assert hn.decide_route("203.0.113.9").gateway == "192.0.2.1"
+
+
+def test_text_route_without_metric_reads_as_metric_0():
+    routes = linux.parse_route_text(
+        "default via 198.51.100.1 dev wlan0 proto dhcp metric 600\n"
+        "default via 192.0.2.1 dev eth0\n"
+    )
+    hn = HostNetwork(routes=routes)
+    assert hn.preferred_default_route().gateway == "192.0.2.1"
