@@ -879,3 +879,25 @@ def test_invalid_arp_row_is_no_answer_not_a_resolved_neighbour():
         _neighbor_after=after,
     )
     assert res["reach"].code == "reach.icmp_blocked"
+
+
+# ------------------------------------------------ duplicate own address
+
+
+def test_disabled_duplicate_address_is_not_used_to_reach_devices():
+    hn = _windows(
+        adapters=[
+            _adapter("イーサネット", 12, "Intel(R) Ethernet Connection I219-LM"),
+            _adapter("Wi-Fi", 18, "Intel(R) Wi-Fi 6E AX211", media="Native 802.11"),
+        ],
+        addresses=[
+            _address("192.0.2.100", 24, 12, "イーサネット", state="Duplicate"),
+            _address("198.51.100.40", 24, 18, "Wi-Fi", origin="Dhcp"),
+        ],
+        routes=[_route("0.0.0.0/0", "198.51.100.1", 18, "Wi-Fi", 0, 35)],
+    )
+    res = _run(hn, ["ipconfig", "route"], target={"name": "PLC1", "host": "192.0.2.39"})
+    assert res["ipconfig"].code == "ipconfig.duplicate_ip"
+    assert res["route"].code != "route.on_link"
+    assert res["route"].detail["local_address"] != "192.0.2.100/24"
+    assert hn.decide_route("192.0.2.100").special == "self"

@@ -373,6 +373,8 @@ class HostNetwork:
                     dec.special = "self"
                     dec.interface, dec.address = iface, addr
                     return dec
+                if "duplicate" in addr.flags:  # the OS has disabled it
+                    continue
                 net = addr.network
                 if ip in net:
                     dec.candidates.append((iface, addr))
