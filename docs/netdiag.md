@@ -100,9 +100,6 @@ from before proves nothing — the device may have died seconds ago.
 | `netdiag scenario FILE` | A YAML/JSON scenario: `checks` (host probes), `devices` (device list), `config` |
 | `netdiag snapshot save/list/diff [NAME]` | Save the network configuration while it works; diff later ("what changed?") |
 | `netdiag peer serve` / `peer test ADDR` | Two-host LAN quality (loss/jitter/throughput) for closed networks |
-| `netdiag watch` | Always-on: light loop, alerts only on state change (`--no-internet` on closed networks), webhook/Slack/desktop sinks; records every sweep to the history DB (`--no-save` to skip) |
-| `netdiag status` / `history` / `prune` | Watcher state, baseline & change-point analysis, retention |
-| `netdiag service print/install` | systemd unit for `watch` |
 
 Global options: `--lang ja|en` (default: `NETDIAG_LANG`, then the locale, else
 Japanese), `-v/--verbose`, `--log-file`. `python -m netdiag` works where the
@@ -230,17 +227,6 @@ loss_warn_pct, interval (Japanese aliases such as 名前・IPアドレス・ポ�
 `[[host]]` / `hosts` list whose entries give only `name` loads too, and each
 name is used as the host.
 
-## Always-on watching (`netdiag watch`)
-
-- **Tier 1 — every tick, cheap:** `interface, gateway, external, dns` (or
-  `interface, gateway, neighbor` with `--no-internet`).
-- **Tier 2 — on confirmed degradation, once:** the full sweep runs a single time
-  and its root cause is attached to the alert.
-- **Flap damping:** `--fail-threshold` / `--recover-threshold` consecutive ticks.
-- Alerts: `~/.netdiag/alerts.jsonl` (+ `.log`), optional `--webhook-url`,
-  `--slack-url`, `--desktop`; state in `~/.netdiag/state.json`.
-- History is downsampled hourly after 7 days and kept 90 days (`prune`).
-
 ## Extending with plugins
 
 A separate package can add probes via an entry point — no fork required:
@@ -265,7 +251,7 @@ netdiag/
 ├── measure/       icmp.py (socket / Windows API / system ping, streaming), winicmp.py, tcp.py, dns.py, stats.py
 ├── probes/        interface, link, ipconfig, gateway, neighbor, icmp/external, dns, dualstack,
 │                  tcp, firewall, http, tls, system/clock, wifi, traceroute, device (route/reach/ports)
-├── diagnosis/     engine (dep-graph, transitive gating), rules (advice), baseline, changepoint
+├── diagnosis/     engine (dep-graph, transitive gating), rules (advice)
 ├── runner.py      run_check(), live NIC-error / link-flap probe
 ├── soak.py        long-run recorder: outages, incidents, NIC events (report/soak.py renders it)
 ├── collect.py     raw command capture + structure-preserving masking
@@ -275,6 +261,6 @@ netdiag/
 ├── oui.py         MAC vendor lookup from an OUI database already on the system
 ├── report/        text / JSON / HTML / CSV
 ├── i18n.py        ja / en
-├── cli/           click commands (check, scan, ping, soak, collect, explain, scenario, snapshot, peer, watch …)
-├── snapshot/ peer/ scenario/ alerting.py watch.py storage.py scheduler.py plugins.py
+├── cli/           click commands (check, scan, ping, soak, collect, explain, scenario, snapshot, peer)
+├── snapshot/ peer/ scenario/ plugins.py
 ```

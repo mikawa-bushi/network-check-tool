@@ -223,8 +223,6 @@ zip にまとめます。IPアドレス・MAC・PC名・ユーザー名・SSID�
 | `netdiag scenario <file>` | YAML/JSONのシナリオ（このPCの確認項目 + 機器）で点検。例: [`examples/line1.yaml`](examples/line1.yaml) |
 | `netdiag snapshot save/diff` | 正常時のネットワーク設定を保存し、「何が変わったか」を比較 |
 | `netdiag peer serve/test` | 2台のPC間でLAN品質（ロス・ジッタ・スループット）を測定 |
-| `netdiag watch` | 常時監視し、状態が変わったときだけ通知。毎回の結果を履歴DBに記録（閉じたネットワークでは `--no-internet`） |
-| `netdiag status / history / prune / service` | 監視状態・履歴分析・履歴整理・systemdサービス化 |
 
 詳しい設計と全オプションは [docs/netdiag.md](docs/netdiag.md) を参照してください。
 
