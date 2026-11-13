@@ -198,11 +198,6 @@ def _collect_devices(targets, device_files, ports) -> List[Device]:
     ),
 )
 @click.option(
-    "--save/--no-save",
-    default=False,
-    help=H("測定値を履歴DBに記録", "Record metrics to the history db."),
-)
-@click.option(
     "--no-color", is_flag=True, help=H("色を付けない", "Disable ANSI colour.")
 )
 @click.option(
@@ -241,7 +236,6 @@ def check(
     output,
     show_all,
     reasoning,
-    save,
     no_color,
     jobs,
     no_host,
@@ -285,17 +279,6 @@ def check(
     finally:
         progress.done()
     rep.settings["devices"] = len(devices)
-
-    if save:
-        from ..storage import Storage
-
-        with Storage() as st:
-            st.record_diagnosis(
-                rep.host, target=cfg.get("external_ip") if cfg.get("internet") else None
-            )
-            for dr in rep.devices:
-                if dr.diagnosis is not None:
-                    st.record_diagnosis(dr.diagnosis, target=dr.device.host)
 
     if fmt == "json":
         text = report_mod.render_check_json(rep)

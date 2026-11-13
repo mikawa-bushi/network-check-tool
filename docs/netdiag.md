@@ -123,7 +123,6 @@ Japanese), `-v/--verbose`, `--log-file`. `python -m netdiag` works where the
 - `--format text|json|html|csv` and `-o/--output FILE` (format inferred from
   the extension; CSV is written with a BOM for Excel).
 - `--all` shows not-applicable checks; `--reasoning` shows the engine's steps;
-  `--save` records metrics (per device, keyed by address) for `history`;
   `--no-host` checks devices only; `--jobs N` parallelises the host sweep.
 
 Exit codes, the same for every command:
