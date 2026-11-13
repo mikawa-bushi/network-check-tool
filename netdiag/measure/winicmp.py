@@ -244,12 +244,17 @@ class WinIcmpPinger:
                         stats[t].error = f"IcmpCreateFile failed: {e}"
                 return
             rounds = range(self.count) if self.count is not None else itertools.count()
+            first_due = t0 + (j / n) * self.interval
             try:
                 for i in rounds:
                     if self.stop.is_set():
                         break
-                    due = t0 + (j / n) * self.interval + i * self.interval
-                    delay = due - time.perf_counter()
+                    delay = first_due + i * self.interval - time.perf_counter()
+                    if delay < -self.interval:
+                        # netdiag itself was frozen (Ctrl-Z, a VM pause): resume
+                        # the pace instead of catching up on every missed request.
+                        first_due -= delay
+                        delay = 0.0
                     if delay > 0 and self.stop.wait(delay):
                         break
                     self.limiter.acquire(self.stop)

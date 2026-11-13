@@ -454,24 +454,33 @@ class _SocketPinger:
         self.late = [0] * n
         self.next_k = 0
         t0 = time.perf_counter()
+        last_send = t0 - self.min_gap
         try:
             while True:
                 now = time.perf_counter()
+                behind = now - (t0 + self.next_k * step)
+                if behind > period:
+                    # netdiag itself was frozen (Ctrl-Z, a VM pause): resume the
+                    # pace instead of sending every missed request at once.
+                    t0 += behind
                 stopping = self.stop.is_set()
+                next_at = max(t0 + self.next_k * step, last_send + self.min_gap)
                 while (
                     not stopping
                     and (total is None or self.next_k < total)
-                    and t0 + self.next_k * step <= now
+                    and next_at <= now
                 ):
                     self._send(sock, self.next_k, n)
                     self.next_k += 1
+                    last_send = now
                     now = time.perf_counter()
+                    next_at = max(t0 + self.next_k * step, last_send + self.min_gap)
                 self._expire(now, n)
                 done_sending = stopping or (total is not None and self.next_k >= total)
                 if done_sending and not self.outstanding:
                     break
                 if not done_sending:
-                    wait = max(0.0, t0 + self.next_k * step - now)
+                    wait = max(0.0, next_at - now)
                 else:
                     oldest = min(v[0] for v in self.outstanding.values())
                     wait = max(0.0, oldest + self.timeout - now)
