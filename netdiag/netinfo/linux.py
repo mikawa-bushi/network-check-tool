@@ -9,6 +9,7 @@ cover systems without iproute2 at all (slim containers).
 
 from __future__ import annotations
 
+import ipaddress
 import json
 import re
 import socket
@@ -38,6 +39,7 @@ from .model import (
     LinkStats,
     Neighbor,
     Route,
+    RouteRule,
     normalize_mac,
 )
 
@@ -224,11 +226,16 @@ def parse_addr_json(data: list, base: Path = SYS_NET) -> List[Interface]:
     return out
 
 
+# Route types that carry no traffic to a target (the kernel's local table, and
+# "throw", which hands the lookup to the next rule).
+_NOT_FORWARDING = {"local", "broadcast", "multicast", "anycast", "throw", "nat"}
+
+
 def parse_route_json(data: list) -> List[Route]:
     routes: List[Route] = []
     for rec in data:
         dst = rec.get("dst")
-        if not dst:
+        if not dst or rec.get("type") in _NOT_FORWARDING:
             continue
         if dst == "default":
             dst = "0.0.0.0/0"
@@ -244,9 +251,63 @@ def parse_route_json(data: list) -> List[Route]:
                     gateway=hop.get("gateway"),
                     interface=hop.get("dev"),
                     metric=rec.get("metric", 0),  # iproute2 omits a metric of 0
+                    table=str(rec.get("table", "main")),
                 )
             )
     return routes
+
+
+# Rule selectors netdiag's own probes never match on in general (an input or
+# output interface, a user, a protocol or port, a ToS/DSCP or tunnel id).
+_RULE_SELECTORS = (
+    "iif",
+    "oif",
+    "l3mdev",
+    "uid",
+    "ipproto",
+    "sport",
+    "dport",
+    "tos",
+    "dscp",
+    "flowlabel",
+    "tun_id",
+)
+
+
+def parse_rule_json(data: list) -> List[RouteRule]:
+    """``ip -j rule show``: the lookups this PC's own traffic goes through, in order.
+
+    A rule counts when it looks up a table for packets from any source with no
+    firewall mark, which is what netdiag's probes send. Tailscale (table 52)
+    and wg-quick (a fwmark rule plus ``suppress_prefixlength 0``) both route
+    that way.
+    """
+    out: List[RouteRule] = []
+    for rec in sorted(data, key=lambda r: r.get("priority", 0)):
+        if not rec.get("table") or rec.get("src", "all") != "all":
+            continue
+        if any(key.startswith(_RULE_SELECTORS) for key in rec):
+            continue
+        try:
+            unmarked = int(str(rec.get("fwmark", "0")), 16) == 0
+            dst = rec.get("dst", "all")
+            destination = (
+                None
+                if dst == "all"
+                else str(ipaddress.ip_network(f"{dst}/{rec.get('dstlen', 32)}", False))
+            )
+        except ValueError:
+            continue
+        if unmarked == ("not" in rec):
+            continue
+        out.append(
+            RouteRule(
+                table=str(rec["table"]),
+                destination=destination,
+                suppress_prefixlength=int(rec.get("suppress_prefixlen", -1)),
+            )
+        )
+    return out
 
 
 def parse_neigh_json(data: list) -> List[Neighbor]:
@@ -459,16 +520,24 @@ def _interfaces() -> Tuple[List[Interface], str]:
     return read_sys_interfaces(SYS_NET), "linux:sysfs"
 
 
-def _routes() -> Optional[List[Route]]:
+def _routes() -> Tuple[Optional[List[Route]], List[RouteRule]]:
+    """Routes and policy rules; every table when ``ip rule`` can be read."""
     if have("ip"):
+        rules = _ip_json("-4", "rule", "show")
+        if rules is not None:
+            data = _ip_json("-4", "route", "show", "table", "all")
+            if data is not None:
+                return parse_route_json(data), (
+                    parse_rule_json(rules) or [RouteRule(table="main")]
+                )
         data = _ip_json("route", "show")
         if data is not None:
-            return parse_route_json(data)
+            return parse_route_json(data), []
         res = run(["ip", "route", "show"], timeout=8)
         if res.ok:
-            return parse_route_text(res.stdout)
+            return parse_route_text(res.stdout), []
     text = _read(PROC_NET / "route")
-    return parse_proc_route(text) if text is not None else None
+    return (parse_proc_route(text) if text is not None else None), []
 
 
 def collect() -> HostNetwork:
@@ -479,7 +548,7 @@ def collect() -> HostNetwork:
             "could not read the network interfaces ('ip' failed and "
             "/sys/class/net is unreadable)"
         )
-    routes = _routes()
+    routes, hn.rules = _routes()
     if routes is None:
         hn.errors.append(
             "could not read the routing table ('ip' failed and /proc/net/route "

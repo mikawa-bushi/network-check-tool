@@ -607,3 +607,115 @@ def test_failed_route_commands_on_windows_and_macos_are_reported(monkeypatch):
     monkeypatch.setattr(macos, "have", lambda cmd: False)
     mac = macos.collect()
     assert mac.routes == [] and any("routing table" in e for e in mac.errors)
+
+
+# --------------------------------------------------------- policy routing
+
+TAILSCALE_RULES = [
+    {"priority": 0, "src": "all", "table": "local"},
+    {"priority": 5210, "src": "all", "fwmark": "0x80000", "fwmask": "0xff0000"}
+    | {"table": "main"},
+    {"priority": 5230, "src": "all", "fwmark": "0x80000", "fwmask": "0xff0000"}
+    | {"table": "default"},
+    {"priority": 5250, "src": "all", "fwmark": "0x80000", "fwmask": "0xff0000"}
+    | {"action": "unreachable"},
+    {"priority": 5270, "src": "all", "table": "52"},
+    {"priority": 32766, "src": "all", "table": "main"},
+    {"priority": 32767, "src": "all", "table": "default"},
+]
+
+
+def _closed_line_pc_with_tailscale(linux_host):
+    outputs, sysfs = linux_host
+    _sysfs_nic(sysfs, "eth0", {"rx_packets": 10, "tx_packets": 10})
+    (sysfs / "tailscale0").mkdir()
+    outputs[("ip", "-j", "addr", "show")] = json.dumps(
+        [
+            _eth_json("eth0", "192.0.2.20", 24, index=2),
+            _p2p_json("tailscale0", "198.51.100.16", 5),
+        ]
+    )
+    outputs[("ip", "-j", "-4", "rule", "show")] = json.dumps(TAILSCALE_RULES)
+    outputs[("ip", "-j", "-4", "route", "show", "table", "all")] = json.dumps(
+        [
+            {"dst": "203.0.113.79", "dev": "tailscale0", "table": "52", "flags": []},
+            {"dst": "192.0.2.0/24", "dev": "eth0", "scope": "link", "flags": []},
+            {
+                "type": "local",
+                "dst": "192.0.2.20",
+                "dev": "eth0",
+                "table": "local",
+                "scope": "host",
+                "flags": [],
+            },
+        ]
+    )
+    return linux.collect()
+
+
+def test_tunnel_routes_outside_the_main_table_are_followed(linux_host):
+    hn = _closed_line_pc_with_tailscale(linux_host)
+    assert hn.errors == []
+    route = _run(hn, ["route"], target={"name": "remote-HMI", "host": "203.0.113.79"})
+    assert route["route"].code == "route.on_link"
+    assert route["route"].detail["interface"] == "tailscale0"
+    assert not hn.decide_route("203.0.113.79").arp
+    assert hn.decide_route("192.0.2.39").interface.name == "eth0"
+    assert hn.default_routes() == [] and hn.link_default_route() is None
+
+
+def _wg_quick(extra_rules=(), extra_routes=()):
+    hn = HostNetwork(
+        interfaces=linux.parse_addr_json(
+            [
+                _eth_json("eth0", "192.0.2.20", 24, index=2),
+                _p2p_json("wg0", "198.51.100.2", 7),
+            ]
+        ),
+        routes=linux.parse_route_json(
+            [
+                {"dst": "default", "dev": "wg0", "table": "51820", "flags": []},
+                {"dst": "default", "gateway": "192.0.2.1", "dev": "eth0"}
+                | {"metric": 100, "flags": []},
+                {"dst": "192.0.2.0/24", "dev": "eth0", "scope": "link", "flags": []},
+                *extra_routes,
+            ]
+        ),
+    )
+    hn.rules = linux.parse_rule_json(
+        [
+            {"priority": 0, "src": "all", "table": "local"},
+            {"priority": 32764, "src": "all", "table": "main"}
+            | {"suppress_prefixlen": 0},
+            {"priority": 32765, "not": None, "src": "all", "fwmark": "0xca6c"}
+            | {"table": "51820"},
+            {"priority": 32766, "src": "all", "table": "main"},
+            {"priority": 32767, "src": "all", "table": "default"},
+            *extra_rules,
+        ]
+    )
+    return hn
+
+
+def test_wg_quick_full_tunnel_sends_internet_traffic_into_the_tunnel():
+    hn = _wg_quick()
+    internet = hn.decide_route("203.0.113.9")
+    assert internet.interface.name == "wg0" and internet.gateway is None
+    assert hn.decide_route("192.0.2.39").interface.name == "eth0"
+    assert hn.preferred_default_route().gateway == "192.0.2.1"
+    assert hn.link_default_route().interface == "wg0"
+
+
+def test_source_specific_tables_do_not_add_default_gateways():
+    hn = _wg_quick(
+        extra_rules=[
+            {"priority": 100, "src": "192.0.2.20", "table": "100"},
+            {"priority": 101, "src": "all", "iif": "eth1", "table": "100"},
+        ],
+        extra_routes=[
+            {"dst": "default", "gateway": "198.51.100.1", "dev": "eth1"}
+            | {"table": "100", "flags": []},
+        ],
+    )
+    assert hn.default_gateways() == ["192.0.2.1"]
+    assert hn.decide_route("203.0.113.9").interface.name == "wg0"

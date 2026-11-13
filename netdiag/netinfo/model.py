@@ -9,7 +9,7 @@ from __future__ import annotations
 
 import ipaddress
 from dataclasses import asdict, dataclass, field
-from typing import Any, Dict, List, Optional, Tuple
+from typing import Any, Callable, Dict, List, Optional, Tuple
 
 # Normalised neighbour (ARP) states. Only REACHABLE/PERMANENT prove the device
 # answered ARP recently; STALE/DELAY/PROBE are inconclusive (old cache entries);
@@ -183,6 +183,7 @@ class Route:
     gateway: Optional[str] = None
     interface: Optional[str] = None
     metric: Optional[int] = None
+    table: str = "main"  # Linux policy-routing table
 
     @property
     def is_default(self) -> bool:
@@ -206,6 +207,23 @@ class Route:
 
     def to_dict(self) -> dict:
         return asdict(self)
+
+
+@dataclass
+class RouteRule:
+    """One policy-routing lookup this PC's own traffic goes through (``ip rule``)."""
+
+    table: str
+    destination: Optional[str] = None  # the rule's "to" prefix; None: any target
+    suppress_prefixlength: int = -1  # skip routes this broad or broader (wg-quick: 0)
+
+    def to_dict(self) -> dict:
+        return asdict(self)
+
+
+# Where routes are looked up when no policy rules were collected.
+_ONE_TABLE = [RouteRule(table="")]
+_ANY_ADDRESS = ipaddress.IPv4Address("0.0.0.0")
 
 
 @dataclass
@@ -269,6 +287,9 @@ class HostNetwork:
     # Platform-specific facts gathered in the same collection pass (e.g. the
     # Windows firewall profiles), so probes need no extra PowerShell start.
     extras: Dict[str, Any] = field(default_factory=dict)
+    # Linux policy-routing lookups in priority order. Empty: one table holds
+    # every route (Windows, macOS, Linux without ``ip rule``).
+    rules: List[RouteRule] = field(default_factory=list)
 
     # -- queries ---------------------------------------------------------------
     def interface(self, name: Optional[str]) -> Optional[Interface]:
@@ -278,25 +299,37 @@ class HostNetwork:
         return None
 
     def default_routes(self) -> List[Route]:
-        """Default routes through a gateway (a router this PC can ping)."""
-        return [r for r in self.routes if r.is_default and r.gateway]
+        """Default routes through a gateway (a router this PC can ping).
+
+        Only tables that this PC's traffic is looked up in count; a table that
+        serves one source address (multi-WAN policy routing) does not.
+        """
+        general = {r.table for r in self.rules if r.destination is None}
+        return [
+            r
+            for r in self.routes
+            if r.is_default and r.gateway and (not self.rules or r.table in general)
+        ]
 
     def link_default_route(self) -> Optional[Route]:
-        """A default route with no gateway, lowest metric first.
+        """The default route with no gateway the OS would use, if any.
 
         PPP, mobile broadband and full-tunnel VPNs send off-LAN traffic straight
         into a point-to-point link: there is a route off the LAN, but no router
         on it to ping.
         """
-        return min(
-            (r for r in self.routes if r.is_default and not r.gateway and r.interface),
-            key=lambda r: r.rank,
-            default=None,
+        return self._route_to(
+            _ANY_ADDRESS,
+            lambda r: r.is_default and not r.gateway and r.interface is not None,
         )
 
     def preferred_default_route(self) -> Optional[Route]:
-        """The default route the OS normally uses: lowest metric, an unset one last."""
-        return min(self.default_routes(), key=lambda r: r.rank, default=None)
+        """The default route through a gateway the OS normally uses.
+
+        Lowest metric, an unset one last; with policy routing, the first table
+        in rule order that has one.
+        """
+        return self._route_to(_ANY_ADDRESS, lambda r: r.is_default and bool(r.gateway))
 
     def default_gateways(self) -> List[str]:
         return list(dict.fromkeys(r.gateway for r in self.default_routes()))
@@ -366,22 +399,37 @@ class HostNetwork:
                 dec.on_link = True
         return dec
 
-    def _route_to(self, ip: ipaddress.IPv4Address) -> Optional[Route]:
-        """The route the OS picks off the local subnets: most specific, then lowest metric."""
-        matches = [
-            (r, net)
-            for r in self.routes
-            if (net := r.network) is not None and ip in net
-        ]
-        best = min(
-            matches, key=lambda m: (-m[1].prefixlen, m[0].rank), default=(None, None)
-        )
-        return best[0]
+    def _route_to(
+        self,
+        ip: ipaddress.IPv4Address,
+        wanted: Callable[[Route], bool] = lambda r: True,
+    ) -> Optional[Route]:
+        """The route the OS picks for *ip*, as the kernel looks it up.
+
+        Rules are tried in order; the first table with a match decides. In a
+        table the most specific prefix wins, then the lowest metric.
+        """
+        for rule in self.rules or _ONE_TABLE:
+            if rule.destination and ip not in ipaddress.ip_network(rule.destination):
+                continue
+            matches = [
+                (r, net)
+                for r in self.routes
+                if (not rule.table or r.table == rule.table)
+                and (net := r.network) is not None
+                and ip in net
+                and net.prefixlen > rule.suppress_prefixlength
+                and wanted(r)
+            ]
+            if matches:
+                return min(matches, key=lambda m: (-m[1].prefixlen, m[0].rank))[0]
+        return None
 
     def to_dict(self) -> dict:
         return {
             "interfaces": [i.to_dict() for i in self.interfaces],
             "routes": [r.to_dict() for r in self.routes],
+            "rules": [r.to_dict() for r in self.rules],
             "resolvers": list(self.resolvers),
             "source": self.source,
             "errors": list(self.errors),
