@@ -160,3 +160,18 @@ def test_saved_message_follows_lang(run, tmp_path, monkeypatch):
     monkeypatch.setenv("NETDIAG_LANG", "en")
     _, _, err = run("--lang", "ja", "check", "-o", str(tmp_path / "r.json"))
     assert "レポートを保存しました" in err
+
+
+# ------------------------------------------------------------------ --no-host
+
+
+def test_no_host_without_devices_is_a_usage_error(run):
+    code, out, err = run("check", "--no-host")
+    assert code == 4 and "config" not in run.seen and out == ""
+    assert "nothing to check" in err
+
+
+def test_no_host_with_devices_checks_only_the_devices(run):
+    assert run("check", "--no-host", "192.0.2.10")[0] == 0
+    assert run.seen["kw"]["include_host"] is False
+    assert [d.host for d in run.seen["devices"]] == ["192.0.2.10"]

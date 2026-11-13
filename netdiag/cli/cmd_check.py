@@ -7,6 +7,7 @@ from typing import List
 
 import click
 
+from ..core import InputError
 from ..i18n import tr
 from ..inventory import (
     Device,
@@ -264,6 +265,13 @@ def check(
     fmt = format_from_path(output, fmt)
     output = output_path(output, inputs=device_files)
     devices = _collect_devices(targets, device_files, ports)
+    if no_host and not devices:
+        raise InputError(
+            tr(
+                "確認するものがありません。--no-host のときは TARGET か -f で機器を指定してください。",
+                "nothing to check: with --no-host, give devices as TARGET or with -f.",
+            )
+        )
     cfg = _build_config(external_ip, dns_name, tcp, http_url, count, internet=internet)
     if interval:
         cfg["interval"] = interval
