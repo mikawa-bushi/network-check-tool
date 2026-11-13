@@ -6,6 +6,8 @@ decoded the way ``run()`` decodes it.
 """
 
 import json
+import socket
+import struct
 
 import pytest
 
@@ -489,3 +491,119 @@ def test_text_fallback_finds_the_wired_nic(linux_host):
     assert kinds == {"lo": "loopback", "eth0": "ethernet", "docker0": "virtual"}
     link = _run(hn, ["link"])["link"]
     assert link.code == "link.ok" and link.summary.startswith("eth0 1 Gbps")
+
+
+# ------------------------------------------------- Linux without iproute2
+
+
+def _proc_hex(ip):
+    """How /proc/net prints an IPv4 address: the network-order word in host order."""
+    return "%08X" % struct.unpack("=I", socket.inet_aton(ip))[0]
+
+
+def _proc_route_row(iface, dst, gw, flags, metric, mask):
+    return "\t".join(
+        [iface, _proc_hex(dst), _proc_hex(gw), f"{flags:04X}", "0", "0"]
+        + [str(metric), _proc_hex(mask), "0", "0", "0"]
+    )
+
+
+@pytest.fixture
+def no_iproute2(linux_host, monkeypatch, tmp_path):
+    outputs, sysfs = linux_host
+    proc = tmp_path / "proc"
+    proc.mkdir()
+    monkeypatch.setattr(linux, "have", lambda cmd: False)
+    monkeypatch.setattr(linux, "PROC_NET", proc)
+    addresses = {"lo": ("127.0.0.1", 8), "eth0": ("192.0.2.20", 24)}
+    monkeypatch.setattr(
+        linux,
+        "_ioctl_ipv4",
+        lambda name: (linux.Address(*addresses[name]) if name in addresses else None),
+    )
+    return sysfs, proc
+
+
+def _sysfs_identity(nic, flags, operstate, arphrd, mac):
+    nic.mkdir(parents=True, exist_ok=True)
+    (nic / "flags").write_text(f"{flags:#x}\n")
+    (nic / "operstate").write_text(f"{operstate}\n")
+    (nic / "type").write_text(f"{arphrd}\n")
+    (nic / "address").write_text(f"{mac}\n")
+
+
+def test_without_iproute2_routes_and_interfaces_come_from_proc_and_sys(
+    no_iproute2, pinged
+):
+    sysfs, proc = no_iproute2
+    _sysfs_nic(sysfs, "eth0", {"rx_packets": 10, "tx_packets": 10, "rx_errors": 0})
+    _sysfs_identity(sysfs / "eth0", 0x1003, "up", 1, "00:00:5e:00:53:02")
+    _sysfs_identity(sysfs / "lo", 0x9, "unknown", 772, "00:00:00:00:00:00")
+    _sysfs_identity(sysfs / "tun0", 0x1091, "unknown", 65534, "")
+    (proc / "route").write_text(
+        "Iface\tDestination\tGateway \tFlags\tRefCnt\tUse\tMetric\tMask\t\tMTU"
+        "\tWindow\tIRTT\n"
+        + _proc_route_row("eth0", "0.0.0.0", "192.0.2.1", 0x3, 100, "0.0.0.0")
+        + "\n"
+        + _proc_route_row("eth0", "192.0.2.0", "0.0.0.0", 0x1, 100, "255.255.255.0")
+        + "\n"
+    )
+    hn = linux.collect()
+    assert hn.errors == [] and hn.source == "linux:sysfs"
+    by = {i.name: i for i in hn.interfaces}
+    assert by["eth0"].kind == KIND_ETHERNET and by["eth0"].up
+    assert [a.cidr for a in by["eth0"].addresses] == ["192.0.2.20/24"]
+    assert by["lo"].kind == "loopback" and not by["tun0"].arp
+    res = _run(
+        hn,
+        ["interface", "gateway", "route"],
+        internet=True,
+        target={"name": "PLC1", "host": "192.0.2.39"},
+    )
+    assert res["gateway"].code == "gateway.ok" and pinged == ["192.0.2.1"]
+    assert res["route"].summary == "on-link via eth0 192.0.2.20/24"
+
+
+def test_without_iproute2_arp_table_comes_from_proc(no_iproute2):
+    _sysfs, proc = no_iproute2
+    (proc / "arp").write_text(
+        "IP address       HW type     Flags       HW address            Mask     "
+        "Device\n"
+        "192.0.2.1        0x1         0x2         00:00:5e:00:53:01     *        eth0\n"
+        "192.0.2.39       0x1         0x0         00:00:00:00:00:00     *        eth0\n"
+    )
+    by = {n.ip: n for n in linux.neighbors()}
+    assert by["192.0.2.1"].mac == "00:00:5e:00:53:01" and not by["192.0.2.1"].absent
+    assert by["192.0.2.39"].absent and by["192.0.2.39"].mac is None
+    assert linux.neighbor("192.0.2.1").interface == "eth0"
+
+
+def test_unreadable_routing_table_is_reported_not_empty(no_iproute2, monkeypatch):
+    sysfs, proc = no_iproute2
+    monkeypatch.setattr(linux, "SYS_NET", sysfs / "missing")
+    hn = linux.collect()
+    assert hn.routes == [] and hn.interfaces == []
+    assert any("routing table" in e for e in hn.errors)
+    assert any("network interfaces" in e for e in hn.errors)
+
+
+def test_failed_route_commands_on_windows_and_macos_are_reported(monkeypatch):
+    hn = windows.parse_collect_json(
+        {
+            "adapters": [_adapter("イーサネット", 12, "Intel(R) Ethernet")],
+            "routes": None,
+        }
+    )
+    assert hn.routes == [] and any("routing table" in e for e in hn.errors)
+    assert _two_gateway_laptop().errors == []
+
+    def fake_run(args, timeout=10.0):
+        ok = args[0] != "netstat" or "-rn" not in args
+        return CommandResult(
+            ok=ok, code=0 if ok else 1, stdout="", stderr="", found=True
+        )
+
+    monkeypatch.setattr(macos, "run", fake_run)
+    monkeypatch.setattr(macos, "have", lambda cmd: False)
+    mac = macos.collect()
+    assert mac.routes == [] and any("routing table" in e for e in mac.errors)

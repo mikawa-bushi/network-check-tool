@@ -296,6 +296,8 @@ def parse_collect_json(data: Dict[str, Any]) -> HostNetwork:
             continue
 
     names = {i.index: i.name for i in hn.interfaces}
+    if not _as_list(data.get("routes")):  # even an offline PC has loopback routes
+        hn.errors.append("could not read the routing table (Get-NetRoute failed)")
     for r in _as_list(data.get("routes")):
         dst = str(r.get("DestinationPrefix") or "")
         if not dst or ":" in dst:
@@ -447,6 +449,8 @@ def collect() -> HostNetwork:
         "PowerShell network cmdlets unavailable; using 'route print' (no link "
         "speed/duplex/error counters)"
     )
+    if not hn.routes:
+        hn.errors.append("could not read the routing table ('route print' failed)")
     return hn
 
 

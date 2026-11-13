@@ -208,9 +208,10 @@ def collect() -> HostNetwork:
     stats = parse_netstat_ibn(run(["netstat", "-ibn"], timeout=8).stdout)
     for iface in hn.interfaces:
         iface.stats = stats.get(iface.name)
-    hn.routes = parse_netstat_routes(
-        run(["netstat", "-rn", "-f", "inet"], timeout=8).stdout
-    )
+    res = run(["netstat", "-rn", "-f", "inet"], timeout=8)
+    hn.routes = parse_netstat_routes(res.stdout)
+    if not res.ok:
+        hn.errors.append("could not read the routing table ('netstat -rn' failed)")
     hn.resolvers = parse_scutil_dns(run(["scutil", "--dns"], timeout=8).stdout)
     return hn
 
