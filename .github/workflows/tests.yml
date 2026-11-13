@@ -7,6 +7,7 @@ on:
   pull_request:
     branches:
       - '**'
+  workflow_call:  # publish.yml runs the whole suite before a release
 
 permissions:
   contents: read

@@ -68,3 +68,10 @@ netdiag/
 
 Bug reports are most useful with the output of `netdiag check --format json`
 (remove anything confidential) and the OS / language of the PC.
+
+## Releasing
+
+Set the version in `pyproject.toml` (the only place it is written), merge that
+change, then push the tag `v<version>`. `publish.yml` runs the full test suite,
+checks that the tag names the package version, publishes to PyPI and
+attaches the Windows exe zip to the tag's GitHub release.

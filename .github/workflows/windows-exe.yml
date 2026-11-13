@@ -1,13 +1,12 @@
 name: Windows exe
 
-# Builds the single-file netdiag.exe (no Python needed on the target PC),
-# smoke-tests the exe itself, and attaches the zip to the release on a v* tag.
+# Builds the single-file netdiag.exe (no Python needed on the target PC) and
+# smoke-tests the exe itself. On a v* tag, publish.yml calls this after the
+# tests pass and attaches the zip to the release.
 on:
   push:
     branches:
       - '**'
-    tags:
-      - 'v*'
     paths:
       - 'netdiag/**'
       - 'packaging/windows/**'
@@ -16,13 +15,20 @@ on:
       - 'scripts/expect_verdict.sh'
       - '.github/workflows/windows-exe.yml'
   workflow_dispatch:
+  workflow_call:
+    outputs:
+      zip:
+        description: Name of the uploaded exe zip artifact, without .zip
+        value: ${{ jobs.build.outputs.zip }}
 
 permissions:
-  contents: write  # only used to upload the zip to a tag's release
+  contents: read
 
 jobs:
   build:
     runs-on: windows-latest
+    outputs:
+      zip: ${{ steps.pkg.outputs.name }}
     defaults:
       run:
         shell: bash
@@ -96,12 +102,3 @@ jobs:
       with:
         name: ${{ steps.pkg.outputs.name }}
         path: pkg/${{ steps.pkg.outputs.name }}.zip
-
-    - name: Attach to release (v* tags)
-      if: startsWith(github.ref, 'refs/tags/v')
-      env:
-        GH_TOKEN: ${{ github.token }}
-      run: |
-        zip="pkg/${{ steps.pkg.outputs.name }}.zip"
-        gh release upload "$GITHUB_REF_NAME" "$zip" --clobber \
-          || gh release create "$GITHUB_REF_NAME" "$zip" --generate-notes
