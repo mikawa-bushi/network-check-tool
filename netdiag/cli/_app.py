@@ -2,11 +2,12 @@
 
 from __future__ import annotations
 
+import inspect
 import logging
 import os
 import sys
 from pathlib import Path
-from typing import Iterable, List, Optional
+from typing import Dict, Iterable, List, Optional, Sequence, Tuple
 from urllib.parse import urlparse
 
 import click
@@ -17,14 +18,61 @@ from ..i18n import detect, set_language, tr
 
 logger = logging.getLogger("netdiag.cli")
 
-# Help texts are chosen once, from the environment (NETDIAG_LANG / locale),
-# because click renders them before any option is parsed.
+# click stores help texts when the commands are defined, before --lang is
+# parsed. H() returns the environment's language and remembers both, so the
+# help is rendered again in the language active when it is printed.
 _HELP_JA = detect() == "ja"
+_HELP_PAIRS: Dict[str, Tuple[str, str]] = {}
 
 
 def H(ja: str, en: str) -> str:
-    """Help text in the environment's language."""
+    """Help text, printed in the language that --lang (or the environment) picks."""
+    for text in (ja, en):
+        _HELP_PAIRS[inspect.cleandoc(text)] = (ja, en)
     return ja if _HELP_JA else en
+
+
+def _localized(text: Optional[str]) -> Optional[str]:
+    pair = _HELP_PAIRS.get(text) if text else None
+    return tr(*pair) if pair else text
+
+
+def _lang_in(args: Sequence[str]) -> Optional[str]:
+    for i, arg in enumerate(args):
+        if arg.startswith("--lang="):
+            return arg.partition("=")[2]
+        if arg == "--lang" and i + 1 < len(args):
+            return args[i + 1]
+    return None
+
+
+class _LocalizedHelp:
+    def format_help(self, ctx: click.Context, formatter: click.HelpFormatter) -> None:
+        self.help = _localized(self.help)
+        for param in self.get_params(ctx):
+            param.help = _localized(getattr(param, "help", None))
+        super().format_help(ctx, formatter)
+
+    def get_short_help_str(self, limit: int = 45) -> str:
+        self.help = _localized(self.help)
+        return super().get_short_help_str(limit)
+
+
+class _Command(_LocalizedHelp, click.Command):
+    pass
+
+
+class _Group(_LocalizedHelp, click.Group):
+    command_class = _Command
+    group_class = type
+
+    def parse_args(self, ctx: click.Context, args: List[str]) -> List[str]:
+        # --lang has to hold before click parses the line, so that --help and a
+        # usage error on the same line are already in that language.
+        lang = _lang_in(args) if ctx.parent is None else None
+        if lang:
+            set_language(lang)
+        return super().parse_args(ctx, args)
 
 
 def _setup_logging(verbose: bool = False, log_file: Optional[str] = None) -> None:
@@ -345,6 +393,7 @@ class Progress:
 
 
 @click.group(
+    cls=_Group,
     context_settings={"help_option_names": ["-h", "--help"]},
     invoke_without_command=True,
 )

@@ -175,3 +175,30 @@ def test_no_host_with_devices_checks_only_the_devices(run):
     assert run("check", "--no-host", "192.0.2.10")[0] == 0
     assert run.seen["kw"]["include_host"] is False
     assert [d.host for d in run.seen["devices"]] == ["192.0.2.10"]
+
+
+# --------------------------------------------------------------------- --lang
+
+
+def test_help_follows_lang_not_the_environment(run, monkeypatch):
+    monkeypatch.setenv("NETDIAG_LANG", "en")
+    code, out, _ = run("--lang", "ja", "check", "--help")
+    assert code == 0
+    assert "機器台帳" in out and "Device list" not in out
+    monkeypatch.setenv("NETDIAG_LANG", "ja")
+    _, out, _ = run("--lang", "en", "--help")
+    assert "Display language" in out and "表示言語" not in out
+    _, out, _ = run("--lang=en", "snapshot", "--help")
+    assert "Usage: netdiag snapshot" in out
+
+
+def test_help_without_lang_follows_the_environment(run, monkeypatch):
+    monkeypatch.setenv("NETDIAG_LANG", "ja")
+    _, out, _ = run("check", "--help")
+    assert "機器台帳" in out
+
+
+def test_usage_error_after_lang_is_in_that_language(run, monkeypatch):
+    monkeypatch.setenv("NETDIAG_LANG", "en")
+    code, _, err = run("--lang", "ja", "--bogus")
+    assert code == 4 and err.startswith("指定に誤りがあります")
