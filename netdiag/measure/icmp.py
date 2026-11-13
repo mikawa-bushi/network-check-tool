@@ -29,10 +29,12 @@ import functools
 import ipaddress
 import math
 import os
+import queue
 import re
 import selectors
 import socket
 import struct
+import subprocess
 import threading
 import time
 from concurrent.futures import ThreadPoolExecutor
@@ -49,7 +51,15 @@ from typing import (
     Tuple,
 )
 
-from ..core.util import have, is_macos, is_windows, run
+from ..core.util import (
+    _command_env,
+    _no_window_kwargs,
+    decode_output,
+    have,
+    is_macos,
+    is_windows,
+    run,
+)
 from .stats import RttSummary, loss_upper_bound_pct, summarize
 
 DEFAULT_COUNT = 10
@@ -226,10 +236,20 @@ def ping_stream(
 ) -> Dict[str, PingStats]:
     """Ping continuously until *stop* is set, reporting every request.
 
-    ``on_sample(target, sent_at, rtt_ms, error)`` is called once per request:
-    ``rtt_ms`` is None for a lost request, ``sent_at`` is the wall-clock send
-    time (for outage timelines). Memory stays bounded however long it runs;
-    the returned stats carry counts only (no per-reply RTT list).
+    ``on_sample(target, sent_at, rtt_ms, error)`` is called once for every
+    request due before *stop* was set, and never for one due after it.
+    ``sent_at`` is the wall-clock send time (for outage timelines) and
+    ``rtt_ms`` is None for a lost request. ``error`` says why a request was
+    lost when ping knows, for example ``connect: Network is unreachable``:
+    a request that could not be sent still counts as lost. A sample arrives
+    at most ``max(timeout, ping pace) + 0.3`` seconds after ``sent_at``.
+    While netdiag itself is frozen (Ctrl-Z, a VM pause) nothing falls due,
+    so the pause leaves a gap in the samples, not a burst or a loss.
+
+    It returns once *stop* is set, or earlier only when no target can be
+    pinged at all. A target that stopped being measured carries the reason
+    in ``error`` of its returned :class:`PingStats`. Memory stays bounded
+    however long it runs; the stats carry counts only (no RTT list).
     """
     return _run(
         targets,
@@ -644,9 +664,15 @@ def _system_many(
     on_sample: Optional[SampleFn],
     stop: threading.Event,
 ) -> Dict[str, PingStats]:
-    """System ``ping`` per target in parallel; in streaming mode, in rounds."""
-    workers = max(1, min(32, len(jobs)))
-    if count is not None:
+    """System ``ping`` per target in parallel, or one stream per target."""
+    if count is None:
+        fns = [
+            functools.partial(
+                _stream_system, t, fam, interval, timeout, size, on_sample, stop
+            )
+            for t, fam in jobs
+        ]
+    else:
 
         def one(t: str, fam: Optional[int]) -> PingStats:
             if stop.is_set():
@@ -661,41 +687,307 @@ def _system_many(
             )
 
         fns = [functools.partial(one, t, fam) for t, fam in jobs]
-        return dict(zip((t for t, _ in jobs), run_together(fns, stop, limit=32)))
+    limit = 32 if count is not None else 0
+    return dict(zip((t for t, _ in jobs), run_together(fns, stop, limit)))
 
-    totals = {
-        t: PingStats(target=t, method="system-ping", resolution_ms=1.0) for t, _ in jobs
-    }
-    cadence = max(interval, system_ping_cadence())
-    per_round = max(5, int(10 / cadence))  # ~10 s of samples per ping run
 
-    def one_round(t: str, fam: Optional[int]) -> None:
-        start = time.time()
-        st = system_ping(
-            t, count=per_round, interval=interval, timeout=timeout, family=fam
-        )
-        tot = totals[t]
-        if st.error:
-            tot.error = st.error
-            return
-        tot.sent += st.sent
-        tot.received += st.received
-        tot.duplicates += st.duplicates
-        for msg, c in st.errors.items():
-            tot.errors[msg] = tot.errors.get(msg, 0) + c
-        if on_sample is not None:
-            for i, rtt in enumerate(per_request_results(st, per_round)):
-                on_sample(t, start + i * cadence, rtt, None)
+_GRACE = 0.25  # slack on a reply deadline: process start-up and pacing drift
+_STALL = 1.0  # a gap this long in the read loop means netdiag itself was frozen
+_RUN_SECONDS = 10.0  # length of one streaming ping run
+_SETTLE = 0.2  # Ctrl-C reaches ping too and can end it just before stop is set
 
-    with ThreadPoolExecutor(max_workers=workers) as pool:
-        while stop is None or not stop.is_set():
-            list(pool.map(lambda job: one_round(*job), jobs))
-            if all(totals[t].error for t, _ in jobs):
+
+def _stream_system(
+    target: str,
+    family: Optional[int],
+    interval: float,
+    timeout: float,
+    size: int,
+    on_sample: Optional[SampleFn],
+    stop: threading.Event,
+) -> PingStats:
+    """Stream one target through back-to-back runs of the OS ``ping``.
+
+    A run that fails before sending anything, such as ``connect: Network is
+    unreachable`` once this PC lost its route, still reports each request
+    that fell due as lost, with that reason, and ping is tried again. Only a
+    failure meaning netdiag cannot ping this target at all (no ``ping``, no
+    permission, options rejected) on a target never measured ends the
+    stream, with the reason in ``error``.
+    """
+    total = PingStats(
+        target=target,
+        address=target if _literal_family(target) else None,
+        method="system-ping",
+        resolution_ms=1.0 if is_windows() else 0.001,
+    )
+    n = max(5, int(_RUN_SECONDS / _cadence(interval, family, _ping_os())))
+    commands = _ping_commands(target, n, interval, timeout, size, family)
+    which, measured = 0, False
+    while not stop.is_set():
+        cmd = commands[which]
+        run = _StreamRun(target, n, cmd.cadence, timeout, total, on_sample, stop)
+        run.execute(cmd.args, cmd.budget(n, timeout))
+        if _looks_like_usage_error(run.text) and which + 1 < len(commands):
+            which += 1
+            continue
+        if run.cut_short and stop.wait(_SETTLE):
+            break  # Ctrl-C ended ping just before it reached us
+        if run.measured:
+            measured = True
+            continue
+        reason = _network_failure(run.text)
+        if reason is None:
+            reason = _first_line(run.text) or "ping produced no output"
+            if not measured:
+                total.error = reason
                 break
-    return totals
+        if not run.lose_unsent(reason, max(timeout, cmd.cadence)):
+            break
+    return total
+
+
+class _StreamRun:
+    """One run of the OS ``ping`` in streaming mode, read as it prints.
+
+    Request ``i`` is due at ``anchor + i * cadence`` (perf time); each reply
+    re-anchors that estimate from its own round trip. A reply goes to
+    ``on_sample`` as soon as ping prints it. On POSIX a request still
+    unanswered ``timeout`` after it was due is reported lost, as on the
+    socket back-end; ping.exe prints one line per request, which settles it.
+    Requests due after *stop* was set are never reported.
+    """
+
+    def __init__(
+        self,
+        target: str,
+        n: int,
+        cadence: float,
+        timeout: float,
+        total: PingStats,
+        on_sample: Optional[SampleFn],
+        stop: threading.Event,
+    ) -> None:
+        self.target, self.n, self.cadence, self.timeout = target, n, cadence, timeout
+        self.total, self.on_sample, self.stop = total, on_sample, stop
+        self.windows = is_windows()
+        self.lines: List[str] = []
+        self.settled: set[int] = set()
+        self.base: Optional[int] = None  # POSIX icmp_seq of request 0
+        self.win_index: Optional[int] = None  # next ping.exe request line
+        self.reason: Optional[str] = None  # latest error ping printed
+        self.stopped_at: Optional[float] = None
+        self.ran_out = False  # ping exited on its own
+        self.timed_out = False
+        self.measured = False
+        self.cut_short = True
+        self.started = self.anchor = time.perf_counter()
+        self.wall_offset = time.time() - self.started
+
+    @property
+    def text(self) -> str:
+        return "\n".join(self.lines) or ("timed out" if self.timed_out else "")
+
+    def execute(self, args: List[str], budget: float) -> None:
+        try:
+            proc = subprocess.Popen(
+                args,
+                stdin=subprocess.DEVNULL,
+                stdout=subprocess.PIPE,
+                stderr=subprocess.STDOUT,
+                env=_command_env(),
+                **_no_window_kwargs(),
+            )
+        except FileNotFoundError:
+            self.lines.append(f"{args[0]} command not available")
+            return self._finish()
+        except OSError as e:
+            self.lines.append(e.strerror or str(e))
+            return self._finish()
+        lines: "queue.Queue[Tuple[float, Optional[str]]]" = queue.Queue()
+        reader = threading.Thread(target=_pump, args=(proc.stdout, lines), daemon=True)
+        reader.start()
+        last = self.started
+        try:
+            while True:
+                try:
+                    item: Optional[Tuple[float, Optional[str]]] = lines.get(
+                        timeout=0.05
+                    )
+                except queue.Empty:
+                    item = None
+                now = time.perf_counter()
+                if now - last > _STALL:
+                    self.anchor += now - last  # frozen with its ping (Ctrl-Z)
+                last = now
+                if item is not None:
+                    at, line = item
+                    if line is None:
+                        self.ran_out = True
+                        break
+                    self._line(at, line)
+                if self._should_end(now, budget):
+                    break
+        finally:
+            if proc.poll() is None:
+                proc.kill()
+            proc.wait()
+            reader.join(1.0)
+            proc.stdout.close()
+        self._finish()
+
+    def _should_end(self, now: float, budget: float) -> bool:
+        if not self.windows:
+            self._expire(now)
+        if self.stopped_at is None and self.stop.is_set():
+            self.stopped_at = now
+        if now - self.started > budget:
+            self.timed_out = True
+            return True
+        if self.stopped_at is None:
+            return False
+        wind_down = self.stopped_at + self.timeout + self.cadence + _GRACE
+        pending = (
+            i
+            for i in range(self.n)
+            if i not in self.settled and self._due(i) <= self.stopped_at
+        )
+        return now > wind_down or next(pending, None) is None
+
+    def _due(self, i: int) -> float:
+        return self.anchor + i * self.cadence
+
+    def _line(self, at: float, line: str) -> None:
+        self.lines.append(line)
+        if self.windows:
+            self._windows_line(at, line.strip())
+            return
+        if self.base is None and line.startswith("PING"):
+            self.base = _seq_base(line)
+            return
+        m = _SEQ_RE.search(line)
+        i = int(m.group(1)) - (1 if self.base is None else self.base) if m else None
+        if "bytes from" in line:
+            rtt = _posix_reply_rtt(line)
+            if "(DUP!)" in line:
+                self.total.duplicates += 1
+            elif rtt is None:  # macOS "92 bytes from x: Destination Host Unreachable"
+                self.reason = line.split(":", 1)[-1].strip()
+            elif i is not None:
+                self._reply(i, at, rtt)
+            return
+        err = _POSIX_ERROR_RE.match(line.strip())
+        if err:  # "From 192.0.2.1 icmp_seq=3 Destination Host Unreachable"
+            self.reason = err.group(1)
+            if i is not None:
+                self._settle(i, self._due(i), None, self.reason)
+        elif line.startswith("ping: "):
+            self.reason = line[len("ping: ") :].strip()
+
+    def _windows_line(self, at: float, line: str) -> None:
+        if self.win_index is None:
+            if line:  # the "Pinging x with 32 bytes of data:" header
+                self.win_index = 0
+            return
+        if not line or self.win_index >= self.n:
+            self.win_index = self.n  # past the request lines: statistics follow
+            return
+        i = self.win_index
+        self.win_index += 1
+        rtt = _win_reply_rtt(line)
+        if rtt is None:
+            self._settle(i, min(self._due(i), at), None, line)
+        else:
+            self._reply(i, at, rtt)
+
+    def _reply(self, i: int, at: float, rtt: float) -> None:
+        sent = at - rtt / 1000.0
+        self.reason = None
+        if 0 <= i < self.n:
+            self.anchor = sent - i * self.cadence
+        if i in self.settled or rtt > self.timeout * 1000.0:
+            self.total.add_error("late reply (after timeout)")
+            self._settle(i, sent, None, None)
+        else:
+            self._settle(i, sent, rtt, None)
+
+    def _expire(self, now: float) -> None:
+        for i in range(self.n):
+            if i in self.settled:
+                continue
+            due = self._due(i)
+            if due + self.timeout + _GRACE > now:
+                return
+            if self.stopped_at is not None and due > self.stopped_at:
+                return
+            self._settle(i, due, None, self.reason)
+
+    def _settle(
+        self, i: int, sent: float, rtt: Optional[float], error: Optional[str]
+    ) -> None:
+        if i in self.settled or not 0 <= i < self.n:
+            return
+        if self.stopped_at is not None and sent > self.stopped_at:
+            return
+        self.settled.add(i)
+        self.total.sent += 1
+        if rtt is not None:
+            self.total.received += 1
+        elif error:
+            self.total.add_error(error)
+        if self.on_sample is not None:
+            self.on_sample(self.target, self.wall_offset + sent, rtt, error)
+
+    def _finish(self) -> None:
+        """Settle what ping's exit decided; keep what it cut short unreported."""
+        end = time.perf_counter()
+        text = "\n".join(self.lines)
+        self.measured = _measured(text, self.windows)
+        m = (_WIN_SENT_RE if self.windows else _POSIX_SUMMARY_RE).search(text)
+        sent = int(m.group(1)) if m else None
+        complete = self.ran_out and sent is not None and sent >= self.n
+        self.cut_short = not complete
+        for i in range(self.n):
+            due = self._due(i)
+            if (sent is not None and i >= sent) or (sent is None and due > end):
+                return  # never sent
+            if self.stopped_at is not None and due > self.stopped_at:
+                return
+            if complete or due + self.timeout <= end:
+                self._settle(i, due, None, self.reason)
+
+    def lose_unsent(self, reason: str, span: float) -> bool:
+        """Report each request due within *span* of this run's start as lost,
+        as it falls due, then wait out the span. False once *stop* is set."""
+        m = max(1, math.ceil(span / self.cadence - 1e-9))
+        for i in range(m):
+            due = self.started + i * self.cadence
+            if self.stop.wait(max(0.0, due - time.perf_counter())):
+                return False
+            self._settle(i, due, None, reason)
+        end = self.started + m * self.cadence
+        return not self.stop.wait(max(0.0, end - time.perf_counter()))
+
+
+def _pump(stream, lines: "queue.Queue[Tuple[float, Optional[str]]]") -> None:
+    """Queue each line ping prints with its arrival time, then None at the end."""
+    for raw in iter(stream.readline, b""):
+        lines.put((time.perf_counter(), decode_output(raw).rstrip("\r\n")))
+    lines.put((time.perf_counter(), None))
 
 
 _SEQ_RE = re.compile(r"(?:icmp_seq|seq)=(\d+)")
+_IPUTILS_HEADER_RE = re.compile(r"PING \S+ ?\([^)]*\) \d")
+
+
+def _seq_base(text: str) -> int:
+    """``icmp_seq`` of a run's first request, read from ping's header line.
+
+    iputils counts from 1 (``PING h (a) 56(84) bytes of data.``); macOS, BSD,
+    BusyBox and GNU inetutils count from 0 (``PING h (a): 56 data bytes``).
+    """
+    header = next((ln for ln in text.splitlines() if ln.startswith("PING")), "")
+    return 0 if header and not _IPUTILS_HEADER_RE.match(header) else 1
 
 
 def per_request_results(st: PingStats, count: int) -> List[Optional[float]]:
@@ -715,7 +1007,7 @@ def per_request_results(st: PingStats, count: int) -> List[Optional[float]]:
         m_seq, rtt = _SEQ_RE.search(line), _posix_reply_rtt(line)
         if m_seq and rtt is not None:
             by_seq.setdefault(int(m_seq.group(1)), rtt)
-    base = 0 if 0 in by_seq else 1
+    base = _seq_base(text)
     return [by_seq.get(base + i) for i in range(count)]
 
 
@@ -860,11 +1152,40 @@ def system_ping(
     if stats.sent == 0 and not stats.received:
         stats.sent = count
     if not stats.received and not _measured(text, windows):
-        # ping never got to send (permission denied, unknown host, bad option):
-        # that is "could not measure", not "the device did not answer".
-        first = next((ln.strip() for ln in text.splitlines() if ln.strip()), "")
-        stats.error = first[:200] or "ping produced no output"
+        reason = _network_failure(text)
+        if reason:
+            stats.errors = {reason: stats.sent}
+        else:
+            # ping never got to send (permission denied, unknown host, bad
+            # option): that is "could not measure", not "no answer".
+            stats.error = _first_line(text) or "ping produced no output"
     return stats
+
+
+_NETWORK_FAILURES = (
+    "unreachable",
+    "no route",
+    "network is down",
+    "host is down",
+    "assign requested address",
+)
+
+
+def _network_failure(text: str) -> Optional[str]:
+    """Why ping could not send, when the cause is this PC's network, else None.
+
+    ``connect: Network is unreachable`` (cable pulled, DHCP or RA lost) means
+    the requests could not leave, as when sendto fails on the socket
+    back-end: they are lost, not "could not measure".
+    """
+    for line in text.splitlines():
+        if any(k in line.lower() for k in _NETWORK_FAILURES):
+            return line.strip().removeprefix("ping: ")
+    return None
+
+
+def _first_line(text: str) -> str:
+    return next((ln.strip() for ln in text.splitlines() if ln.strip()), "")[:200]
 
 
 def _measured(text: str, windows: bool) -> bool:
