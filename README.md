@@ -51,6 +51,9 @@ py -m pip install network-check-tool
 py -m netdiag
 ```
 
+> パッケージ名は `network-check-tool` です（コマンド名は `netdiag`）。PyPI の `netdiag` は
+> 無関係の別プロジェクトで、`pip install netdiag` ではこのツールは入りません。
+
 インターネットに出られない工場PCには、別のPCで部品をダウンロードして持ち込みます。
 部品はすべてOS・Pythonのバージョンを問わないファイルなので、ダウンロードするPCのOSや
 Pythonのバージョンが工場PCと違ってもかまいません。ただし、どちらのPCも Python 3.11 以上にしてください。
@@ -253,6 +256,8 @@ zip にまとめます。IPアドレス・MAC・PC名・ユーザー名・SSID�
   list on it to check the line; an HTML report opens in the browser. Precise pings use the
   Windows ICMP API (no admin rights).
 - `netdiag scan` discovers devices on a subnet (ICMP + ARP only).
+- Install with `pip install network-check-tool`. The command is `netdiag`, but the
+  `netdiag` package on PyPI is an unrelated project.
 - Offline install: run `pip download network-check-tool -d wheels` on any PC with
   internet access, then `pip install --no-index --find-links wheels network-check-tool` on the
   plant PC. Every wheel is pure Python, so the two PCs' OS and Python version need not match,
