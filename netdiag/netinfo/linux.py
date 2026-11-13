@@ -11,7 +11,7 @@ from __future__ import annotations
 import json
 import re
 from pathlib import Path
-from typing import Dict, List, Optional
+from typing import Dict, List, Optional, Tuple
 
 from ..core.util import have, run
 from .model import (
@@ -99,7 +99,7 @@ def read_link_stats(name: str, base: Path = SYS_NET) -> Optional[LinkStats]:
 
 
 def _kind(name: str, link_type: Optional[str], flags: List[str], base: Path) -> str:
-    if "LOOPBACK" in flags or link_type == "loopback":
+    if "LOOPBACK" in flags or link_type == "loopback" or name == "lo":
         return KIND_LOOPBACK
     d = base / name
     if (d / "wireless").exists() or (d / "phy80211").exists():
@@ -228,9 +228,12 @@ def parse_neigh_json(data: list) -> List[Neighbor]:
 _ADDR_TEXT_RE = re.compile(r"^\d+:\s+(\S+)\s+(inet6?)\s+(\S+)")
 
 
-def parse_addr_text(addr_text: str, link_text: str = "") -> List[Interface]:
+def parse_addr_text(
+    addr_text: str, link_text: str = "", base: Path = SYS_NET
+) -> List[Interface]:
     """Fallback for ``ip -o addr show`` / ``ip -o link show`` text output."""
     by_name: Dict[str, Interface] = {}
+    links: Dict[str, Tuple[Optional[str], List[str]]] = {}
     for line in link_text.splitlines():
         parts = line.split()
         if len(parts) < 2:
@@ -240,26 +243,26 @@ def parse_addr_text(addr_text: str, link_text: str = "") -> List[Interface]:
         iface.up = "LOWER_UP" in line or "state UP" in line
         iface.admin_up = "<" in line and ",UP" in line or "<UP" in line
         m = re.search(r"<([^>]*)>", line)
-        iface.arp = not NO_ARP_FLAGS & set(m.group(1).split(",") if m else [])
-        if "LOOPBACK" in line:
-            iface.kind = KIND_LOOPBACK
-        m = re.search(r"link/\S+\s+([0-9a-f:]{17})", line)
-        if m:
-            iface.mac = normalize_mac(m.group(1))
+        flags = m.group(1).split(",") if m else []
+        iface.arp = not NO_ARP_FLAGS & set(flags)
+        m = re.search(r"link/(\S+)(?:\s+([0-9a-f:]{17}))?", line)
+        links[name] = (m.group(1) if m else None, flags)
+        if m and m.group(2):
+            iface.mac = normalize_mac(m.group(2))
     for line in addr_text.splitlines():
         m = _ADDR_TEXT_RE.match(line)
         if not m:
             continue
         name, fam, cidr = m.groups()
         iface = by_name.setdefault(name, Interface(name=name))
-        if name == "lo":
-            iface.kind = KIND_LOOPBACK
         ip, _, plen = cidr.partition("/")
         iface.addresses.append(
             Address(ip=ip, prefixlen=int(plen or 32), family=6 if fam == "inet6" else 4)
         )
         if not link_text:
             iface.up = True  # no link info: assume an addressed NIC is usable
+    for iface in by_name.values():
+        iface.kind = _kind(iface.name, *links.get(iface.name, (None, [])), base)
     return list(by_name.values())
 
 
@@ -350,14 +353,16 @@ def collect() -> HostNetwork:
         return hn
     addr = _ip_json("addr", "show")
     if addr is not None:
-        hn.interfaces = parse_addr_json(addr)
+        hn.interfaces = parse_addr_json(addr, SYS_NET)
         hn.source = "linux:ip-json"
     else:
         a = run(["ip", "-o", "addr", "show"], timeout=8)
         link = run(["ip", "-o", "link", "show"], timeout=8)
-        hn.interfaces = parse_addr_text(a.stdout, link.stdout if link.ok else "")
+        hn.interfaces = parse_addr_text(
+            a.stdout, link.stdout if link.ok else "", SYS_NET
+        )
         for iface in hn.interfaces:
-            _apply_sysfs(iface)
+            _apply_sysfs(iface, SYS_NET)
         hn.source = "linux:ip-text"
     route = _ip_json("route", "show")
     if route is not None:

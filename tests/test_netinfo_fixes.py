@@ -10,7 +10,7 @@ import json
 import pytest
 
 from netdiag import probes  # noqa: F401  (registers the probes)
-from netdiag.core.util import decode_output
+from netdiag.core.util import CommandResult, decode_output
 from netdiag.diagnosis.engine import Engine
 from netdiag.measure import PingStats
 from netdiag.netinfo import linux, macos, windows
@@ -94,6 +94,26 @@ def _windows(**sections):
     data = {"adapters": [], "addresses": [], "routes": [], "dns": [], "stats": []}
     data.update(sections)
     return windows.parse_collect_json(json.loads(json.dumps(data, ensure_ascii=False)))
+
+
+@pytest.fixture
+def linux_host(monkeypatch, tmp_path):
+    """Run linux.collect() against canned command output and a fake /sys."""
+    outputs = {}
+    sysfs = tmp_path / "sys"
+    sysfs.mkdir()
+
+    def fake_run(args, timeout=10.0):
+        out = outputs.get(tuple(args))
+        if out is None:
+            return CommandResult(ok=False, code=1, stdout="", stderr="", found=True)
+        return CommandResult(ok=True, code=0, stdout=out, stderr="", found=True)
+
+    monkeypatch.setattr(linux, "have", lambda cmd: cmd == "ip")
+    monkeypatch.setattr(linux, "run", fake_run)
+    monkeypatch.setattr(linux, "SYS_NET", sysfs)
+    monkeypatch.setattr(linux, "resolvers", lambda: [])
+    return outputs, sysfs
 
 
 def _sysfs_nic(base, name, counters):
@@ -430,3 +450,42 @@ def test_default_route_without_gateway_is_a_link_default(tmp_path):
     )
     assert mobile.link_default_route().interface == "携帯電話"
     assert HostNetwork().link_default_route() is None
+
+
+# ---------------------------------------------- Linux without ``ip -j``
+
+IP_O_LINK = (
+    "1: lo: <LOOPBACK,UP,LOWER_UP> mtu 65536 qdisc noqueue state UNKNOWN mode "
+    "DEFAULT group default qlen 1000\\    link/loopback 00:00:00:00:00:00 brd "
+    "00:00:00:00:00:00\n"
+    "2: eth0: <BROADCAST,MULTICAST,UP,LOWER_UP> mtu 1500 qdisc pfifo_fast state "
+    "UP mode DEFAULT group default qlen 1000\\    link/ether 00:00:5e:00:53:02 brd "
+    "ff:ff:ff:ff:ff:ff\n"
+    "3: docker0: <NO-CARRIER,BROADCAST,MULTICAST,UP> mtu 1500 qdisc noqueue state "
+    "DOWN mode DEFAULT group default \\    link/ether 02:42:00:00:53:03 brd "
+    "ff:ff:ff:ff:ff:ff\n"
+)
+IP_O_ADDR = (
+    "1: lo    inet 127.0.0.1/8 scope host lo\\       valid_lft forever\n"
+    "2: eth0    inet 192.0.2.20/24 brd 192.0.2.255 scope global eth0\\       "
+    "valid_lft forever\n"
+    "3: docker0    inet 198.51.100.1/24 scope global docker0\\       "
+    "valid_lft forever\n"
+)
+
+
+def test_text_fallback_finds_the_wired_nic(linux_host):
+    outputs, sysfs = linux_host
+    outputs[("ip", "-o", "link", "show")] = IP_O_LINK
+    outputs[("ip", "-o", "addr", "show")] = IP_O_ADDR
+    outputs[("ip", "route", "show")] = (
+        "default via 192.0.2.1 dev eth0 proto dhcp metric 100\n"
+    )
+    _sysfs_nic(sysfs, "eth0", {"rx_packets": 10, "tx_packets": 10, "rx_errors": 0})
+    (sysfs / "docker0").mkdir()
+    hn = linux.collect()
+    assert hn.source == "linux:ip-text"
+    kinds = {i.name: i.kind for i in hn.interfaces}
+    assert kinds == {"lo": "loopback", "eth0": "ethernet", "docker0": "virtual"}
+    link = _run(hn, ["link"])["link"]
+    assert link.code == "link.ok" and link.summary.startswith("eth0 1 Gbps")
