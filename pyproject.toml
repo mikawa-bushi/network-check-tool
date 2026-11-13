@@ -45,6 +45,8 @@ netdiag = "netdiag.cli:main"
 [tool.poetry.group.dev.dependencies]
 pytest = "^9.0.3"
 black = "^26.10.1"
+# The same version as the ruff-check pre-commit hook and CI.
+ruff = "0.15.17"
 # Transitive via pre-commit -> virtualenv; 4.2.1 fixes GHSA advisories.
 filelock = ">=4.2.1"
 pre-commit = "^4.6.0"

@@ -12,7 +12,7 @@ Please read the [Code of Conduct](CODE_OF_CONDUCT.md) first.
 ```bash
 git clone https://github.com/mikawa-bushi/network-check-tool.git
 cd network-check-tool
-poetry install --all-extras      # runtime + dev (pytest, black, pre-commit)
+poetry install --all-extras      # runtime + dev (pytest, black, ruff, pre-commit)
 pre-commit install               # secret scan, black, ruff, identity checks
 ```
 
