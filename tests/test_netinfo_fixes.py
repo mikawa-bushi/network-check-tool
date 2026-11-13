@@ -815,3 +815,31 @@ def test_unplugged_nic_gateway_and_dns_are_not_used(monkeypatch):
     assert "Get-NetRoute -AddressFamily IPv4 -PolicyStore ActiveStore" in (
         windows.COLLECT_SCRIPT
     )
+
+
+def test_error_ratio_counts_multicast_frames():
+    # A line PC on EtherNet/IP: most frames are multicast I/O traffic.
+    stats = {
+        "Name": "イーサネット",
+        "ReceivedUnicastPackets": 120000,
+        "ReceivedMulticastPackets": 40000000,
+        "ReceivedBroadcastPackets": 300000,
+        "SentUnicastPackets": 80000,
+        "SentMulticastPackets": 20000000,
+        "SentBroadcastPackets": 1000,
+        "ReceivedPacketErrors": 25,
+        "OutboundPacketErrors": 0,
+        "ReceivedDiscardedPackets": 0,
+        "OutboundDiscardedPackets": 0,
+    }
+    hn = _windows(
+        adapters=[_adapter("イーサネット", 12, "Intel(R) Ethernet")],
+        addresses=[_address("192.0.2.100", 24, 12, "イーサネット")],
+        routes=[_route("192.0.2.0/24", "0.0.0.0", 12, "イーサネット", 256, 25)],
+        stats=[stats],
+    )
+    eth = hn.interface("イーサネット").stats
+    assert (eth.rx_packets, eth.tx_packets) == (40420000, 20081000)
+    assert _run(hn, ["link"])["link"].code == "link.ok"
+    for column in ("ReceivedMulticastPackets", "SentBroadcastPackets"):
+        assert column in windows.COLLECT_SCRIPT

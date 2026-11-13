@@ -48,6 +48,15 @@ _PS_PREAMBLE = (
     "[Console]::OutputEncoding=New-Object System.Text.UTF8Encoding($false);"
 )
 
+# Every frame counts towards the error ratio, as Linux rx_packets does: an
+# EtherNet/IP or PROFINET line is mostly multicast.
+_STATS_SELECT = (
+    "@(Get-NetAdapterStatistics | Select-Object Name,ReceivedUnicastPackets,"
+    "ReceivedMulticastPackets,ReceivedBroadcastPackets,SentUnicastPackets,"
+    "SentMulticastPackets,SentBroadcastPackets,ReceivedPacketErrors,"
+    "OutboundPacketErrors,ReceivedDiscardedPackets,OutboundDiscardedPackets)"
+)
+
 COLLECT_SCRIPT = _PS_PREAMBLE + (
     "$a=@(Get-NetAdapter -IncludeHidden:$false | Select-Object Name,"
     "InterfaceDescription,ifIndex,@{n='Status';e={\"$($_.Status)\"}},MacAddress,"
@@ -63,9 +72,7 @@ COLLECT_SCRIPT = _PS_PREAMBLE + (
     "NextHop,InterfaceIndex,InterfaceAlias,RouteMetric,InterfaceMetric);"
     "$d=@(Get-DnsClientServerAddress -AddressFamily IPv4 | Select-Object "
     "InterfaceIndex,ServerAddresses);"
-    "$s=@(Get-NetAdapterStatistics | Select-Object Name,ReceivedUnicastPackets,"
-    "SentUnicastPackets,ReceivedPacketErrors,OutboundPacketErrors,"
-    "ReceivedDiscardedPackets,OutboundDiscardedPackets);"
+    f"$s={_STATS_SELECT};"
     "$f=@(Get-NetFirewallProfile | Select-Object Name,"
     "@{n='Enabled';e={\"$($_.Enabled)\"}},"
     "@{n='DefaultInboundAction';e={\"$($_.DefaultInboundAction)\"}},"
@@ -211,13 +218,23 @@ def _kind(adapter: Dict[str, Any]) -> str:
     return KIND_OTHER
 
 
+def _frames(row: Dict[str, Any], direction: str) -> Optional[int]:
+    """Unicast + multicast + broadcast frames in one direction."""
+    counts = [
+        _int(row.get(f"{direction}{cast}Packets"))
+        for cast in ("Unicast", "Multicast", "Broadcast")
+    ]
+    known = [c for c in counts if c is not None]
+    return sum(known) if known else None
+
+
 def parse_stats_json(items: Any) -> Dict[str, LinkStats]:
     """``Get-NetAdapterStatistics`` rows keyed by adapter name."""
     out: Dict[str, LinkStats] = {}
     for s in _as_list(items):
         out[str(s.get("Name"))] = LinkStats(
-            rx_packets=_int(s.get("ReceivedUnicastPackets")),
-            tx_packets=_int(s.get("SentUnicastPackets")),
+            rx_packets=_frames(s, "Received"),
+            tx_packets=_frames(s, "Sent"),
             rx_errors=_int(s.get("ReceivedPacketErrors")),
             tx_errors=_int(s.get("OutboundPacketErrors")),
             rx_dropped=_int(s.get("ReceivedDiscardedPackets")),
@@ -501,11 +518,5 @@ def neighbor(ip: str) -> Optional[Neighbor]:
 
 def link_stats() -> Dict[str, LinkStats]:
     return parse_stats_json(
-        run_powershell(
-            _PS_PREAMBLE
-            + "@(Get-NetAdapterStatistics | Select-Object Name,ReceivedUnicastPackets,"
-            "SentUnicastPackets,ReceivedPacketErrors,OutboundPacketErrors,"
-            "ReceivedDiscardedPackets,OutboundDiscardedPackets)"
-            " | ConvertTo-Json -Compress"
-        )
+        run_powershell(_PS_PREAMBLE + _STATS_SELECT + " | ConvertTo-Json -Compress")
     )
