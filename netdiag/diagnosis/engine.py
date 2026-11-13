@@ -1,9 +1,12 @@
 """Diagnosis engine: turn a set of facts into a ranked set of causes.
 
 The engine evaluates probes in dependency order (a topological sort of the
-``depends_on`` graph). The key idea: **a probe is only run after its dependencies
-succeed**. If a dependency failed, the dependent is marked SKIP with reason
-"upstream <dep> failed" — so its failure never competes with the real cause.
+``depends_on`` graph). The key idea: **a probe is only run when nothing on the
+path to its targets failed** (see :meth:`~netdiag.core.Probe.path_dependencies`).
+If something did, the dependent is marked SKIP with reason "upstream <root>
+failed", naming the failed check, so its failure never competes with the real
+cause. A dependency that is not on the path, such as DNS for an IP address,
+never hides a check.
 
 Root-cause selection then reduces to: among probes that actually FAILED while all
 their dependencies were OK, the lowest one in the graph is the prime suspect.
@@ -81,6 +84,20 @@ class Diagnosis:
 
     def results_by_name(self) -> Dict[str, CheckResult]:
         return {r.name: r for r in self.results}
+
+
+def _failed_upstream(deps: List[str], results: Dict[str, CheckResult]) -> List[str]:
+    """The failed checks behind *deps*: each FAIL, or what blocked a dependency."""
+    failed: Dict[str, None] = {}
+    for d in deps:
+        r = results.get(d)
+        if r is None:
+            continue
+        if r.status == Status.FAIL:
+            failed[d] = None
+        elif r.code == f"{d}.not_evaluated":
+            failed.update(dict.fromkeys(r.detail.get("blocked_by", [d])))
+    return list(failed)
 
 
 def _with_suggestion(name: str, valid: List[str]) -> str:
@@ -249,32 +266,26 @@ class Engine:
             return None, None
         probe = cls()
 
-        # A dependency that FAILED, or that was itself skipped because *its*
-        # dependency failed, gates this probe: either way any failure here would
-        # be a symptom of the same root cause (transitively down the chain).
-        failed_deps = [
-            d
-            for d in probe.depends_on
-            if d in ctx.results
-            and (
-                ctx.results[d].status == Status.FAIL
-                or ctx.results[d].code == f"{d}.not_evaluated"
-            )
-        ]
-        if failed_deps:
+        # Only a failure on the path to this run's targets gates the probe: a
+        # dependency that FAILED, or one that was not evaluated because a check
+        # on *its* path failed. Any failure here would be a symptom of it.
+        deps = probe.path_dependencies(ctx)
+        failed = _failed_upstream(deps, ctx.results)
+        if failed:
             res = CheckResult.skip(
                 name,
                 tr(
-                    f"未評価: 前提の {', '.join(failed_deps)} が失敗",
-                    f"not evaluated: upstream {', '.join(failed_deps)} failed",
+                    f"未評価: 前提の {', '.join(failed)} が失敗",
+                    f"not evaluated: upstream {', '.join(failed)} failed",
                 ),
-                depends_on=list(probe.depends_on),
+                depends_on=deps,
+                detail={"blocked_by": failed},
                 code=f"{name}.not_evaluated",
             )
             res.title = str(cls.title or name)
             res.layer = cls.layer
             reason = (
-                f"skip {name}: its dependency {failed_deps[0]} already failed, "
+                f"skip {name}: {failed[0]} already failed on its path, "
                 f"so any failure here would be a symptom."
                 if self.verbose
                 else None

@@ -105,6 +105,17 @@ class Probe:
         steps = render_list(self.runbook) or render_list(self.manual_commands)
         return means, steps
 
+    def path_dependencies(self, ctx: Context) -> List[str]:
+        """The ``depends_on`` checks on the path to this run's targets.
+
+        The engine skips this probe only when one of these failed, and folds
+        its failure under them. The default is every declared dependency. A
+        probe whose targets change per run narrows it: an IP address needs no
+        DNS, and a URL on another host does not need this run's TCP target.
+        It reads only ``ctx.config`` and the network snapshot, and never raises.
+        """
+        return list(self.depends_on)
+
     def run(self, ctx: Context) -> CheckResult:
         start = time.perf_counter()
         try:
@@ -124,7 +135,7 @@ class Probe:
         res.layer = res.layer if res.layer != "?" else self.layer
         res.title = render(res.title) or render(self.title) or self.name
         if not res.depends_on:
-            res.depends_on = list(self.depends_on)
+            res.depends_on = self.path_dependencies(ctx)
         if res.raw_command is None and self.manual_commands:
             res.raw_command = " ; ".join(render_list(self.manual_commands))
         if not res.code:
