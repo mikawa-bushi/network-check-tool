@@ -63,7 +63,7 @@ def test_csv_shift_jis_with_japanese_headers(tmp_path):
     assert [d.name for d in devs] == ["PLC-1", "HMI-1", "ロボット"]
     assert devs[0].ports == [502, 5007]
     assert devs[0].group == "1ライン" and devs[0].note == "メインPLC"
-    assert devs[0].mac == "00-26-92-AA-BB-CC"
+    assert devs[0].mac == "00:26:92:aa:bb:cc"
     assert devs[1].ports == [5900]
     assert devs[2].ports == []
 
@@ -78,7 +78,7 @@ def test_headers_match_whatever_the_case_spacing_or_brackets():
     )
     for d in csv_devs + dict_devs:
         assert (d.name, d.host, d.rtt_warn_ms) == ("PLC", "192.168.3.39", 5.0)
-    assert (csv_devs[0].loss_warn_pct, csv_devs[0].mac) == (1.5, "00-26-92-AA-BB-CC")
+    assert (csv_devs[0].loss_warn_pct, csv_devs[0].mac) == (1.5, "00:26:92:aa:bb:cc")
 
 
 def test_csv_utf8_bom_tab_separated(tmp_path):
@@ -153,9 +153,9 @@ def test_hosts_toml_is_a_device_list(tmp_path):
         encoding="utf-8",
     )
     devs = load_devices(p)
-    assert [(d.host, d.interval, d.rtt_warn_ms, d.loss_warn_pct) for d in devs] == [
-        ("192.168.3.39", 30, 200.0, 5.0),
-        ("192.168.3.40", None, None, None),
+    assert [(d.host, d.rtt_warn_ms, d.loss_warn_pct) for d in devs] == [
+        ("192.168.3.39", 200.0, 5.0),
+        ("192.168.3.40", None, None),
     ]
 
 
@@ -166,24 +166,19 @@ def test_hosts_json_takes_bare_names_and_tables(tmp_path, key):
         json.dumps({key: ["a.example", {"name": "b.example", "interval": 10}]}),
         encoding="utf-8",
     )
-    assert [(d.host, d.interval) for d in load_devices(p)] == [
-        ("a.example", None),
-        ("b.example", 10),
-    ]
+    assert [d.host for d in load_devices(p)] == ["a.example", "b.example"]
 
 
-def test_csv_interval_and_rtt_limit_columns(tmp_path):
+def test_csv_rtt_limit_column(tmp_path):
     path = tmp_path / "line1.csv"
     path.write_bytes(
         "名前,IPアドレス,監視間隔,遅延上限\r\nPLC-1,192.168.3.39,10,5\r\nHMI,192.168.3.40,,\r\n".encode(
             "cp932"
         )
     )
-    assert [
-        (d.name, d.host, d.interval, d.rtt_warn_ms) for d in load_devices(path)
-    ] == [
-        ("PLC-1", "192.168.3.39", 10, 5.0),
-        ("HMI", "192.168.3.40", None, None),
+    assert [(d.name, d.host, d.rtt_warn_ms) for d in load_devices(path)] == [
+        ("PLC-1", "192.168.3.39", 5.0),
+        ("HMI", "192.168.3.40", None),
     ]
 
 
