@@ -8,6 +8,7 @@ import csv
 import io
 import json
 import logging
+import re
 import sys
 from pathlib import Path
 from types import SimpleNamespace
@@ -263,6 +264,21 @@ def test_windows_console_is_switched_to_vt_mode_before_colour(run, monkeypatch):
 def test_windows_console_without_vt_mode_gets_no_escape_codes(run, monkeypatch):
     out, _ = _check_on_windows_console(run, monkeypatch, vt_supported=False)
     assert "Result:" in out and "\x1b" not in out
+
+
+# ------------------------------------------------------------- next steps
+
+
+@pytest.mark.parametrize("lang, ledger", [("ja", "台帳.csv"), ("en", "devices.csv")])
+def test_next_steps_start_by_drafting_the_device_list(run, lang, ledger):
+    _, _, err = run("--lang", lang)
+    commands = [
+        line.split("netdiag", 1)[1] for line in err.splitlines() if "netdiag" in line
+    ]
+    assert commands[0].strip() == f"scan --save {ledger}"
+    assert commands.index(f" check -f {ledger}") > 0
+    soak = next(c for c in commands if c.startswith(" soak"))
+    assert f"-f {ledger}" in soak and not re.search(r"\d+\.\d+\.\d+\.\d+", soak)
 
 
 # ------------------------------------------------------- -v and --log-file

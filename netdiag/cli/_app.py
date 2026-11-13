@@ -399,16 +399,28 @@ def _next_steps() -> str:
 
     steps = [
         (
-            tr("台帳の機器もまとめて診断", "check every device in a list"),
+            tr(
+                "同じネットワークの機器を探して台帳の下書きを作る",
+                "find the devices on this network and draft a device list",
+            ),
+            tr("netdiag scan --save 台帳.csv", "netdiag scan --save devices.csv"),
+        ),
+        (
+            tr(
+                "台帳に名前を書き足したら、全機器をまとめて診断",
+                "after naming them in the list, check every device",
+            ),
             tr("netdiag check -f 台帳.csv", "netdiag check -f devices.csv"),
         ),
         (
-            tr("同じネットワークの機器を探す", "find devices on this network"),
-            "netdiag scan",
-        ),
-        (
-            tr("ときどき切れる原因を探す", "catch intermittent drops"),
-            "netdiag soak 192.168.3.39 --duration 1h",
+            tr(
+                "ときどき切れる原因を探す（台帳の機器を1時間測定）",
+                "catch intermittent drops (measure the listed devices for 1 h)",
+            ),
+            tr(
+                "netdiag soak -f 台帳.csv --duration 1h",
+                "netdiag soak -f devices.csv --duration 1h",
+            ),
         ),
         (tr("使えるコマンドの一覧", "list every command"), "netdiag --help"),
     ]
