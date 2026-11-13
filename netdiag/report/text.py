@@ -195,6 +195,17 @@ def _fmt_num(v, digits: int = 2) -> str:
     return f"{v:.{digits}f}"
 
 
+def _fmt_pct(v: Optional[float]) -> str:
+    """A percentage that never rounds a non-zero value to 0 or a partial to 100."""
+    if v is None:
+        return "—"
+    if v == int(v):
+        return f"{v:.0f}%"
+    if v >= 1:
+        return f"{v:.1f}%"
+    return f"{v:.2g}%"
+
+
 class DeviceCells(NamedTuple):
     name: str
     address: str
@@ -212,14 +223,11 @@ def device_cells(dr) -> DeviceCells:
     reach = dr.result("reach")
     if m.sent:
         replies = f"{m.received}/{m.sent}"
-        loss = m.loss_pct
-        loss_s = (
-            f"{loss:.0f}%"
-            if loss is not None and (loss == 0 or loss >= 1)
-            else f"{loss:.1f}%"
-        )
+        loss_s = _fmt_pct(m.loss_pct)
         upper = m.loss_upper_pct
-        bound = f"≤{upper:.0f}%" if upper is not None and m.received == m.sent else ""
+        bound = (
+            f"≤{_fmt_pct(upper)}" if upper is not None and m.received == m.sent else ""
+        )
     else:
         replies, loss_s, bound = "—", "—", ""
     rtt_s = (
@@ -248,11 +256,18 @@ def device_cells(dr) -> DeviceCells:
 
 
 def _table(
-    rows: List[List[str]], header: List[str], max_widths: List[int]
+    rows: List[List[str]], header: List[str], max_widths: List[Optional[int]]
 ) -> List[str]:
+    """Columns padded to their widest cell; a ``None`` width is never clipped."""
     cols = len(header)
     widths = [width(h) for h in header]
-    clipped = [[truncate(c, max_widths[i]) for i, c in enumerate(r)] for r in rows]
+    clipped = [
+        [
+            c if max_widths[i] is None else truncate(c, max_widths[i])
+            for i, c in enumerate(r)
+        ]
+        for r in rows
+    ]
     for r in clipped:
         for i in range(cols):
             widths[i] = max(widths[i], width(r[i]))
@@ -326,7 +341,7 @@ def render_check_text(
         for dr in report.devices:
             rows.append([st.sym(dr.status), *device_cells(dr)])
             statuses.append(dr.status)
-        table = _table(rows, header, [2, 18, 16, 7, 6, 7, 22, 30, 30])
+        table = _table(rows, header, [2, 18, None, None, None, None, None, 30, 30])
         lines.append("  " + st.dim(table[0]))
         for status, row in zip(statuses, table[1:]):
             sym = st.sym(status)
