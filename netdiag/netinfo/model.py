@@ -182,6 +182,22 @@ class Route:
     def is_default(self) -> bool:
         return self.destination in ("0.0.0.0/0", "default")
 
+    @property
+    def network(self) -> Optional[ipaddress.IPv4Network]:
+        """The destination as an IPv4 network (None if it is not one)."""
+        try:
+            net = ipaddress.ip_network(
+                "0.0.0.0/0" if self.is_default else self.destination, strict=False
+            )
+        except ValueError:
+            return None
+        return net if net.version == 4 else None
+
+    @property
+    def rank(self) -> int:
+        """Metric order between routes of equal prefix; an unknown metric loses."""
+        return self.metric if self.metric is not None else 1 << 30
+
     def to_dict(self) -> dict:
         return asdict(self)
 
@@ -246,11 +262,7 @@ class HostNetwork:
 
     def preferred_default_route(self) -> Optional[Route]:
         """The default route the OS normally uses: lowest metric, an unset one last."""
-        return min(
-            self.default_routes(),
-            key=lambda r: r.metric if r.metric is not None else 1 << 30,
-            default=None,
-        )
+        return min(self.default_routes(), key=lambda r: r.rank, default=None)
 
     def default_gateways(self) -> List[str]:
         return list(dict.fromkeys(r.gateway for r in self.default_routes()))
@@ -310,19 +322,7 @@ class HostNetwork:
             dec.interface, dec.address = iface, addr
             return dec
 
-        # Not on any local subnet: the most specific matching route wins.
-        best: Optional[Route] = None
-        best_len = -1
-        for r in self.routes:
-            try:
-                net = ipaddress.ip_network(
-                    "0.0.0.0/0" if r.destination == "default" else r.destination,
-                    strict=False,
-                )
-            except ValueError:
-                continue
-            if net.version == 4 and ip in net and net.prefixlen > best_len:
-                best, best_len = r, net.prefixlen
+        best = self._route_to(ip)
         if best is not None:
             dec.gateway = best.gateway
             dec.interface = self.interface(best.interface)
@@ -331,6 +331,18 @@ class HostNetwork:
             if not best.gateway:  # an explicit on-link route without an address
                 dec.on_link = True
         return dec
+
+    def _route_to(self, ip: ipaddress.IPv4Address) -> Optional[Route]:
+        """The route the OS picks off the local subnets: most specific, then lowest metric."""
+        matches = [
+            (r, net)
+            for r in self.routes
+            if (net := r.network) is not None and ip in net
+        ]
+        best = min(
+            matches, key=lambda m: (-m[1].prefixlen, m[0].rank), default=(None, None)
+        )
+        return best[0]
 
     def to_dict(self) -> dict:
         return {

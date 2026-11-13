@@ -5,12 +5,14 @@ formats; the Japanese Windows text is encoded in cp932 with CRLF line ends and
 decoded the way ``run()`` decodes it.
 """
 
+import json
+
 import pytest
 
 from netdiag import probes  # noqa: F401  (registers the probes)
 from netdiag.diagnosis.engine import Engine
 from netdiag.measure import PingStats
-from netdiag.netinfo import linux
+from netdiag.netinfo import linux, windows
 from netdiag.netinfo.model import KIND_ETHERNET, HostNetwork
 from netdiag.probes import gateway as gateway_probe
 
@@ -43,6 +45,54 @@ def _linux(addr, routes, base):
         routes=linux.parse_route_json(routes),
         source="linux:ip-json",
     )
+
+
+def _adapter(name, index, desc, status="Up", media="802.3", mac=None, **extra):
+    return {
+        "Name": name,
+        "InterfaceDescription": desc,
+        "ifIndex": index,
+        "Status": status,
+        "MacAddress": mac if mac is not None else f"00-00-5E-00-53-{index:02X}",
+        "LinkSpeed": "1 Gbps" if status == "Up" else "0 bps",
+        "ReceiveLinkSpeed": 1000000000 if status == "Up" else 0,
+        "FullDuplex": True,
+        "MtuSize": 1500,
+        "Virtual": False,
+        "HardwareInterface": True,
+        "MediaType": media,
+        "PhysicalMediaType": media,
+        **extra,
+    }
+
+
+def _address(ip, plen, index, alias, state="Preferred", origin="Manual"):
+    return {
+        "IPAddress": ip,
+        "PrefixLength": plen,
+        "InterfaceIndex": index,
+        "InterfaceAlias": alias,
+        "AddressState": state,
+        "PrefixOrigin": origin,
+    }
+
+
+def _route(dst, hop, index, alias, route_metric, if_metric):
+    return {
+        "DestinationPrefix": dst,
+        "NextHop": hop,
+        "InterfaceIndex": index,
+        "InterfaceAlias": alias,
+        "RouteMetric": route_metric,
+        "InterfaceMetric": if_metric,
+    }
+
+
+def _windows(**sections):
+    """PowerShell COLLECT_SCRIPT output, round-tripped through JSON text."""
+    data = {"adapters": [], "addresses": [], "routes": [], "dns": [], "stats": []}
+    data.update(sections)
+    return windows.parse_collect_json(json.loads(json.dumps(data, ensure_ascii=False)))
 
 
 def _sysfs_nic(base, name, counters):
@@ -141,3 +191,37 @@ def test_text_route_without_metric_reads_as_metric_0():
     )
     hn = HostNetwork(routes=routes)
     assert hn.preferred_default_route().gateway == "192.0.2.1"
+
+
+def _two_gateway_laptop():
+    # Get-NetRoute lists equal prefixes by interface, not by metric: the Wi-Fi
+    # default (35) comes first, the equipment NIC's typed gateway (25) second.
+    return _windows(
+        adapters=[
+            _adapter("イーサネット", 12, "Intel(R) Ethernet Connection I219-LM"),
+            _adapter("Wi-Fi", 18, "Intel(R) Wi-Fi 6E AX211", media="Native 802.11"),
+        ],
+        addresses=[
+            _address("192.0.2.100", 24, 12, "イーサネット"),
+            _address("198.51.100.40", 24, 18, "Wi-Fi", origin="Dhcp"),
+        ],
+        routes=[
+            _route("0.0.0.0/0", "198.51.100.1", 18, "Wi-Fi", 0, 35),
+            _route("0.0.0.0/0", "192.0.2.1", 12, "イーサネット", 0, 25),
+            _route("192.0.2.0/24", "0.0.0.0", 12, "イーサネット", 256, 25),
+            _route("198.51.100.0/24", "0.0.0.0", 18, "Wi-Fi", 256, 35),
+        ],
+    )
+
+
+def test_route_and_gateway_checks_name_the_same_gateway(pinged):
+    hn = _two_gateway_laptop()
+    res = _run(
+        hn,
+        ["gateway", "route"],
+        internet=True,
+        target={"name": "PLC-B", "host": "203.0.113.5"},
+    )
+    assert pinged == ["192.0.2.1"]
+    assert res["route"].detail["gateway"] == "192.0.2.1"
+    assert res["route"].summary == "routed via gateway 192.0.2.1"
