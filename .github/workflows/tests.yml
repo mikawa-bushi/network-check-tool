@@ -86,15 +86,17 @@ jobs:
     - name: Smoke — check this PC
       run: |
         bash scripts/expect_verdict.sh python -m netdiag --lang en check --format json -o check.json
-        python -c "import json; d=json.load(open('check.json', encoding='utf-8')); print(d['status'], [r['code'] for r in d['host']['results']])"
+        python -c "import json; d=json.load(open('check.json', encoding='utf-8')); print(d['status'], [r['code'] for r in d['host']['results']]); assert d['host']['results']"
 
     - name: Smoke — ping, device check and a short soak against loopback
       run: |
-        bash scripts/expect_verdict.sh python -m netdiag --lang ja ping 127.0.0.1 -c 5
+        python -m netdiag --lang ja ping 127.0.0.1 -c 5
         bash scripts/expect_verdict.sh python -m netdiag --lang en ping 127.0.0.1 -c 5 --json > ping.json
         python -c "import json; d=json.load(open('ping.json')); print(d['method'], d['received'], '/', d['sent']); assert d['received'] == d['sent'] == 5"
-        bash scripts/expect_verdict.sh python -m netdiag --lang ja check --no-host 127.0.0.1 LOOP=127.0.0.1:1
+        bash scripts/expect_verdict.sh python -m netdiag --lang ja check --no-host 127.0.0.1 LOOP=127.0.0.1:1 -o devices.json
+        python -c "import json; d=json.load(open('devices.json', encoding='utf-8')); s={x['device']['name']: x['status'] for x in d['devices']}; print(s); assert s == {'127.0.0.1': 'ok', 'LOOP': 'fail'}"
         bash scripts/expect_verdict.sh python -m netdiag soak 127.0.0.1 --duration 5 --bucket 2 --format json -o soak.json
+        python -c "import json; [t]=json.load(open('soak.json', encoding='utf-8'))['devices']; print(t['sent'], t['lost']); assert t['sent'] > 0 and t['lost'] == 0"
 
     - name: Smoke — collect raw tool output
       run: python -m netdiag --lang ja collect -o collect-${{ matrix.os }}.zip
@@ -107,6 +109,7 @@ jobs:
         path: |
           check.json
           ping.json
+          devices.json
           soak.json
           collect-${{ matrix.os }}.zip
         if-no-files-found: warn
