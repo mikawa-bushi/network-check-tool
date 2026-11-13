@@ -901,3 +901,18 @@ def test_disabled_duplicate_address_is_not_used_to_reach_devices():
     assert res["route"].code != "route.on_link"
     assert res["route"].detail["local_address"] != "192.0.2.100/24"
     assert hn.decide_route("192.0.2.100").special == "self"
+
+
+# ------------------------------------------------------------- resolvers
+
+
+def test_resolv_conf_with_a_shift_jis_comment_still_lists_its_servers(
+    monkeypatch, tmp_path
+):
+    conf = tmp_path / "resolv.conf"
+    conf.write_bytes(
+        "# 工場LAN用 DNS（設定: 生産技術課）\n"
+        "nameserver 192.0.2.53\nnameserver 192.0.2.54\n".encode("cp932")
+    )
+    monkeypatch.setattr(linux, "RESOLV_CONF", conf)
+    assert linux.resolvers() == ["192.0.2.53", "192.0.2.54"]

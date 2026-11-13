@@ -45,6 +45,8 @@ from .model import (
 
 SYS_NET = Path("/sys/class/net")
 PROC_NET = Path("/proc/net")
+RESOLV_CONF = Path("/etc/resolv.conf")
+RESOLVED_CONF = Path("/run/systemd/resolve/resolv.conf")
 
 _NEIGH_STATES = {
     "REACHABLE": NEIGH_REACHABLE,
@@ -73,9 +75,14 @@ def _ip_json(*args: str) -> Optional[list]:
 
 
 def _read(path: Path) -> Optional[str]:
+    """A text file's content, or None if it cannot be read.
+
+    Bytes that are not UTF-8 (a Shift_JIS comment in resolv.conf) are replaced
+    rather than losing the whole file.
+    """
     try:
-        return path.read_text(encoding="utf-8").strip()
-    except (OSError, ValueError):
+        return path.read_text(encoding="utf-8", errors="replace").strip()
+    except OSError:
         return None
 
 
@@ -494,12 +501,10 @@ def parse_resolv_conf(text: str) -> List[str]:
 
 
 def resolvers() -> List[str]:
-    servers = parse_resolv_conf(_read(Path("/etc/resolv.conf")) or "")
+    servers = parse_resolv_conf(_read(RESOLV_CONF) or "")
     if servers and all(s.startswith("127.0.0.53") for s in servers):
         # systemd-resolved stub: report the real upstream servers it forwards to.
-        upstream = parse_resolv_conf(
-            _read(Path("/run/systemd/resolve/resolv.conf")) or ""
-        )
+        upstream = parse_resolv_conf(_read(RESOLVED_CONF) or "")
         if upstream:
             return upstream
     return servers
