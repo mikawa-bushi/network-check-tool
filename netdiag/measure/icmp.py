@@ -25,6 +25,7 @@ same statistics (loss with a 95 % upper bound, min/median/p95/max, jitter).
 
 from __future__ import annotations
 
+import functools
 import ipaddress
 import math
 import os
@@ -36,7 +37,7 @@ import threading
 import time
 from concurrent.futures import ThreadPoolExecutor
 from dataclasses import dataclass, field
-from typing import Callable, Dict, Iterable, List, Optional, Sequence, Tuple
+from typing import Any, Callable, Dict, Iterable, List, Optional, Sequence, Tuple
 
 from ..core.util import have, is_macos, is_windows, run
 from .stats import RttSummary, loss_upper_bound_pct, summarize
@@ -152,6 +153,7 @@ def ping(
     size: int = DEFAULT_SIZE,
     family: Optional[int] = None,
     method: str = "auto",
+    stop: Optional[threading.Event] = None,
 ) -> PingStats:
     """Ping one target. See :func:`ping_many`."""
     return ping_many(
@@ -162,6 +164,7 @@ def ping(
         size=size,
         family=family,
         method=method,
+        stop=stop,
     )[target]
 
 
@@ -174,12 +177,16 @@ def ping_many(
     family: Optional[int] = None,
     method: str = "auto",
     max_pps: float = MAX_PPS,
+    stop: Optional[threading.Event] = None,
 ) -> Dict[str, PingStats]:
     """Ping several targets concurrently; returns ``{target: PingStats}``.
 
     ``method`` is ``auto`` (ICMP socket or the Windows ICMP API when available,
     else the system ``ping``), ``socket``, ``win`` or ``system``. ``family``
     4/6 forces an address family.
+
+    Ctrl-C in the calling thread stops every pinger within about a second.
+    A caller that pings from a worker thread passes *stop* and sets it.
     """
     return _run(
         targets,
@@ -190,6 +197,7 @@ def ping_many(
         family=family,
         method=method,
         max_pps=max_pps,
+        stop=stop,
     )
 
 
@@ -250,6 +258,7 @@ def _run(
     on_sample: Optional[SampleFn] = None,
     stop: Optional[threading.Event] = None,
 ) -> Dict[str, PingStats]:
+    stop = stop or threading.Event()
     out: Dict[str, PingStats] = {}
     jobs: Dict[str, Dict[str, str]] = {"socket": {}, "win": {}}
     system_jobs: List[Tuple[str, Optional[int]]] = []
@@ -295,13 +304,55 @@ def _run(
                 system_jobs, count, interval, timeout, size, on_sample, stop
             )
         )
-    if len(runners) == 1:
-        out.update(runners[0]())
-    elif runners:
-        with ThreadPoolExecutor(max_workers=len(runners)) as pool:
-            for res in pool.map(lambda r: r(), runners):
-                out.update(res)
+    for res in run_together(runners, stop):
+        out.update(res)
     return {t: out[t] for t in dict.fromkeys(targets)}
+
+
+_WIND_DOWN = 2.0  # seconds Ctrl-C waits for pingers to stop and reap their ping
+
+
+def run_together(
+    fns: Sequence[Callable[[], Any]], stop: threading.Event, limit: int = 0
+) -> List[Any]:
+    """Run *fns* side by side, at most *limit* at once (0: all), in order.
+
+    The caller waits in short slices. An untimed wait would hold Ctrl-C until
+    every ping had finished, and on Windows it cannot be interrupted at all.
+    On Ctrl-C it sets *stop*, which every pinger watches, gives them a moment
+    to wind down and re-raises. A failure inside a function is re-raised here.
+    """
+    results: List[Any] = [None] * len(fns)
+    failures: List[BaseException] = []
+    gate = threading.Semaphore(limit or max(1, len(fns)))
+    # Events, not Thread.join: a join cut short by Ctrl-C can later report a
+    # live thread as finished.
+    finished = [threading.Event() for _ in fns]
+
+    def work(i: int) -> None:
+        try:
+            with gate:
+                results[i] = fns[i]()
+        except BaseException as e:
+            failures.append(e)
+        finally:
+            finished[i].set()
+
+    for i in range(len(fns)):
+        threading.Thread(target=work, args=(i,), daemon=True).start()
+    try:
+        for done in finished:
+            while not done.wait(0.1):
+                pass
+    except BaseException:
+        stop.set()
+        end = time.monotonic() + _WIND_DOWN
+        for done in finished:
+            done.wait(max(0.0, end - time.monotonic()))
+        raise
+    if failures:
+        raise failures[0]
+    return results
 
 
 _socket_ok: Optional[bool] = None
@@ -581,25 +632,26 @@ def _system_many(
     timeout: float,
     size: int,
     on_sample: Optional[SampleFn],
-    stop: Optional[threading.Event],
+    stop: threading.Event,
 ) -> Dict[str, PingStats]:
     """System ``ping`` per target in parallel; in streaming mode, in rounds."""
     workers = max(1, min(32, len(jobs)))
     if count is not None:
-        with ThreadPoolExecutor(max_workers=workers) as pool:
-            futs = {
-                t: pool.submit(
-                    system_ping,
-                    t,
-                    count=count,
-                    interval=interval,
-                    timeout=timeout,
-                    size=size,
-                    family=fam,
-                )
-                for t, fam in jobs
-            }
-            return {t: f.result() for t, f in futs.items()}
+
+        def one(t: str, fam: Optional[int]) -> PingStats:
+            if stop.is_set():
+                return PingStats(target=t, method="system-ping", error="stopped")
+            return system_ping(
+                t,
+                count=count,
+                interval=interval,
+                timeout=timeout,
+                size=size,
+                family=fam,
+            )
+
+        fns = [functools.partial(one, t, fam) for t, fam in jobs]
+        return dict(zip((t for t, _ in jobs), run_together(fns, stop, limit=32)))
 
     totals = {
         t: PingStats(target=t, method="system-ping", resolution_ms=1.0) for t, _ in jobs

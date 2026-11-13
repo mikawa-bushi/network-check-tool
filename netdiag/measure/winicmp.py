@@ -19,15 +19,15 @@ with a fake on any OS.
 from __future__ import annotations
 
 import ctypes
+import functools
 import itertools
 import socket
 import struct
 import threading
 import time
-from concurrent.futures import ThreadPoolExecutor
 from typing import Dict, List, Optional, Tuple
 
-from .icmp import PingStats, SampleFn
+from .icmp import PingStats, SampleFn, run_together
 
 IP_SUCCESS = 0
 IP_REQ_TIMED_OUT = 11010
@@ -258,6 +258,8 @@ class WinIcmpPinger:
                     if delay > 0 and self.stop.wait(delay):
                         break
                     self.limiter.acquire(self.stop)
+                    if self.stop.is_set():
+                        break
                     wall = time.time()
                     start = time.perf_counter()
                     status, replies, _reported = self.api.echo(
@@ -284,17 +286,8 @@ class WinIcmpPinger:
             finally:
                 self.api.close(handle)
 
-        if self.count is None:
-            threads = [
-                threading.Thread(target=loop, args=(j,), daemon=True) for j in range(n)
-            ]
-            for th in threads:
-                th.start()
-            for th in threads:
-                th.join()
-        else:
-            with ThreadPoolExecutor(max_workers=max(1, min(64, n))) as pool:
-                list(pool.map(loop, range(n)))
+        loops = [functools.partial(loop, j) for j in range(n)]
+        run_together(loops, self.stop, limit=64 if self.count is not None else 0)
         return stats
 
 

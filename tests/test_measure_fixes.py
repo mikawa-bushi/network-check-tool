@@ -1,5 +1,6 @@
 """Regression tests for the measurement layer: statistics, DNS, TCP and ping."""
 
+import _thread
 import socket
 import struct
 import threading
@@ -202,3 +203,35 @@ def test_windows_pinger_resumes_its_pace_after_a_stall():
     ).run()
     assert len(api.calls) >= 10
     assert _densest(api.calls, 0.03) <= 2  # was 10 echoes back to back
+
+
+# ------------------------------------------------------------- Ctrl-C in a sweep
+
+
+def _ctrl_c_after(seconds):
+    # interrupt_main raises KeyboardInterrupt in the main thread but, like
+    # Ctrl-C on Windows, cannot break an untimed wait it is blocked in.
+    threading.Timer(seconds, _thread.interrupt_main).start()
+
+
+def _interrupted_sweep(**kw):
+    _ctrl_c_after(0.3)
+    start = time.monotonic()
+    with pytest.raises(KeyboardInterrupt):
+        icmpmod.ping_many(["192.0.2.10", "192.0.2.11"], count=100, interval=0.2, **kw)
+    return time.monotonic() - start
+
+
+def test_ctrl_c_stops_a_windows_api_sweep_at_once(monkeypatch):
+    monkeypatch.delenv("NETDIAG_PING_METHOD", raising=False)
+    monkeypatch.setattr(icmpmod, "icmp_socket_available", lambda: False)
+    monkeypatch.setattr(icmpmod, "win_icmp_available", lambda: True)
+    monkeypatch.setattr(winicmp, "get_api", _EchoApi)
+    assert _interrupted_sweep(timeout=0.2) < 2.0  # the sweep alone takes 20 s
+
+
+def test_ctrl_c_stops_a_system_ping_sweep_at_once(monkeypatch):
+    monkeypatch.setenv("NETDIAG_PING_METHOD", "system")
+    monkeypatch.setattr(icmpmod, "have", lambda cmd: True)
+    monkeypatch.setattr(icmpmod, "run", lambda args, timeout: time.sleep(30))
+    assert _interrupted_sweep() < 3.0  # each ping would run for 30 s
