@@ -16,7 +16,7 @@ from netdiag.core.util import CommandResult, decode_output
 from netdiag.diagnosis.engine import Engine
 from netdiag.measure import PingStats
 from netdiag.netinfo import linux, macos, windows
-from netdiag.netinfo.model import KIND_ETHERNET, HostNetwork
+from netdiag.netinfo.model import KIND_ETHERNET, NEIGH_STALE, HostNetwork, Neighbor
 from netdiag.probes import gateway as gateway_probe
 
 
@@ -843,3 +843,39 @@ def test_error_ratio_counts_multicast_frames():
     assert _run(hn, ["link"])["link"].code == "link.ok"
     for column in ("ReceivedMulticastPackets", "SentBroadcastPackets"):
         assert column in windows.COLLECT_SCRIPT
+
+
+# --------------------------------------------------------- Windows arp -a
+
+ARP_INVALID_JA = (
+    "\r\nインターフェイス: 192.0.2.100 --- 0xc\r\n"
+    "  インターネット アドレス 物理アドレス           種類\r\n"
+    "  192.0.2.1             00-00-5e-00-53-01     動的\r\n"
+    "  192.0.2.39            00-00-00-00-00-00     無効\r\n"
+    "  192.0.2.255           ff-ff-ff-ff-ff-ff     静的\r\n"
+).encode("cp932")
+
+
+def test_invalid_arp_row_is_no_answer_not_a_resolved_neighbour():
+    before = {n.ip: n for n in windows.parse_arp_a(decode_output(ARP_INVALID_JA))}
+    assert before["192.0.2.1"].mac == "00:00:5e:00:53:01"
+    plc = before["192.0.2.39"]
+    assert plc.mac is None and plc.absent
+    hn = HostNetwork(
+        interfaces=windows.parse_route_print(
+            "          192.0.2.0    255.255.255.0       On-link     192.0.2.100    281\n"
+        ).interfaces
+    )
+    # The PLC ignores ping but answers SendARP during the test.
+    after = Neighbor(ip="192.0.2.39", mac="00:00:5e:00:53:27", state=NEIGH_STALE)
+    res = _run(
+        hn,
+        ["route", "reach"],
+        target={"name": "PLC1", "host": "192.0.2.39"},
+        _address="192.0.2.39",
+        _ping=PingStats(target="192.0.2.39", sent=10, received=0),
+        _ping_window=3.0,
+        _neighbor_before=plc,
+        _neighbor_after=after,
+    )
+    assert res["reach"].code == "reach.icmp_blocked"
