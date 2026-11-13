@@ -55,11 +55,22 @@ def detect(env: Optional[Mapping[str, str]] = None) -> str:
         lang = normalize(env.get(var))
         if lang:
             return lang
+    return _os_language() or DEFAULT
+
+
+def _os_language() -> Optional[str]:
+    """The OS locale's language (on Windows, e.g. ``Japanese_Japan.932``).
+
+    The C/POSIX locale names no language. Python coerces it to ``C.UTF-8``,
+    which ``getlocale()`` on 3.11 reports as ``en_US``, so it is checked first.
+    """
     try:
-        lang = normalize(locale.getlocale()[0])
-    except (ValueError, TypeError):  # pragma: no cover - exotic locale setups
-        lang = None
-    return lang or DEFAULT
+        raw = locale.setlocale(locale.LC_CTYPE)
+        if raw.split(".")[0].upper() in ("C", "POSIX"):
+            return None
+        return normalize(locale.getlocale()[0])
+    except (locale.Error, ValueError, TypeError):  # pragma: no cover - exotic setups
+        return None
 
 
 def set_language(lang: Optional[str]) -> str:
