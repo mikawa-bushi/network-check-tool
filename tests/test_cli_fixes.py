@@ -402,3 +402,23 @@ def test_ping_exit_code_follows_its_verdict(run, monkeypatch, stats, code):
     monkeypatch.setattr(measure, "ping", lambda host, **kw: stats)
     assert run("ping", "192.0.2.10")[0] == code
     assert run("ping", "--json", "192.0.2.10")[0] == code
+
+
+@pytest.mark.parametrize(
+    "args",
+    [
+        ("check", "--count", "0"),
+        ("check", "--count", "-5"),
+        ("check", "--interval", "0"),
+        ("check", "--duration", "0"),
+        ("check", "--timeout", "-1"),
+        ("check", "--jobs", "0"),
+        ("ping", "192.0.2.10", "-c", "0"),
+        ("ping", "192.0.2.10", "-i", "0"),
+        ("ping", "192.0.2.10", "--timeout", "0"),
+    ],
+)
+def test_counts_and_seconds_must_be_positive(run, args):
+    code, _, err = run(*args)
+    assert code == 4 and "config" not in run.seen
+    assert "Invalid value" in err

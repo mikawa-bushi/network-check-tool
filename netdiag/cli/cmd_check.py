@@ -63,6 +63,9 @@ def _collect_devices(targets, device_files, ports) -> List[Device]:
     return devices
 
 
+_COUNT = click.IntRange(min=1)
+_SECONDS = click.FloatRange(min=0, min_open=True)
+
 _CHECK_HELP_JA = """このPCと機器のネットワークを診断します。
 
 \b
@@ -121,7 +124,7 @@ Exit codes:
 )
 @click.option(
     "--count",
-    type=int,
+    type=_COUNT,
     default=None,
     help=H(
         "1台あたりのping回数（既定 10）。断続的な不調は 100〜300 で測ると確実です",
@@ -130,13 +133,13 @@ Exit codes:
 )
 @click.option(
     "--interval",
-    type=float,
+    type=_SECONDS,
     default=None,
     help=H("ping間隔[秒]（既定 0.2）", "Seconds between pings (default 0.2)."),
 )
 @click.option(
     "--duration",
-    type=float,
+    type=_SECONDS,
     default=None,
     help=H(
         "測定時間[秒]。指定すると回数 = 時間 ÷ 間隔",
@@ -146,7 +149,7 @@ Exit codes:
 @click.option(
     "--timeout",
     "ping_timeout",
-    type=float,
+    type=_SECONDS,
     default=None,
     help=H(
         "1回のping応答待ち[秒]（既定 1.0）",
@@ -247,7 +250,7 @@ Exit codes:
 )
 @click.option(
     "--jobs",
-    type=int,
+    type=_COUNT,
     default=1,
     help=H(
         "このPCのチェックを並列実行（1=直列。3〜4推奨）",
@@ -360,17 +363,19 @@ def check(
 
 @cli.command()
 @click.argument("host")
-@click.option("--count", "-c", type=int, default=10, help=H("回数", "Number of pings."))
+@click.option(
+    "--count", "-c", type=_COUNT, default=10, help=H("回数", "Number of pings.")
+)
 @click.option(
     "--interval",
     "-i",
-    type=float,
+    type=_SECONDS,
     default=0.2,
     help=H("間隔[秒]", "Seconds between pings."),
 )
 @click.option(
     "--timeout",
-    type=float,
+    type=_SECONDS,
     default=1.0,
     help=H("応答待ち[秒]", "Seconds to wait for each reply."),
 )
