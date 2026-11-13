@@ -27,6 +27,11 @@ classifiers = [
 packages = [
     { include = "netdiag" },
 ]
+# poetry-core reads this, not MANIFEST.in.
+include = [
+    { path = "docs/netdiag.md", format = "sdist" },
+    { path = "examples", format = "sdist" },
+]
 
 [tool.poetry.dependencies]
 python = "^3.11"

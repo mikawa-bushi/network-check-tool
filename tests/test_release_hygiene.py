@@ -1,6 +1,7 @@
-"""What a release ships: the license text, and the version every report prints."""
+"""What a release ships: the license, the PyPI README, the version in reports."""
 
 import json
+import re
 import zipfile
 from pathlib import Path
 
@@ -36,6 +37,12 @@ def test_license_is_the_complete_mit_text():
     assert "subject to the following conditions:" in text
     assert 'THE SOFTWARE IS PROVIDED "AS IS", WITHOUT WARRANTY OF ANY KIND' in text
     assert text.rstrip().endswith("OTHER DEALINGS IN THE\nSOFTWARE.")
+
+
+def test_readme_links_are_absolute_so_they_work_on_pypi():
+    readme = (ROOT / "README.md").read_text(encoding="utf-8")
+    relative = re.findall(r"\]\((?!https?://|#)([^)]+)\)", readme)
+    assert relative == [], "PyPI resolves relative links under pypi.org"
 
 
 def test_package_version_is_the_pyproject_version():
