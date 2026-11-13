@@ -19,8 +19,9 @@ import pytest
 
 import netdiag.runner as runner_mod
 from netdiag.cli import main
-from netdiag.core import CheckResult, Context, Probe, Status
+from netdiag.core import CheckResult, Context, ExitCode, Probe, Status
 from netdiag.diagnosis import Diagnosis
+from netdiag.measure import PingStats
 from netdiag.runner import CheckReport
 
 
@@ -374,3 +375,30 @@ def test_every_documented_check_is_explained_by_a_fresh_netdiag():
 def test_explain_lists_link_errors_in_a_fresh_netdiag():
     res = _fresh_netdiag("explain")
     assert re.search(r"^  link_errors +\[L1", res.stdout, re.M)
+
+
+# ------------------------------------------------- exit codes, ping, numbers
+
+
+@pytest.mark.parametrize("lang", ["ja", "en"])
+def test_check_help_lists_every_exit_code(run, lang):
+    _, out, _ = run("--lang", lang, "check", "--help")
+    listed = {int(m) for m in re.findall(r"^ +(\d+) +\S", out, re.M)}
+    assert listed == {int(code) for code in ExitCode}
+
+
+@pytest.mark.parametrize(
+    "stats, code",
+    [
+        (PingStats(target="h", sent=10, received=10, rtts_ms=[0.5] * 10), 0),
+        (PingStats(target="h", sent=10, received=0), 1),
+        (PingStats(target="h", sent=10, received=7, rtts_ms=[0.5] * 7), 2),
+        (PingStats(target="h", error="name resolution failed"), 3),
+    ],
+)
+def test_ping_exit_code_follows_its_verdict(run, monkeypatch, stats, code):
+    import netdiag.measure as measure
+
+    monkeypatch.setattr(measure, "ping", lambda host, **kw: stats)
+    assert run("ping", "192.0.2.10")[0] == code
+    assert run("ping", "--json", "192.0.2.10")[0] == code

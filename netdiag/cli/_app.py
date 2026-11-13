@@ -28,7 +28,7 @@ _HELP_PAIRS: Dict[str, Tuple[str, str]] = {}
 def H(ja: str, en: str) -> str:
     """Help text, printed in the language that --lang (or the environment) picks."""
     for text in (ja, en):
-        _HELP_PAIRS[inspect.cleandoc(text)] = (ja, en)
+        _HELP_PAIRS[text] = _HELP_PAIRS[inspect.cleandoc(text)] = (ja, en)
     return ja if _HELP_JA else en
 
 
