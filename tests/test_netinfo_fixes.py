@@ -916,3 +916,77 @@ def test_resolv_conf_with_a_shift_jis_comment_still_lists_its_servers(
     )
     monkeypatch.setattr(linux, "RESOLV_CONF", conf)
     assert linux.resolvers() == ["192.0.2.53", "192.0.2.54"]
+
+
+# ----------------------------------------------------------------- macOS
+
+MAC_IFCONFIG = """\
+lo0: flags=8049<UP,LOOPBACK,RUNNING,MULTICAST> mtu 16384
+\tinet 127.0.0.1 netmask 0xff000000
+en0: flags=8863<UP,BROADCAST,SMART,RUNNING,SIMPLEX,MULTICAST> mtu 1500
+\tether 00:00:5e:00:53:0e
+\tinet 192.0.2.23 netmask 0xffffff00 broadcast 192.0.2.255
+\tmedia: autoselect (1000baseT <full-duplex>)
+\tstatus: active
+utun4: flags=8051<UP,POINTOPOINT,RUNNING,MULTICAST> mtu 1400
+\tinet 198.51.100.6 --> 198.51.100.5 netmask 0xffffffff
+"""
+
+MAC_ROUTES = """\
+Routing tables
+
+Internet:
+Destination        Gateway            Flags               Netif Expire
+0/1                198.51.100.5       UGScg               utun4
+default            192.0.2.1          UGScg                 en0
+127                127.0.0.1          UCS                   lo0
+128.0/1            198.51.100.5       UGSc                utun4
+169.254            link#14            UCS                   en0      !
+192.0.2            link#14            UCS                   en0      !
+192.0.2.1/32       link#14            UCS                   en0      !
+198.51.100.5       198.51.100.6       UH                  utun4
+203.0.113/24       192.0.2.254        UGSc                  en0
+"""
+
+
+def _mac(routes=MAC_ROUTES):
+    return HostNetwork(
+        interfaces=macos.parse_ifconfig(MAC_IFCONFIG),
+        routes=macos.parse_netstat_routes(routes),
+    )
+
+
+def test_macos_abbreviated_routes_are_followed():
+    hn = _mac()
+    assert {r.destination for r in hn.routes} >= {
+        "0.0.0.0/1",
+        "128.0.0.0/1",
+        "203.0.113.0/24",
+        "169.254.0.0/16",
+    }
+    line_b = {"name": "PLC-L2", "host": "203.0.113.5"}
+    assert _run(hn, ["route"], target=line_b)["route"].summary == (
+        "routed via gateway 192.0.2.254"
+    )
+    closed = _mac(  # a line Mac with no default route and no VPN
+        "\n".join(
+            line
+            for line in MAC_ROUTES.splitlines()
+            if "utun4" not in line and not line.startswith("default")
+        )
+    )
+    assert not any(r.is_default for r in closed.routes)
+    assert _run(closed, ["route"], target=line_b)["route"].code == "route.via_gateway"
+    assert hn.decide_route("198.51.100.77").gateway == "198.51.100.5"
+
+
+def test_macos_utun_address_and_inactive_counters_are_read():
+    utun = _mac().interface("utun4")
+    assert [a.cidr for a in utun.addresses] == ["198.51.100.6/32"] and not utun.arp
+    stats = macos.parse_netstat_ibn(
+        "Name       Mtu   Network       Address            Ipkts Ierrs     Ibytes"
+        "    Opkts Oerrs     Obytes  Coll\n"
+        "en7*       1500  <Link#17>   00:00:5e:00:53:11    54321    37    6543210"
+        "    43210     0    5432100     0\n"
+    )
+    assert stats["en7"].rx_errors == 37
