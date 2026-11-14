@@ -59,6 +59,12 @@ elif sys.platform == "darwin":  # time.monotonic() stops while asleep there
 else:
     _monotonic = time.monotonic
 
+# Windows' time.monotonic() (QPC) may stop while the PC sleeps. There, a
+# forward step of the PC clock that the steady clock did not see, longer than
+# SLEEP_STEP_S, is counted as sleep; a shorter one is a clock correction.
+_STEADY_COUNTS_SLEEP = hasattr(time, "CLOCK_BOOTTIME") or sys.platform == "darwin"
+SLEEP_STEP_S = 30.0
+
 
 class SoakClock:
     """The run's timeline: the wall clock at the start, then a steady clock.
@@ -71,9 +77,20 @@ class SoakClock:
     def __init__(self) -> None:
         self.wall0 = time.time()
         self.mono0 = _monotonic()
+        self._slept = 0.0  # sleep the steady clock did not count
+        self._step = 0.0
+        self._lock = threading.Lock()  # the pinger thread reads it too
 
     def now(self) -> float:
-        return self.wall0 + (_monotonic() - self.mono0)
+        with self._lock:
+            wall = time.time()
+            t = self.wall0 + (_monotonic() - self.mono0) + self._slept
+            jump = wall - t - self._step
+            if not _STEADY_COUNTS_SLEEP and jump > SLEEP_STEP_S:
+                self._slept += jump
+                t += jump
+            self._step = wall - t
+            return t
 
     def step(self) -> float:
         """How far the PC clock has been moved since the start."""

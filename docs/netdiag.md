@@ -177,8 +177,10 @@ with bounded memory, so it can run for a shift:
   incident, which already points at this PC's side.
 - **Time**: the run is timed on a steady clock that keeps counting while the
   PC sleeps, so a clock change (NTP, w32time) neither ends nor stretches it.
-  Times shown follow the PC clock at the start; the report notes a clock
-  change. A run over midnight shows dates.
+  Windows' steady clock may stop during sleep, so there a forward clock step
+  of more than 30 s is counted as sleep: time not measured. Times shown
+  follow the PC clock at the start; the report notes a clock change. A run
+  over midnight shows dates.
 - **Live**: outage start/end lines on stderr as they happen; one line per
   completed cell (`--bucket`), labelled with the cell's start. Ctrl-C stops,
   says so, and still writes the report; a second Ctrl-C does not lose it.
