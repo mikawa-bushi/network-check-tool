@@ -12,6 +12,7 @@ import time
 
 import pytest
 
+from netdiag.core import util
 from netdiag.core.util import CommandResult
 from netdiag.measure import icmp as icmpmod
 
@@ -146,8 +147,10 @@ def test_ping_cut_short_by_ctrl_c_does_not_count_unsent_requests_as_lost(
     assert all(sent_at <= stopped for sent_at, *_ in samples)
 
 
-def test_japanese_ping_exe_lines_stream_in_order_as_they_print(fake_ping):
-    # Reconstructed Japanese Windows ping.exe output, cp932 with CRLF.
+def test_japanese_ping_exe_lines_stream_in_order_as_they_print(fake_ping, monkeypatch):
+    # Reconstructed Japanese Windows ping.exe output, cp932 with CRLF, read as
+    # on a Japanese Windows PC, whose console code page is 932.
+    monkeypatch.setattr(util, "_fallback_encodings", lambda: ["cp932"])
     lines = [
         "",
         f"{HOST} に ping を送信しています 32 バイトのデータ:",
