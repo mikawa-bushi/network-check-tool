@@ -4,10 +4,38 @@ All notable changes to this project are documented in this file.
 
 ## [Unreleased]
 
+netdiag's own changes, including new exit codes and the removed `watch`
+commands, are in `netdiag/CHANGELOG.md`. This file covers packaging, CI and
+releases.
+
+### Fixed
+- `LICENSE` holds the full MIT text. It was cut off.
+- `netdiag --version`, the check and soak HTML reports and the `collect`
+  manifest read the version from the package metadata, so they no longer show
+  0.4.0. `pyproject.toml` is the only place the version is written.
+- The sdist ships `docs/netdiag.md` and `examples/`, through
+  `[tool.poetry] include`. `MANIFEST.in`, which poetry-core ignores, is gone.
+- README links are absolute, so they work on PyPI. The README says that
+  `pip install netdiag` installs another project.
+- The package metadata no longer calls netdiag a monitoring tool (the
+  "monitoring" keyword and the "Networking :: Monitoring" classifier).
+
 ### Changed
 - Python 3.11 or newer is required. netdiag reads TOML device lists with the
   standard library, so the `toml` dependency is gone. On Python 3.10, pip keeps
   installing 0.5.0, the last release that supports it.
+- The CI smoke runs pass only exit codes 0 to 3 and fail on a Python traceback
+  (`scripts/expect_verdict.sh`). They also check results: loopback is OK, a
+  closed port fails, the soak got every reply, and the exe's drag-and-drop
+  report shows the dropped device as OK with the package version.
+- The pre-push gates (`scripts/check_commit_identity.py` and
+  `scripts/check_ai_traces.py`) check every commit a push could send that the
+  remote lacks: the first pushed ref, HEAD, every local branch and every tag.
+- `publish.yml` runs the test workflow, then the tag check, then the PyPI
+  upload and the exe build, and attaches the exe zip to the release.
+  `windows-exe.yml` no longer runs on tags. `bin/publish.sh` is gone.
+- The CI job that committed Black's formatting is gone. CI checks Black and
+  ruff, and ruff 0.15.17 is a dev dependency.
 
 ### Removed
 - `network-checker`, the ping-monitoring web dashboard, with its dependencies
@@ -15,6 +43,10 @@ All notable changes to this project are documented in this file.
   it. `pip install network-check-tool` now installs `netdiag` only (click).
   The last release with `network-checker` is 0.5.0:
   `pip install "network-check-tool==0.5.0"`.
+
+### Known limits
+- pre-commit passes the hooks only the first ref of a push. A ref that is not
+  a branch, a tag or HEAD is checked only when it is pushed first.
 
 ## [0.5.0] - 2026-11-09
 
