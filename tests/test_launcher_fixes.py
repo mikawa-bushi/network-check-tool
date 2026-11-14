@@ -107,3 +107,20 @@ def test_typed_commands_get_the_cli_exit_codes(exe):
     assert exe("check", "--bogus")[0] == 4
     assert exe("no-such-command")[0] == 4
     assert exe.state["paused"] == 0
+
+
+def test_the_window_waits_for_enter_only_on_a_console(monkeypatch, capsys):
+    import io
+    import sys
+
+    class Keyboard(io.StringIO):
+        def isatty(self):
+            return True
+
+    for stdin in (io.StringIO("\n"), None):  # a pipe, a windowed exe
+        monkeypatch.setattr(sys, "stdin", stdin)
+        launcher._pause()
+        assert "Press Enter" not in capsys.readouterr().out
+    monkeypatch.setattr(sys, "stdin", Keyboard("\n"))
+    launcher._pause()
+    assert "Press Enter" in capsys.readouterr().out

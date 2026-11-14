@@ -62,8 +62,15 @@ def _open(path: Path) -> None:
 
 
 def _pause() -> None:
+    """Wait for Enter on a console. Input from a pipe or a file (a batch job)
+    may never send a line, and a windowed exe has no stdin at all."""
     from .i18n import tr
 
+    try:
+        if not sys.stdin.isatty():
+            return
+    except (AttributeError, ValueError):
+        return
     try:
         input(tr("\nEnter キーを押すと終了します…", "\nPress Enter to close…"))
     except (EOFError, KeyboardInterrupt):
