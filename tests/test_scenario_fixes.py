@@ -186,6 +186,14 @@ def test_csv_output_is_csv_without_devices(tmp_path, capsys):
     assert not rows[0][0].startswith("#")
 
 
+def test_report_never_overwrites_the_scenario_it_runs(tmp_path, capsys):
+    text = json.dumps({"checks": ["echo"]})
+    sc = _write(tmp_path, "s.json", text)
+    code, _, err = _run(capsys, sc, "-o", sc)
+    assert code == 4 and "another file name" in err
+    assert sc.read_text(encoding="utf-8") == text
+
+
 def test_json_output_names_the_scenario(tmp_path, capsys):
     sc = _write(tmp_path, "s.json", json.dumps({"name": "Line 1", "checks": ["echo"]}))
     code, out, _ = _run(capsys, sc, "--format", "json")

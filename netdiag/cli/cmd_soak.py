@@ -15,7 +15,15 @@ import click
 
 from ..core import ExitCode, InputError
 from ..i18n import tr
-from ._app import H, cli, color_wanted, format_from_path, save_report, write_output
+from ._app import (
+    H,
+    cli,
+    color_wanted,
+    format_from_path,
+    output_path,
+    save_report,
+    write_output,
+)
 from .cmd_check import _collect_devices
 
 
@@ -30,20 +38,10 @@ def _seconds(ctx: click.Context, param: click.Parameter, value: float) -> float:
     return value
 
 
-def _check_output(output: str, device_files) -> None:
-    """Refuse an output that would overwrite a device list or cannot be written.
-
-    Checked before measuring, so a long run never ends with nowhere to save.
-    """
+def _check_writable(output: str) -> None:
+    """Refuse an output that cannot be written, before measuring, so a long
+    run never ends with nowhere to save."""
     target = Path(output)
-    for f in device_files:
-        if target.exists() and target.resolve() == Path(f).resolve():
-            raise InputError(
-                tr(
-                    f"-o {output} は読み込む機器台帳と同じファイルです。台帳を上書きしないよう、別のファイル名を指定してください",
-                    f"-o {output} is the device list being read; give another file name so the list is not overwritten",
-                )
-            )
     existed = target.exists()
     try:
         with open(target, "ab"):
@@ -223,9 +221,10 @@ def soak(
             )
         )
     fmt = format_from_path(output, fmt)
+    output = output_path(output, inputs=device_files)
     if output:
-        _check_output(output, device_files)
-    st = Style(color=sys.stderr.isatty() and not no_color)
+        _check_writable(output)
+    st = Style(color=color_wanted(no_color, err=True))
     progressive: Optional[str] = output if fmt == "csv" else None
     if progressive:
         # Written as the minutes complete, so a long run that is cut short (power,

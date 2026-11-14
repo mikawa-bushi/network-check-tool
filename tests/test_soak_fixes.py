@@ -513,7 +513,49 @@ def test_unwritable_output_is_refused_before_measuring(
     args = ["192.0.2.1", "--duration", "3", "-o", str(target)]
     assert _main(monkeypatch, args, _stream()) == 4
     assert time.monotonic() - began < 2.5
-    assert "cannot write to" in capsys.readouterr().err
+    assert "does not exist" in capsys.readouterr().err
+
+
+@pytest.mark.skipif(not hasattr(os, "link"), reason="needs hard links")
+def test_output_that_is_the_device_list_under_another_name_is_refused(
+    monkeypatch, quiet_pc, tmp_path
+):
+    ledger = tmp_path / "devices.csv"
+    ledger.write_text("name,host\nPLC,192.0.2.1\n", encoding="utf-8")
+    alias = tmp_path / "report.csv"
+    os.link(ledger, alias)
+    args = ["-f", str(ledger), "-o", str(alias), "--duration", "1"]
+    assert _main(monkeypatch, args, _stream()) == 4
+    assert ledger.read_text(encoding="utf-8") == "name,host\nPLC,192.0.2.1\n"
+
+
+def test_output_dash_is_stdout(monkeypatch, quiet_pc, tmp_path, capsys):
+    monkeypatch.chdir(tmp_path)
+    args = ["192.0.2.1", "--duration", "1", "--format", "json", "-o", "-"]
+    assert _main(monkeypatch, args, _stream()) == 0
+    assert json.loads(capsys.readouterr().out)["kind"] == "soak"
+    assert list(tmp_path.iterdir()) == []
+
+
+def test_live_lines_have_no_colour_codes_a_console_cannot_draw(
+    monkeypatch, quiet_pc, tmp_path
+):
+    import io
+
+    import netdiag.cli._app as app
+
+    class Console(io.StringIO):
+        def isatty(self):
+            return True
+
+    err = Console()
+    monkeypatch.setattr(sys, "stderr", err)
+    monkeypatch.setattr(app, "_WINDOWS", True)
+    monkeypatch.setattr(app, "_enable_vt", lambda stream: False)  # before Windows 10
+    stream = _stream(lost=lambda t, k: 5 <= k < 15)
+    args = ["192.0.2.1", "--duration", "2", "-o", str(tmp_path / "soak.json")]
+    assert _main(monkeypatch, args, stream) == 1
+    assert "dropped" in err.getvalue() and "\033[" not in err.getvalue()
 
 
 @pytest.mark.skipif(

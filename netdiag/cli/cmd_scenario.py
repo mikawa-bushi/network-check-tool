@@ -14,6 +14,7 @@ from ._app import (
     cli,
     color_wanted,
     format_from_path,
+    output_path,
     write_output,
 )
 
@@ -61,6 +62,7 @@ def scenario(path, fmt, output, show_all, reasoning, no_color):
     cfg["internet"] = False
     cfg.update(sc.config)
     fmt = format_from_path(output, fmt)
+    output = output_path(output, inputs=[path])
 
     progress = Progress()
     on_probe = (
