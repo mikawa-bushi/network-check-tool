@@ -181,7 +181,9 @@ zip にまとめます。IPアドレス・MAC・PC名・ユーザー名・SSID�
       4. 同じスイッチにつながる他の機器に届くか確認し、スイッチ/VLANの問題を切り分ける
 ```
 
-終了コードは `0` = 正常、`1` = 異常あり、`2` = 注意のみ。バッチやタスクスケジューラからも使えます。
+終了コードは `0` = 正常、`1` = 異常あり、`2` = 注意のみ、`3` = 測定できなかった項目あり（`?` 測定不可）、
+`4` = 指定の誤り（オプション・チェック名・入力ファイル・出力先）、`5` = 内部エラー、`130` = Ctrl-C で中断。
+バッチやタスクスケジューラからも使えます。
 英語で表示するには `--lang en`（または環境変数 `NETDIAG_LANG=en`）。
 
 ## 診断の考え方
@@ -260,7 +262,8 @@ zip にまとめます。IPアドレス・MAC・PC名・ユーザー名・SSID�
 - The `network-checker` ping dashboard is removed. The last release with it is 0.5.0
   (`pip install "network-check-tool==0.5.0"`).
 
-Exit codes: `0` healthy, `1` problem found, `2` warnings only. See [docs/netdiag.md](docs/netdiag.md).
+Exit codes: `0` healthy, `1` problem found, `2` warnings only, `3` incomplete (something could not
+be measured), `4` usage error, `5` internal error, `130` interrupted. See [docs/netdiag.md](docs/netdiag.md).
 
 ## 開発 / Development
 

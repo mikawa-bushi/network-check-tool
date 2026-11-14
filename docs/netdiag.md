@@ -126,7 +126,17 @@ Japanese), `-v/--verbose`, `--log-file`. `python -m netdiag` works where the
   `--save` records metrics (per device, keyed by address) for `history`;
   `--no-host` checks devices only; `--jobs N` parallelises the host sweep.
 
-Exit codes: **0** healthy, **1** a failure was found, **2** warnings only.
+Exit codes, the same for every command:
+
+| code | meaning |
+| --- | --- |
+| 0 | healthy |
+| 1 | a problem was found |
+| 2 | warnings only, and everything wanted was measured |
+| 3 | incomplete: no problem found, but something wanted could not be measured (shown as `?`) |
+| 4 | usage error: a bad option, an unknown check name, an unreadable or invalid input file, an output path that cannot be used |
+| 5 | internal error: one sentence, then the traceback on stderr |
+| 130 | interrupted with Ctrl-C before a verdict existed |
 
 ### Machine-readable output
 
@@ -159,7 +169,9 @@ with bounded memory, so it can run for a shift:
   written progressively with `-o x.csv` so a crash keeps the data) and a
   self-contained HTML heatmap (device × time).
 
-Exit codes as for `check`: 0 clean, 1 outages, 2 sporadic loss only.
+Exit codes: 0 clean, 1 outages, 2 sporadic loss only, 3 a device or a time
+window was not measured; 4 and 5 as for `check`. A soak stopped with Ctrl-C
+still reports and exits with its verdict.
 
 ## Field data (`netdiag collect`)
 

@@ -15,11 +15,14 @@ Probes come in two scopes:
 
 from __future__ import annotations
 
+import logging
 import time
 from typing import Any, Dict, List, Optional, Tuple, Type
 
-from ..i18n import TextLike, render, render_list
+from ..i18n import TextLike, render, render_list, tr
 from .result import CheckResult
+
+logger = logging.getLogger(__name__)
 
 
 class Context:
@@ -55,8 +58,8 @@ class Probe:
     """Base class. Subclasses set the class attributes and implement ``check``.
 
     ``check`` returns a :class:`CheckResult`. The base ``run`` wraps it with
-    timing and a catch-all so a buggy or permission-denied probe degrades to a
-    SKIP/FAIL result instead of aborting the whole diagnosis.
+    timing and a catch-all: a probe that raises was wanted but measured
+    nothing, so it becomes UNKNOWN instead of aborting the whole diagnosis.
 
     Text attributes (``title``, ``what``, ``why``, ``means``, ``runbook``) may be
     plain strings or :class:`netdiag.i18n.Text` (bilingual, resolved lazily).
@@ -102,21 +105,37 @@ class Probe:
         steps = render_list(self.runbook) or render_list(self.manual_commands)
         return means, steps
 
+    def path_dependencies(self, ctx: Context) -> List[str]:
+        """The ``depends_on`` checks on the path to this run's targets.
+
+        The engine skips this probe only when one of these failed, and folds
+        its failure under them. The default is every declared dependency. A
+        probe whose targets change per run narrows it: an IP address needs no
+        DNS, and a URL on another host does not need this run's TCP target.
+        It reads only ``ctx.config`` and the network snapshot, and never raises.
+        """
+        return list(self.depends_on)
+
     def run(self, ctx: Context) -> CheckResult:
         start = time.perf_counter()
         try:
             res = self.check(ctx)
         except Exception as e:  # never let one probe kill the run
-            res = CheckResult.skip(
+            logger.debug("probe %s raised", self.name, exc_info=True)
+            error = f"{type(e).__name__}: {e}"
+            res = CheckResult.unknown(
                 self.name,
-                f"probe error: {e}",
-                error=str(e),
+                tr(
+                    f"測定できませんでした（内部エラー: {error}）",
+                    f"could not be measured (internal error: {error})",
+                ),
+                error=error,
                 code=f"{self.name}.error",
             )
         res.layer = res.layer if res.layer != "?" else self.layer
         res.title = render(res.title) or render(self.title) or self.name
         if not res.depends_on:
-            res.depends_on = list(self.depends_on)
+            res.depends_on = self.path_dependencies(ctx)
         if res.raw_command is None and self.manual_commands:
             res.raw_command = " ; ".join(render_list(self.manual_commands))
         if not res.code:

@@ -282,7 +282,8 @@ def test_default_selection_honours_scope_default_and_internet(isolated_registry)
         isolated_registry[p.name] = p
     assert Engine(config={"internet": False}).select() == ["host"]
     assert sorted(Engine(config={"internet": True}).select()) == ["host", "wan"]
-    assert Engine().select(only=["dev", "optin"]) == ["dev", "optin"]
+    with_device = Engine(config={"target": {"host": "192.0.2.1"}})
+    assert with_device.select(only=["dev", "optin"]) == ["dev", "optin"]
 
 
 # ------------------------------------------------------------------ runner
@@ -349,7 +350,13 @@ def test_run_check_end_to_end_with_fakes(monkeypatch):
     assert host_codes["link_errors"] == "link_errors.increased"
     assert rep.exit_code == 1
     d = rep.to_dict()
-    assert d["device_counts"] == {"ok": 1, "warn": 1, "fail": 2, "skip": 0}
+    assert d["device_counts"] == {
+        "ok": 1,
+        "warn": 1,
+        "fail": 2,
+        "unknown": 0,
+        "skip": 0,
+    }
 
 
 def test_run_check_skips_devices_when_the_pc_has_no_network(monkeypatch):

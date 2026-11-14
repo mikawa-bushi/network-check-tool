@@ -1,9 +1,10 @@
 """Subprocess and platform helpers shared by probes.
 
 The guiding rule for the whole project: *never crash on a missing tool or a
-denied permission*. A probe that cannot run must degrade to ``Status.SKIP`` with
-a human reason, so a diagnosis on a locked-down host is still useful instead of a
-stack trace.
+denied permission*. A probe that cannot run degrades to a result with a human
+reason, so a diagnosis on a locked-down host is still useful instead of a stack
+trace: ``Status.UNKNOWN`` when the check was wanted but could not be measured,
+``Status.SKIP`` when it does not apply here.
 """
 
 from __future__ import annotations
