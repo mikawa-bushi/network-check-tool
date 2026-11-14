@@ -4,6 +4,8 @@ All notable changes to this project are documented in this file.
 
 ## [Unreleased]
 
+## [0.6.0] - 2026-11-14
+
 netdiag's own changes, including new exit codes and the removed `watch`
 commands, are in `netdiag/CHANGELOG.md`. This file covers packaging, CI and
 releases.

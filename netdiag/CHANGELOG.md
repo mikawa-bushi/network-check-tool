@@ -4,10 +4,15 @@ All notable changes to the `netdiag` package are documented in this file.
 
 ## [Unreleased]
 
+## [0.6.0] - 2026-11-14
+
 netdiag's verdicts now follow what it measured. A check that could not
 measure says "not measured" instead of passing, several exit codes changed,
 and the unattended-monitoring commands are gone. Read "Upgrading from 0.5"
 before you update scripts, or a PC that ran `netdiag service install`.
+
+netdiag's version is now the package version, so it goes from 0.4.0 to
+0.6.0.
 
 ### Fixed
 
