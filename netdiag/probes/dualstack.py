@@ -51,7 +51,7 @@ def _tcp_family(
         return False
 
 
-def _family_ok(host: str, v6: bool, count: int) -> Optional[bool]:
+def _family_ok(host: str, v6: bool, count: int = 2) -> Optional[bool]:
     ping_ok = _ping_family(host, v6=v6, count=count)
     if ping_ok:
         return True
@@ -91,12 +91,12 @@ class DualStackProbe(Probe):
 
     def check(self, ctx: Context) -> CheckResult:
         host = ctx.get("dns_name", "example.com")
-        # Two samples per family keep this cheap; honour an explicit count.
-        count = int(ctx.get("count") or 2)
+        # Two pings per family keep this cheap; --count is for the gateway and
+        # the devices, and would cost a second per ping with ping.exe here.
         has4 = _has_family(host, socket.AF_INET)
         has6 = _has_family(host, socket.AF_INET6)
-        v4 = _family_ok(host, v6=False, count=count) if has4 else None
-        v6 = _family_ok(host, v6=True, count=count) if has6 else None
+        v4 = _family_ok(host, v6=False) if has4 else None
+        v6 = _family_ok(host, v6=True) if has6 else None
         detail = {
             "host": host,
             "ipv4_ok": v4,
