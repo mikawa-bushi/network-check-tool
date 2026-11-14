@@ -31,6 +31,7 @@ _WIN_FW_SCRIPT = (
 class Rule:
     blocks: bool  # it drops or rejects traffic this PC really sends or receives
     jumps: List[str] = field(default_factory=list)  # chains it continues in
+    established: bool = False  # it names established connections
 
 
 @dataclass
@@ -72,7 +73,7 @@ def _only_never_sent_to(text: str) -> bool:
             for a in m.group(1).strip("{}").split(",")
             if a.strip()
         ]
-    except ValueError:  # a negation, a named set, a range: assume it is real
+    except ValueError:  # a negation, a named set or a range may reach anything
         return False
     return bool(nets) and all(
         any(n.subnet_of(never) for never in _NEVER_SENT_TO) for n in nets
@@ -81,11 +82,11 @@ def _only_never_sent_to(text: str) -> bool:
 
 def _rule(blocks: bool, text: str, jumps: List[str]) -> Rule:
     # "ct state invalid drop" only discards packets that belong to no connection.
+    lowered = text.lower()
     return Rule(
-        blocks=blocks
-        and "invalid" not in text.lower()
-        and not _only_never_sent_to(text),
+        blocks=blocks and "invalid" not in lowered and not _only_never_sent_to(text),
         jumps=jumps,
+        established="established" in lowered,
     )
 
 
@@ -219,7 +220,7 @@ class FirewallProbe(Probe):
                     code="firewall.need_root",
                 )
             if res.ok:
-                return self._judge(backend, parse(res.stdout), res.stdout)
+                return self._judge(backend, parse(res.stdout))
 
         return CheckResult.skip(
             self.name,
@@ -227,18 +228,21 @@ class FirewallProbe(Probe):
             code="firewall.none",
         )
 
-    def _judge(self, backend: str, chains: Dict[str, Chain], text: str) -> CheckResult:
+    def _judge(self, backend: str, chains: Dict[str, Chain]) -> CheckResult:
         out_rules = sum(
             1 for c in reachable(chains, "output") for r in chains[c].rules if r.blocks
         )
         out_policy = any(
             c.policy == "drop" for c in chains.values() if c.hook == "output"
         )
-        # Without an "established" accept, an input default-drop also eats the
-        # replies to this PC's own connections. The word anywhere counts, so a
-        # rule this parser cannot follow never raises a false warning.
-        replies = "established" not in text.lower() and any(
+        # Without an "established" accept on the input path, an input
+        # default-drop also eats the replies to this PC's own connections.
+        # Any rule on that path that names established connections counts,
+        # whatever else it matches.
+        replies = any(
             c.policy == "drop" for c in chains.values() if c.hook == "input"
+        ) and not any(
+            r.established for c in reachable(chains, "input") for r in chains[c].rules
         )
         detail = {
             "backend": backend,

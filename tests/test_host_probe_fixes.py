@@ -397,8 +397,22 @@ def test_outbound_blocking_is_flagged(monkeypatch, tool, text, summary):
     assert res.summary.startswith(summary)
 
 
-def test_an_input_drop_without_established_eats_the_replies(monkeypatch):
-    res = _firewall(monkeypatch, "nft", NFT_NO_REPLIES)
+IPT_DOCKER_NO_REPLIES = """-P INPUT DROP
+-P FORWARD DROP
+-P OUTPUT ACCEPT
+-N DOCKER
+-A INPUT -i lo -j ACCEPT
+-A INPUT -p tcp -m tcp --dport 22 -j ACCEPT
+-A FORWARD -o docker0 -m conntrack --ctstate RELATED,ESTABLISHED -j ACCEPT
+-A FORWARD -o docker0 -j DOCKER
+"""
+
+
+@pytest.mark.parametrize(
+    "tool, text", [("nft", NFT_NO_REPLIES), ("iptables", IPT_DOCKER_NO_REPLIES)]
+)
+def test_an_input_drop_without_established_eats_the_replies(monkeypatch, tool, text):
+    res = _firewall(monkeypatch, tool, text)
     assert (res.status, res.code) == (Status.WARN, "firewall.replies_blocked")
 
 
