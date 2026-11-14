@@ -1,19 +1,19 @@
-"""L2: ARP/neighbour table — duplicate IPs and a resolvable gateway MAC.
+"""L2: ARP/neighbour table — duplicate IPs, and the gateway's MAC for reference.
 
-If the gateway's IP cannot be resolved to a MAC, traffic never leaves the host
-even though routing looks fine. Duplicate-IP situations cause the same flapping.
+Two MACs answering for one IP on one link is an IP conflict, which causes
+intermittent loss. Whether the gateway answers ARP is judged by the ``gateway``
+check, which pings it and reads its ARP entry around the ping.
 """
 
 from __future__ import annotations
 
 from collections import defaultdict
-from typing import Dict, Optional, Set, Tuple
+from typing import Dict, List, Optional, Set, Tuple
 
 from ..core import CheckResult, Context, Probe, register
 from ..i18n import Text, tr
 from ..netinfo import model as nm
 from ._common import oscmd
-from .gateway import default_gateway
 
 
 def _neighbours():
@@ -27,17 +27,21 @@ class NeighborProbe(Probe):
     name = "neighbor"
     title = Text("ARP表", "ARP / neighbours")
     layer = "L2"
-    depends_on = ["interface"]
+    # After gateway, so its pings have resolved the gateway's MAC before the
+    # table is read.
+    depends_on = ["interface", "gateway"]
     what = Text(
-        "ARP表（IPとMACの対応）でIP重複とゲートウェイのMAC解決を確認します。",
-        "Inspects the ARP/neighbour table for duplicate IPs and the gateway MAC.",
+        "ARP表（IPとMACの対応）でIP重複を確認し、ゲートウェイのMACを表示します。",
+        "Inspects the ARP/neighbour table for duplicate IPs and shows the gateway MAC.",
     )
     why = Text(
-        "ゲートウェイのMACが解決できないと経路が正しくても通信できません。IP重複（1つのIPに複数のMAC）は断続的な通信断の原因です。",
-        "An unresolved gateway MAC stops all egress despite valid routing; a "
-        "duplicate IP (two MACs for one address) causes intermittent loss.",
+        "IP重複（同じネットワーク上で1つのIPに複数のMAC）は断続的な通信断の原因です。",
+        "A duplicate IP (two MACs for one address on one link) causes intermittent loss.",
     )
     manual_commands = ["arp -a", "ip neigh show"]
+
+    def path_dependencies(self, ctx: Context) -> List[str]:
+        return ["interface"]  # the table can be read whatever the gateway did
 
     def check(self, ctx: Context) -> CheckResult:
         neigh = [
@@ -60,8 +64,9 @@ class NeighborProbe(Probe):
                 macs[(n.interface, n.ip)].add(n.mac)
         dups = {ip: sorted(m) for (_, ip), m in macs.items() if len(m) > 1}
 
-        gw = default_gateway()
-        gw_entry = next((n for n in neigh if n.ip == gw), None)
+        best = ctx.network().preferred_default_route()
+        gw = best.gateway if best else None
+        gw_mac = next((n.mac for n in neigh if n.ip == gw and n.mac), None)
         detail = {
             "neighbours": [n.to_dict() for n in neigh],
             "gateway": gw,
@@ -73,48 +78,29 @@ class NeighborProbe(Probe):
                 self.name,
                 tr(
                     f"IP重複を検出: {ip} に複数のMAC（{', '.join(dups[ip])}）",
-                    f"duplicate IP detected: {ip} maps to multiple MACs (IP conflict on the LAN)",
+                    f"duplicate IP detected: {ip} maps to multiple MACs "
+                    f"({', '.join(dups[ip])}) — IP conflict on the LAN",
                 ),
                 detail=detail,
                 code="neighbor.duplicate_ip",
-            )
-        if gw and gw_entry is not None and gw_entry.state == nm.NEIGH_FAILED:
-            return CheckResult.fail(
-                self.name,
-                tr(
-                    f"ゲートウェイ {gw} のARP解決に失敗 — L2でルーターに届いていません",
-                    f"gateway {gw} ARP resolution FAILED — cannot reach router at L2",
-                ),
-                detail=detail,
-                code="neighbor.gateway_arp_failed",
-            )
-        if gw and (gw_entry is None or not gw_entry.mac):
-            return CheckResult.warn(
-                self.name,
-                tr(
-                    f"ゲートウェイ {gw} のARPエントリがまだありません（MAC未解決）",
-                    f"gateway {gw} has no ARP entry yet (MAC unresolved)",
-                ),
-                detail=detail,
-                code="neighbor.gateway_unresolved",
             )
         resolved = [n for n in neigh if n.mac]
         summary = tr(
             f"{len(resolved)} 件、IP重複なし",
             f"{len(resolved)} neighbours, no conflicts",
         )
-        if gw_entry is not None and gw_entry.mac:
+        if gw_mac:
             summary += tr(
-                f"、ゲートウェイ {gw} = {gw_entry.mac}",
-                f"; gateway {gw} at {gw_entry.mac}",
+                f"、ゲートウェイ {gw} = {gw_mac}",
+                f"; gateway {gw} at {gw_mac}",
             )
         return CheckResult.ok(self.name, summary, detail=detail, code="neighbor.ok")
 
     def advice(self, result, results=None):
         return (
             tr(
-                "L2（ARP）の問題: IP重複、またはゲートウェイのMACが解決できません。",
-                "Layer-2 problem: an IP conflict or the gateway's MAC can't be resolved.",
+                "同じIPアドレスを複数の機器が使っています（IP重複）。",
+                "Two devices use the same IP address on one network (IP conflict).",
             ),
             [
                 tr(
