@@ -198,14 +198,23 @@ NETSH_JA_DISCONNECTED = (
 ).encode("cp932")
 
 
-def test_an_unused_wifi_adapter_does_not_warn_on_windows(monkeypatch):
-    from netdiag.core.util import decode_output
+def _windows_netsh(monkeypatch, raw):
+    """A Japanese Windows PC: run() hands the probe netsh's cp932 output decoded."""
+    text = raw.decode("cp932")
 
-    text = decode_output(NETSH_JA_DISCONNECTED)
+    def netsh(args, timeout=10):
+        if args == ["netsh", "wlan", "show", "interfaces"]:
+            return CommandResult(True, 0, text, "", True)
+        return CommandResult(False, 1, "", "", False)
+
     monkeypatch.setattr(wifi, "is_windows", lambda: True)
-    monkeypatch.setattr(
-        wifi, "run", lambda args, timeout=10: CommandResult(True, 0, text, "", True)
-    )
+    monkeypatch.setattr(wifi, "is_linux", lambda: False)
+    monkeypatch.setattr(wifi, "have", lambda cmd: False)
+    monkeypatch.setattr(wifi, "run", netsh)
+
+
+def test_an_unused_wifi_adapter_does_not_warn_on_windows(monkeypatch):
+    _windows_netsh(monkeypatch, NETSH_JA_DISCONNECTED)
     diag = run(line_pc(), ["wifi"])
     res = by_name(diag)["wifi"]
     assert (res.status, res.code) == (Status.SKIP, "wifi.not_associated")
@@ -225,7 +234,9 @@ def test_an_unused_wifi_adapter_does_not_warn_on_linux(monkeypatch):
     monkeypatch.setattr(wifi, "is_linux", lambda: True)
     monkeypatch.setattr(wifi, "have", lambda cmd: cmd == "iw")
     monkeypatch.setattr(wifi, "run", iw)
-    assert by_name(run(line_pc(), ["wifi"]))["wifi"].status == Status.SKIP
+    res = by_name(run(line_pc(), ["wifi"]))["wifi"]
+    assert (res.status, res.code) == (Status.SKIP, "wifi.not_associated")
+    assert res.summary == "wlp2s0: not associated to any AP (Wi-Fi not in use)"
 
 
 # -- clock: engine-12 ----------------------------------------------------------
@@ -756,14 +767,7 @@ def test_defaults_on_two_nics_still_warn(metrics, source):
 def test_a_healthy_laptop_with_idle_wifi_and_vm_adapters_is_healthy(world, monkeypatch):
     world.answered = {GW}
     world.table = [Neighbor(GW, GW_MAC, "reachable", "Ethernet")]
-    monkeypatch.setattr(wifi, "is_windows", lambda: True)
-    monkeypatch.setattr(
-        wifi,
-        "run",
-        lambda args, timeout=10: CommandResult(
-            True, 0, NETSH_JA_DISCONNECTED.decode("cp932"), "", True
-        ),
-    )
+    _windows_netsh(monkeypatch, NETSH_JA_DISCONNECTED)
     hn = HostNetwork(
         interfaces=[
             nic("Ethernet", "192.0.2.10"),
