@@ -1,6 +1,6 @@
 [tool.poetry]
 name = "network-check-tool"
-version = "0.5.0"
+version = "0.6.0"
 description = "netdiag: network checks for production engineers. Diagnose this PC and every PLC/HMI on the line."
 authors = ["hardwork9047 <155122235+hardwork9047@users.noreply.github.com>"]
 readme = "README.md"
