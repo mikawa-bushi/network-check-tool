@@ -238,6 +238,16 @@ class ClockProbe(Probe):
                         metrics={"ntp_synced": 1.0},
                         code="clock.ok",
                     )
+                if not ctx.get("internet", True):
+                    return CheckResult.skip(
+                        self.name,
+                        tr(
+                            "時計はNTP同期していません（NTPサーバーの無い閉じたネットワークでは通常の状態）",
+                            "clock not NTP-synchronised (normal on a closed network without an NTP server)",
+                        ),
+                        metrics={"ntp_synced": 0.0},
+                        code="clock.unsynced_closed",
+                    )
                 return CheckResult.warn(
                     self.name,
                     tr(
