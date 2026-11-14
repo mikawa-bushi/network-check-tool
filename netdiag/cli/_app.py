@@ -26,9 +26,15 @@ _HELP_PAIRS: Dict[str, Tuple[str, str]] = {}
 
 
 def H(ja: str, en: str) -> str:
-    """Help text, printed in the language that --lang (or the environment) picks."""
+    """Help text, printed in the language that --lang (or the environment) picks.
+
+    Each text has one translation: a Japanese text paired with two English
+    ones would print the other command's wording.
+    """
     for text in (ja, en):
-        _HELP_PAIRS[text] = _HELP_PAIRS[inspect.cleandoc(text)] = (ja, en)
+        for key in (text, inspect.cleandoc(text)):
+            if _HELP_PAIRS.setdefault(key, (ja, en)) != (ja, en):
+                raise ValueError(f"help text {key!r} has two translations")
     return ja if _HELP_JA else en
 
 

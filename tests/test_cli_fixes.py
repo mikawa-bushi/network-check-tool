@@ -233,6 +233,35 @@ def test_help_without_lang_follows_the_environment(run, monkeypatch):
     assert "機器台帳" in out
 
 
+@pytest.mark.parametrize(
+    "command, own, other",
+    [
+        ("ping", "Seconds to wait for each reply.", "Seconds to wait for replies."),
+        ("scan", "Seconds to wait for replies.", "Seconds to wait for each reply."),
+        ("check", "inferred from -o's extension", "inferred from -o)."),
+        ("soak", "inferred from -o's extension", "inferred from -o)."),
+    ],
+)
+def test_help_in_english_on_a_japanese_pc_is_the_commands_own(command, own, other):
+    out = subprocess.run(
+        [sys.executable, "-m", "netdiag", "--lang", "en", command, "--help"],
+        env={**os.environ, "NETDIAG_LANG": "ja"},
+        capture_output=True,
+        encoding="utf-8",
+        check=True,
+    ).stdout
+    text = " ".join(out.split())  # click wraps help at 80 columns
+    assert own in text and other not in text
+
+
+def test_one_text_cannot_have_two_translations():
+    from netdiag.cli._app import H
+
+    H("同じ日本語の説明", "One English text.")
+    with pytest.raises(ValueError):
+        H("同じ日本語の説明", "Another English text.")
+
+
 def test_usage_error_after_lang_is_in_that_language(run, monkeypatch):
     monkeypatch.setenv("NETDIAG_LANG", "en")
     code, _, err = run("--lang", "ja", "--bogus")

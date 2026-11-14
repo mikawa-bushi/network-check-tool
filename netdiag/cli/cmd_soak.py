@@ -149,7 +149,8 @@ def _ctrl_c_once() -> Iterator[List[bool]]:
     type=click.Choice(["text", "json", "html", "csv"]),
     default=None,
     help=H(
-        "出力形式（-o の拡張子からも判定）", "Output format (also inferred from -o)."
+        "出力形式（-o の拡張子からも判定）",
+        "Output format (also inferred from -o's extension).",
     ),
 )
 @click.option(

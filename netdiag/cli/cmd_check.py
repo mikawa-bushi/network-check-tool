@@ -375,7 +375,7 @@ def check(
     "--timeout",
     type=_SECONDS,
     default=1.0,
-    help=H("応答待ち[秒]", "Seconds to wait for each reply."),
+    help=H("1回の応答待ち[秒]", "Seconds to wait for each reply."),
 )
 @click.option("--json", "as_json", is_flag=True, help=H("JSONで出力", "Output JSON."))
 def ping(host, count, interval, timeout, as_json):
