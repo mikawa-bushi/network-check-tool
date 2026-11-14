@@ -110,7 +110,7 @@ def render_terminal(
     show_all: bool = True,
     unicode: Optional[bool] = None,
 ) -> str:
-    """Render a single Diagnosis (host sweep, scenario, watch escalation)."""
+    """Render a single Diagnosis (host sweep, scenario)."""
     st = Style(color=color, unicode=unicode)
     lines: List[str] = []
     hidden = 0
@@ -201,6 +201,8 @@ def _fmt_pct(v: Optional[float]) -> str:
         return "—"
     if v == int(v):
         return f"{v:.0f}%"
+    if v > 99.9:
+        return ">99.9%"
     if v >= 1:
         return f"{v:.1f}%"
     return f"{v:.2g}%"

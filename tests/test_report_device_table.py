@@ -55,6 +55,11 @@ def test_device_table_never_rounds_a_loss_to_zero():
     assert "9999/10000" in row and "0.01%" in row
 
 
+def test_device_table_never_rounds_a_partial_loss_to_100():
+    (row,) = _device_rows(_device("PLC-1", "192.0.2.10", _ping(2000, 1)))
+    assert "1/2000" in row and ">99.9%" in row and "100" not in row.split("1/2000")[1]
+
+
 def test_device_table_shows_whole_ipv6_addresses():
     (row,) = _device_rows(_device("HMI", "2001:db8:10:20::1234", _ping(10, 10, 25.9)))
     assert "2001:db8:10:20::1234" in row
