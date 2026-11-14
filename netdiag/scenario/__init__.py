@@ -1,17 +1,17 @@
-"""Declarative scenarios (YAML/JSON) for environment-specific diagnosis."""
+"""Declarative scenarios (YAML/JSON/TOML) for environment-specific diagnosis."""
 
 from .loader import (
     Scenario,
     ScenarioCheck,
+    ScenarioPass,
     load_scenario,
-    merged_config,
     parse_scenario,
 )
 
 __all__ = [
     "Scenario",
     "ScenarioCheck",
+    "ScenarioPass",
     "load_scenario",
     "parse_scenario",
-    "merged_config",
 ]

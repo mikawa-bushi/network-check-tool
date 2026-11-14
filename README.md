@@ -51,6 +51,9 @@ py -m pip install network-check-tool
 py -m netdiag
 ```
 
+> パッケージ名は `network-check-tool` です（コマンド名は `netdiag`）。PyPI の `netdiag` は
+> 無関係の別プロジェクトで、`pip install netdiag` ではこのツールは入りません。
+
 インターネットに出られない工場PCには、別のPCで部品をダウンロードして持ち込みます。
 部品はすべてOS・Pythonのバージョンを問わないファイルなので、ダウンロードするPCのOSや
 Pythonのバージョンが工場PCと違ってもかまいません。ただし、どちらのPCも Python 3.11 以上にしてください。
@@ -98,7 +101,7 @@ netdiag check -f 台帳.csv -o 点検結果.html   # 保存用レポート（.cs
 ```
 
 台帳はExcelで「CSV（コンマ区切り）」保存したファイルがそのまま使えます（Shift_JIS / UTF-8 / UTF-16 対応）。
-例: [`examples/devices.csv`](examples/devices.csv)
+例: [`examples/devices.csv`](https://github.com/mikawa-bushi/network-check-tool/blob/main/examples/devices.csv)
 
 ```csv
 名前,IPアドレス,ポート,グループ,MACアドレス,備考
@@ -181,7 +184,9 @@ zip にまとめます。IPアドレス・MAC・PC名・ユーザー名・SSID�
       4. 同じスイッチにつながる他の機器に届くか確認し、スイッチ/VLANの問題を切り分ける
 ```
 
-終了コードは `0` = 正常、`1` = 異常あり、`2` = 注意のみ。バッチやタスクスケジューラからも使えます。
+終了コードは `0` = 正常、`1` = 異常あり、`2` = 注意のみ、`3` = 測定できなかった項目あり（`?` 測定不可）、
+`4` = 指定の誤り（オプション・チェック名・入力ファイル・出力先）、`5` = 内部エラー、`130` = Ctrl-C で中断。
+バッチやタスクスケジューラからも使えます。
 英語で表示するには `--lang en`（または環境変数 `NETDIAG_LANG=en`）。
 
 ## 診断の考え方
@@ -218,13 +223,11 @@ zip にまとめます。IPアドレス・MAC・PC名・ユーザー名・SSID�
 | `netdiag soak [機器...] [-f 台帳] --duration 2h` | 長時間の連続監視。瞬断の時刻・長さ・範囲（全機器/一部/1台）とPC側のリンク断を時系列で（`--format text/json/html/csv` `-o`） |
 | `netdiag collect [--target IP]` | 不具合報告用に、OSコマンドの生出力と解釈結果をzipに収集（既定でIP・MAC等を伏せる） |
 | `netdiag explain [項目]` | チェックの一覧。項目を指定すると、その内容と同じことを手で確かめるコマンド |
-| `netdiag scenario <file>` | YAML/JSONのシナリオ（このPCの確認項目 + 機器）で点検。例: [`examples/line1.yaml`](examples/line1.yaml) |
+| `netdiag scenario <file>` | YAML/JSONのシナリオ（このPCの確認項目 + 機器）で点検。例: [`examples/line1.yaml`](https://github.com/mikawa-bushi/network-check-tool/blob/main/examples/line1.yaml) |
 | `netdiag snapshot save/diff` | 正常時のネットワーク設定を保存し、「何が変わったか」を比較 |
 | `netdiag peer serve/test` | 2台のPC間でLAN品質（ロス・ジッタ・スループット）を測定 |
-| `netdiag watch` | 常時監視し、状態が変わったときだけ通知。毎回の結果を履歴DBに記録（閉じたネットワークでは `--no-internet`） |
-| `netdiag status / history / prune / service` | 監視状態・履歴分析・履歴整理・systemdサービス化 |
 
-詳しい設計と全オプションは [docs/netdiag.md](docs/netdiag.md) を参照してください。
+詳しい設計と全オプションは [docs/netdiag.md](https://github.com/mikawa-bushi/network-check-tool/blob/main/docs/netdiag.md) を参照してください。
 
 ---
 
@@ -253,6 +256,8 @@ zip にまとめます。IPアドレス・MAC・PC名・ユーザー名・SSID�
   list on it to check the line; an HTML report opens in the browser. Precise pings use the
   Windows ICMP API (no admin rights).
 - `netdiag scan` discovers devices on a subnet (ICMP + ARP only).
+- Install with `pip install network-check-tool`. The command is `netdiag`, but the
+  `netdiag` package on PyPI is an unrelated project.
 - Offline install: run `pip download network-check-tool -d wheels` on any PC with
   internet access, then `pip install --no-index --find-links wheels network-check-tool` on the
   plant PC. Every wheel is pure Python, so the two PCs' OS and Python version need not match,
@@ -260,7 +265,8 @@ zip にまとめます。IPアドレス・MAC・PC名・ユーザー名・SSID�
 - The `network-checker` ping dashboard is removed. The last release with it is 0.5.0
   (`pip install "network-check-tool==0.5.0"`).
 
-Exit codes: `0` healthy, `1` problem found, `2` warnings only. See [docs/netdiag.md](docs/netdiag.md).
+Exit codes: `0` healthy, `1` problem found, `2` warnings only, `3` incomplete (something could not
+be measured), `4` usage error, `5` internal error, `130` interrupted. See [docs/netdiag.md](https://github.com/mikawa-bushi/network-check-tool/blob/main/docs/netdiag.md).
 
 ## 開発 / Development
 
@@ -271,11 +277,11 @@ poetry install --all-extras
 poetry run pytest
 ```
 
-貢献の手順は [CONTRIBUTING.md](CONTRIBUTING.md) を参照してください。
+貢献の手順は [CONTRIBUTING.md](https://github.com/mikawa-bushi/network-check-tool/blob/main/CONTRIBUTING.md) を参照してください。
 
 ## License
 
-MIT — see [LICENSE](LICENSE).
+MIT — see [LICENSE](https://github.com/mikawa-bushi/network-check-tool/blob/main/LICENSE).
 
 ## Support
 

@@ -48,6 +48,13 @@ _PS_PREAMBLE = (
     "[Console]::OutputEncoding=New-Object System.Text.UTF8Encoding($false);"
 )
 
+_STATS_SELECT = (
+    "@(Get-NetAdapterStatistics | Select-Object Name,ReceivedUnicastPackets,"
+    "ReceivedMulticastPackets,ReceivedBroadcastPackets,SentUnicastPackets,"
+    "SentMulticastPackets,SentBroadcastPackets,ReceivedPacketErrors,"
+    "OutboundPacketErrors,ReceivedDiscardedPackets,OutboundDiscardedPackets)"
+)
+
 COLLECT_SCRIPT = _PS_PREAMBLE + (
     "$a=@(Get-NetAdapter -IncludeHidden:$false | Select-Object Name,"
     "InterfaceDescription,ifIndex,@{n='Status';e={\"$($_.Status)\"}},MacAddress,"
@@ -58,13 +65,12 @@ COLLECT_SCRIPT = _PS_PREAMBLE + (
     "PrefixLength,InterfaceIndex,InterfaceAlias,"
     "@{n='AddressState';e={\"$($_.AddressState)\"}},"
     "@{n='PrefixOrigin';e={\"$($_.PrefixOrigin)\"}});"
-    "$r=@(Get-NetRoute -AddressFamily IPv4 | Select-Object DestinationPrefix,"
+    "$r=@(Get-NetRoute -AddressFamily IPv4 -PolicyStore ActiveStore | "
+    "Select-Object DestinationPrefix,"
     "NextHop,InterfaceIndex,InterfaceAlias,RouteMetric,InterfaceMetric);"
     "$d=@(Get-DnsClientServerAddress -AddressFamily IPv4 | Select-Object "
     "InterfaceIndex,ServerAddresses);"
-    "$s=@(Get-NetAdapterStatistics | Select-Object Name,ReceivedUnicastPackets,"
-    "SentUnicastPackets,ReceivedPacketErrors,OutboundPacketErrors,"
-    "ReceivedDiscardedPackets,OutboundDiscardedPackets);"
+    f"$s={_STATS_SELECT};"
     "$f=@(Get-NetFirewallProfile | Select-Object Name,"
     "@{n='Enabled';e={\"$($_.Enabled)\"}},"
     "@{n='DefaultInboundAction';e={\"$($_.DefaultInboundAction)\"}},"
@@ -99,6 +105,11 @@ _NEIGH_STATE_INTS = {
     5: NEIGH_REACHABLE,
     6: NEIGH_PERMANENT,
 }
+
+
+# NDIS media that carry IP without Ethernet framing, so no ARP: WireGuard and
+# Tailscale (wintun), mobile broadband, dial-up/VPN miniports.
+_NO_ARP_MEDIA = {"ip", "tunnel", "wan", "wireless wan", "cowan"}
 
 
 def _powershell() -> Optional[str]:
@@ -205,13 +216,22 @@ def _kind(adapter: Dict[str, Any]) -> str:
     return KIND_OTHER
 
 
+def _frames(row: Dict[str, Any], direction: str) -> Optional[int]:
+    counts = [
+        _int(row.get(f"{direction}{cast}Packets"))
+        for cast in ("Unicast", "Multicast", "Broadcast")
+    ]
+    known = [c for c in counts if c is not None]
+    return sum(known) if known else None
+
+
 def parse_stats_json(items: Any) -> Dict[str, LinkStats]:
     """``Get-NetAdapterStatistics`` rows keyed by adapter name."""
     out: Dict[str, LinkStats] = {}
     for s in _as_list(items):
         out[str(s.get("Name"))] = LinkStats(
-            rx_packets=_int(s.get("ReceivedUnicastPackets")),
-            tx_packets=_int(s.get("SentUnicastPackets")),
+            rx_packets=_frames(s, "Received"),
+            tx_packets=_frames(s, "Sent"),
             rx_errors=_int(s.get("ReceivedPacketErrors")),
             tx_errors=_int(s.get("OutboundPacketErrors")),
             rx_dropped=_int(s.get("ReceivedDiscardedPackets")),
@@ -239,6 +259,10 @@ def parse_collect_json(data: Dict[str, Any]) -> HostNetwork:
             or parse_link_speed(a.get("LinkSpeed")),
             mtu=_int(a.get("MtuSize")),
         )
+        iface.arp = (
+            iface.mac is not None
+            and str(a.get("MediaType") or "").lower() not in _NO_ARP_MEDIA
+        )
         if iface.up and isinstance(a.get("FullDuplex"), bool):
             iface.duplex = "full" if a["FullDuplex"] else "half"
         iface.stats = stats_by_name.get(iface.name)
@@ -250,8 +274,10 @@ def parse_collect_json(data: Dict[str, Any]) -> HostNetwork:
         idx = _int(ip.get("InterfaceIndex"))
         iface = by_index.get(idx) if idx is not None else None
         if iface is None:
+            # Not a network adapter: loopback, or a dial-up/VPN connection,
+            # which carries IP without ARP.
             alias = str(ip.get("InterfaceAlias") or f"if{idx}")
-            iface = Interface(name=alias, index=idx, up=True)
+            iface = Interface(name=alias, index=idx, up=True, arp=False)
             if alias.lower().startswith("loopback"):
                 iface.kind = KIND_LOOPBACK
             if idx is not None:
@@ -266,7 +292,9 @@ def parse_collect_json(data: Dict[str, Any]) -> HostNetwork:
         origin = {"1": "manual", "3": "dhcp"}.get(origin, origin)
         if state == "duplicate":
             flags.append("duplicate")  # Windows' own IPv4 conflict detection
-        elif state == "tentative":
+        elif state == "tentative" and iface.up:
+            # A disconnected adapter keeps its address Tentative until it gets
+            # a link; that is its normal resting state, not a pending check.
             flags.append("tentative")
         if origin == "dhcp":
             flags.append("dhcp")
@@ -285,12 +313,17 @@ def parse_collect_json(data: Dict[str, Any]) -> HostNetwork:
             continue
 
     names = {i.index: i.name for i in hn.interfaces}
+    # Windows sends nothing through an adapter without a link, so its routes
+    # and DNS servers are not in use.
+    down = {i.index for i in hn.interfaces if not i.up and i.index is not None}
+    if not _as_list(data.get("routes")):  # even an offline PC has loopback routes
+        hn.errors.append("could not read the routing table (Get-NetRoute failed)")
     for r in _as_list(data.get("routes")):
         dst = str(r.get("DestinationPrefix") or "")
-        if not dst or ":" in dst:
+        idx = _int(r.get("InterfaceIndex"))
+        if not dst or ":" in dst or idx in down:
             continue
         hop = str(r.get("NextHop") or "")
-        idx = _int(r.get("InterfaceIndex"))
         metric = _int(r.get("RouteMetric"))
         ifm = _int(r.get("InterfaceMetric"))
         if metric is not None and ifm is not None:
@@ -306,6 +339,8 @@ def parse_collect_json(data: Dict[str, Any]) -> HostNetwork:
 
     servers: List[str] = []
     for d in _as_list(data.get("dns")):
+        if _int(d.get("InterfaceIndex")) in down:
+            continue
         for s in _as_list(d.get("ServerAddresses")):
             if s and s not in servers:
                 servers.append(str(s))
@@ -349,8 +384,9 @@ _ARP_ENTRY_RE = re.compile(
 def parse_arp_a(text: str) -> List[Neighbor]:
     """``arp -a`` in any language: ``  192.168.1.1   00-11-22-33-44-55   動的``.
 
-    Only IP and MAC tokens are used; the localised type column is ignored (a
-    listed entry has a resolved MAC, which is all the ARP evidence needed).
+    Only IP and MAC tokens are used; the localised type column is ignored. An
+    invalid (無効) row shows an all-zero MAC: ARP got no answer, which callers
+    read from a missing row, so only resolved rows are kept.
     """
     out: List[Neighbor] = []
     current_if: Optional[str] = None
@@ -363,7 +399,9 @@ def parse_arp_a(text: str) -> List[Neighbor]:
         if not m:
             continue
         ip, mac = m.group(1), normalize_mac(m.group(2))
-        if mac in ("ff:ff:ff:ff:ff:ff",) or ip.startswith(("224.", "239.", "255.")):
+        if mac in ("ff:ff:ff:ff:ff:ff", "00:00:00:00:00:00") or ip.startswith(
+            ("224.", "239.", "255.")
+        ):
             continue
         out.append(Neighbor(ip=ip, mac=mac, state=NEIGH_STALE, interface=current_if))
     return out
@@ -416,7 +454,10 @@ def parse_route_print(text: str) -> HostNetwork:
                 iface.addresses.append(Address(ip=iface_ip, prefixlen=net.prefixlen))
     for ip, iface in by_ip.items():
         if not iface.addresses:
+            # Only a host route: a point-to-point link (PPP, WireGuard), no
+            # subnet to ARP on.
             iface.addresses.append(Address(ip=ip, prefixlen=32))
+            iface.arp = False
         hn.interfaces.append(iface)
     return hn
 
@@ -433,6 +474,8 @@ def collect() -> HostNetwork:
         "PowerShell network cmdlets unavailable; using 'route print' (no link "
         "speed/duplex/error counters)"
     )
+    if not hn.routes:
+        hn.errors.append("could not read the routing table ('route print' failed)")
     return hn
 
 
@@ -475,11 +518,5 @@ def neighbor(ip: str) -> Optional[Neighbor]:
 
 def link_stats() -> Dict[str, LinkStats]:
     return parse_stats_json(
-        run_powershell(
-            _PS_PREAMBLE
-            + "@(Get-NetAdapterStatistics | Select-Object Name,ReceivedUnicastPackets,"
-            "SentUnicastPackets,ReceivedPacketErrors,OutboundPacketErrors,"
-            "ReceivedDiscardedPackets,OutboundDiscardedPackets)"
-            " | ConvertTo-Json -Compress"
-        )
+        run_powershell(_PS_PREAMBLE + _STATS_SELECT + " | ConvertTo-Json -Compress")
     )

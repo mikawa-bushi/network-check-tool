@@ -1,7 +1,7 @@
 """Every text file netdiag reads or writes names its encoding.
 
 Without one, Python uses the locale's: cp1252 on an English Windows, which can't
-hold the Japanese in alerts, logs and snapshots. CI on Linux never sees that.
+hold the Japanese in logs, reports and snapshots. CI on Linux never sees that.
 """
 
 import ast

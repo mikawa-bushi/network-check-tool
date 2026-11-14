@@ -116,7 +116,7 @@ def summarize(values: Sequence[float]) -> Optional[RttSummary]:
         min=min(data),
         avg=statistics.fmean(data),
         median=statistics.median(data),
-        p95=percentile(data, 95.0) or data[0],
+        p95=percentile(data, 95.0),
         max=max(data),
         stdev=statistics.pstdev(data) if len(data) > 1 else 0.0,
         jitter=jitter(data) or 0.0,

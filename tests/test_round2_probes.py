@@ -46,9 +46,9 @@ def test_no_reply_fails():
     assert "rtt_ms" not in r.metrics
 
 
-def test_measurement_error_is_skip_not_fail():
+def test_measurement_error_is_unknown_not_fail():
     r = result_from_ping("external", "h", _stats(0, error="ping command not available"))
-    assert r.status is Status.SKIP
+    assert r.status is Status.UNKNOWN
 
 
 def test_slow_wan_reply_warns():
@@ -98,7 +98,7 @@ def test_dualstack_v4_ok_v6_down_warns(monkeypatch):
     assert res.detail["ipv4_ok"] is True and res.detail["ipv6_ok"] is False
 
 
-def test_dualstack_check_propagates_count(monkeypatch):
+def test_dualstack_sends_two_pings_whatever_the_count(monkeypatch):
     monkeypatch.setattr(dualstack, "_has_family", lambda host, fam: True)
     seen = []
 
@@ -108,7 +108,7 @@ def test_dualstack_check_propagates_count(monkeypatch):
 
     monkeypatch.setattr(dualstack, "_family_ok", fake_pf)
     dualstack.DualStackProbe().check(Context({"dns_name": "h", "count": 5}))
-    assert seen == [5, 5]
+    assert seen == [2, 2]
 
 
 def test_ipv4_only_network_is_not_a_failure(monkeypatch):

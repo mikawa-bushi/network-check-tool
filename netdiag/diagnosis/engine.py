@@ -1,9 +1,12 @@
 """Diagnosis engine: turn a set of facts into a ranked set of causes.
 
 The engine evaluates probes in dependency order (a topological sort of the
-``depends_on`` graph). The key idea: **a probe is only run after its dependencies
-succeed**. If a dependency failed, the dependent is marked SKIP with reason
-"upstream <dep> failed" — so its failure never competes with the real cause.
+``depends_on`` graph). The key idea: **a probe is only run when nothing on the
+path to its targets failed** (see :meth:`~netdiag.core.Probe.path_dependencies`).
+If something did, the dependent is marked SKIP with reason "upstream <root>
+failed", naming the failed check, so its failure never competes with the real
+cause. A dependency that is not on the path, such as DNS for an IP address,
+never hides a check.
 
 Root-cause selection then reduces to: among probes that actually FAILED while all
 their dependencies were OK, the lowest one in the graph is the prime suspect.
@@ -12,11 +15,20 @@ Everything above it is a *consequence*, folded out of the headline.
 
 from __future__ import annotations
 
+import difflib
 from concurrent.futures import ThreadPoolExecutor
 from dataclasses import dataclass, field
 from typing import Callable, Dict, List, Optional, Tuple, Type
 
-from ..core import CheckResult, Context, Probe, Status, all_probes, get_probe
+from ..core import (
+    CheckResult,
+    Context,
+    InputError,
+    Probe,
+    Status,
+    all_probes,
+    get_probe,
+)
 from ..i18n import tr
 
 # Upper bound on probe concurrency. Active probes (gateway/external/dualstack)
@@ -45,10 +57,26 @@ class Hypothesis:
 
 @dataclass
 class Diagnosis:
+    """The outcome of one run: every result, the ranked causes, the verdict.
+
+    ``healthy`` means no failure and no suspected cause was found. It says
+    nothing about whether everything was measured; ``status`` is the verdict.
+    """
+
     results: List[CheckResult]
     hypotheses: List[Hypothesis]
     healthy: bool
     reasoning: List[str] = field(default_factory=list)  # step-by-step (verbose mode)
+
+    @property
+    def status(self) -> Status:
+        """FAIL > UNKNOWN > WARN > OK; UNKNOWN when no check produced a verdict."""
+        if any(h.is_fault for h in self.hypotheses):
+            return Status.FAIL
+        found = [r.status for r in self.results]
+        if self.hypotheses:
+            found.append(Status.WARN)
+        return Status.worst(found)
 
     @property
     def primary(self) -> Optional[Hypothesis]:
@@ -56,6 +84,29 @@ class Diagnosis:
 
     def results_by_name(self) -> Dict[str, CheckResult]:
         return {r.name: r for r in self.results}
+
+
+def _failed_upstream(deps: List[str], results: Dict[str, CheckResult]) -> List[str]:
+    """The failed checks behind *deps*: each FAIL, or what blocked a dependency."""
+    failed: Dict[str, None] = {}
+    for d in deps:
+        r = results.get(d)
+        if r is None:
+            continue
+        if r.status == Status.FAIL:
+            failed[d] = None
+        elif r.code == f"{d}.not_evaluated":
+            failed.update(dict.fromkeys(r.detail.get("blocked_by", [d])))
+    return list(failed)
+
+
+def _with_suggestion(name: str, valid: List[str]) -> str:
+    close = difflib.get_close_matches(name, valid, n=1)
+    if not close:
+        return name
+    return tr(
+        f"{name}（{close[0]} のことですか？）", f"{name} (did you mean {close[0]}?)"
+    )
 
 
 def _topo_order(names: List[str]) -> List[str]:
@@ -141,8 +192,12 @@ class Engine:
         network should reach the internet (``internet``, default True for library
         use), none of the internet-only probes. Target-scoped probes need a
         device and only run when named explicitly (see :mod:`netdiag.runner`).
+
+        Raises :class:`InputError` for a name that is not a check, or for a
+        device check when the config has no device (``target``).
         """
         probes = all_probes()
+        self._reject_unusable_names(probes, list(only or []) + list(skip or []))
         if only:
             wanted = set(only)
             names = [n for n in probes if n in wanted]
@@ -158,6 +213,40 @@ class Engine:
         if skip:
             names = [n for n in names if n not in set(skip)]
         return names
+
+    def _reject_unusable_names(
+        self, probes: Dict[str, Type[Probe]], names: List[str]
+    ) -> None:
+        has_target = bool(self.config.get("target"))
+        usable = [
+            n
+            for n, cls in probes.items()
+            if has_target or getattr(cls, "scope", "host") == "host"
+        ]
+        unknown = [n for n in dict.fromkeys(names) if n not in probes]
+        device = [n for n in dict.fromkeys(names) if n in probes and n not in usable]
+        problems: List[str] = []
+        if unknown:
+            problems.append(
+                tr("不明なチェック名: ", "unknown check name: ")
+                + ", ".join(_with_suggestion(n, usable) for n in unknown)
+                + tr(
+                    f"。使えるチェック名: {', '.join(sorted(usable))}",
+                    f". Valid names: {', '.join(sorted(usable))}",
+                )
+            )
+        if device:
+            names_text = ", ".join(device)
+            problems.append(
+                tr(
+                    f"{names_text} は機器ごとのチェックです。"
+                    "機器を指定すると機器ごとに自動で実行されます",
+                    f"{names_text}: device checks, which run automatically "
+                    "for every device you check",
+                )
+            )
+        if problems:
+            raise InputError(tr("。", ". ").join(problems) + tr("。", "."))
 
     def _evaluate_probe(
         self, name: str, ctx: Context
@@ -177,32 +266,26 @@ class Engine:
             return None, None
         probe = cls()
 
-        # A dependency that FAILED, or that was itself skipped because *its*
-        # dependency failed, gates this probe: either way any failure here would
-        # be a symptom of the same root cause (transitively down the chain).
-        failed_deps = [
-            d
-            for d in probe.depends_on
-            if d in ctx.results
-            and (
-                ctx.results[d].status == Status.FAIL
-                or ctx.results[d].code == f"{d}.not_evaluated"
-            )
-        ]
-        if failed_deps:
+        # Only a failure on the path to this run's targets gates the probe: a
+        # dependency that FAILED, or one that was not evaluated because a check
+        # on *its* path failed. Any failure here would be a symptom of it.
+        deps = probe.path_dependencies(ctx)
+        failed = _failed_upstream(deps, ctx.results)
+        if failed:
             res = CheckResult.skip(
                 name,
                 tr(
-                    f"未評価: 前提の {', '.join(failed_deps)} が失敗",
-                    f"not evaluated: upstream {', '.join(failed_deps)} failed",
+                    f"未評価: 前提の {', '.join(failed)} が失敗",
+                    f"not evaluated: upstream {', '.join(failed)} failed",
                 ),
-                depends_on=list(probe.depends_on),
+                depends_on=deps,
+                detail={"blocked_by": failed},
                 code=f"{name}.not_evaluated",
             )
             res.title = str(cls.title or name)
             res.layer = cls.layer
             reason = (
-                f"skip {name}: its dependency {failed_deps[0]} already failed, "
+                f"skip {name}: {failed[0]} already failed on its path, "
                 f"so any failure here would be a symptom."
                 if self.verbose
                 else None

@@ -21,9 +21,10 @@ from .text import device_cells
 
 _CSS = """
 :root { --fg:#1b1f24; --muted:#5d6670; --bg:#ffffff; --card:#f6f7f9; --line:#d9dde3;
-  --ok:#1a7f37; --warn:#9a6700; --fail:#cf222e; --skip:#6e7781; }
+  --ok:#1a7f37; --warn:#9a6700; --fail:#cf222e; --unknown:#8250df; --skip:#6e7781; }
 @media (prefers-color-scheme: dark) { :root { --fg:#e6edf3; --muted:#9aa4af; --bg:#0d1117;
-  --card:#161b22; --line:#30363d; --ok:#3fb950; --warn:#d29922; --fail:#f85149; --skip:#8b949e; } }
+  --card:#161b22; --line:#30363d; --ok:#3fb950; --warn:#d29922; --fail:#f85149;
+  --unknown:#a371f7; --skip:#8b949e; } }
 * { box-sizing: border-box; }
 body { font-family: system-ui, -apple-system, "Segoe UI", "Hiragino Sans", "Yu Gothic UI",
   Meiryo, sans-serif; margin: 2rem auto; max-width: 1100px; padding: 0 1rem;
@@ -33,7 +34,7 @@ h1 { font-size: 1.35rem; margin: 0 0 .25rem; } h2 { font-size: 1.1rem; margin: 1
 .verdict { padding: .8rem 1rem; border-radius: 8px; border-left: 6px solid var(--skip);
   background: var(--card); font-weight: 600; margin: 1rem 0; }
 .verdict.ok { border-color: var(--ok); } .verdict.warn { border-color: var(--warn); }
-.verdict.fail { border-color: var(--fail); }
+.verdict.fail { border-color: var(--fail); } .verdict.unknown { border-color: var(--unknown); }
 table { border-collapse: collapse; width: 100%; font-size: .88rem; }
 th, td { padding: .35rem .5rem; border-bottom: 1px solid var(--line); text-align: left;
   vertical-align: top; }
@@ -41,7 +42,8 @@ th { color: var(--muted); font-weight: 600; white-space: nowrap; }
 td.num { font-variant-numeric: tabular-nums; white-space: nowrap; }
 .st { font-weight: 700; white-space: nowrap; }
 .ok .st, .st.ok { color: var(--ok); } .warn .st, .st.warn { color: var(--warn); }
-.fail .st, .st.fail { color: var(--fail); } .skip .st, .st.skip, tr.skip td { color: var(--skip); }
+.fail .st, .st.fail { color: var(--fail); } .unknown .st, .st.unknown { color: var(--unknown); }
+.skip .st, .st.skip, tr.skip td { color: var(--skip); }
 .hyp { border-left: 4px solid var(--fail); background: var(--card); padding: .6rem 1rem;
   margin: .8rem 0; border-radius: 0 6px 6px 0; }
 .hyp.low { border-color: var(--warn); }
@@ -119,14 +121,17 @@ def _hypothesis_html(subject: str, h, index: int) -> str:
 
 def render_html(diag: Diagnosis) -> str:
     """A single Diagnosis (host sweep / scenario) as a standalone page."""
-    if diag.healthy:
-        verdict, cls = tr("異常は見つかりませんでした", "All checks passed"), "ok"
-    else:
+    status = diag.status
+    if status == Status.OK:
+        verdict = tr("異常は見つかりませんでした", "All checks passed")
+    elif diag.hypotheses:
         verdict = tr(
             f"推定原因 {len(diag.hypotheses)} 件",
             f"{len(diag.hypotheses)} suspected cause(s)",
         )
-        cls = "fail" if any(h.is_fault for h in diag.hypotheses) else "warn"
+    else:
+        verdict = status_word(status)
+    cls = status.value
     hyps = "".join(_hypothesis_html("", h, i) for i, h in enumerate(diag.hypotheses, 1))
     body = (
         f"<h1>netdiag {tr('診断レポート', 'report')} — {_esc(verdict)}</h1>"
@@ -143,16 +148,20 @@ def render_check_html(report, show_all: bool = True) -> str:
     took = max(0.0, report.finished_at - report.started_at)
     bad = sum(1 for d in report.devices if d.status == Status.FAIL)
     warn = sum(1 for d in report.devices if d.status == Status.WARN)
+    unknown = sum(1 for d in report.devices if d.status == Status.UNKNOWN)
     if status == Status.OK:
         verdict = tr("異常は見つかりませんでした", "No problems found")
     else:
         verdict = status_word(status)
         if report.devices:
             verdict += tr(
-                f" — 機器 {len(report.devices)}台中 異常 {bad}台・注意 {warn}台",
-                f" — {bad} failing, {warn} warning of {len(report.devices)} devices",
+                f" — 機器 {len(report.devices)}台中 異常 {bad}台・注意 {warn}台"
+                + (f"・測定不可 {unknown}台" if unknown else ""),
+                f" — {bad} failing, {warn} warning"
+                + (f", {unknown} not measured" if unknown else "")
+                + f" of {len(report.devices)} devices",
             )
-        if report.host_status in (Status.FAIL, Status.WARN):
+        if report.host_status in (Status.FAIL, Status.WARN, Status.UNKNOWN):
             verdict += tr("（このPCにも指摘あり）", " (and findings on this PC)")
     meta = (
         f"PC: {_esc(report.hostname)} · {_esc(report.platform)} · {when} · "
@@ -217,8 +226,9 @@ def render_check_html(report, show_all: bool = True) -> str:
         parts.append(f"<h2>{tr('診断と次の確認', 'Diagnosis and next steps')}</h2>")
         parts.extend(hyps)
 
-    parts.append(f"<h2>{tr('このPCのネットワーク', 'This PC')}</h2>")
-    parts.append(_results_table(report.host.results, show_all=show_all))
+    if report.host_checked:
+        parts.append(f"<h2>{tr('このPCのネットワーク', 'This PC')}</h2>")
+        parts.append(_results_table(report.host.results, show_all=show_all))
     parts.append(
         f"<p class='foot'>{tr('測定条件', 'Settings')}: {_esc(settings)} — "
         + tr(

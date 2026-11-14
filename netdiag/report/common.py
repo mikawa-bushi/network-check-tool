@@ -2,9 +2,11 @@
 
 from __future__ import annotations
 
+import codecs
+import os
 import sys
 import unicodedata
-from typing import Optional
+from typing import Optional, Tuple
 
 from ..core import CheckResult, Status
 from ..i18n import tr
@@ -13,6 +15,7 @@ _COLORS = {
     Status.OK: "\033[32m",
     Status.WARN: "\033[33m",
     Status.FAIL: "\033[31m",
+    Status.UNKNOWN: "\033[35m",
     Status.SKIP: "\033[90m",
 }
 RESET = "\033[0m"
@@ -23,6 +26,7 @@ _ASCII_SYMBOLS = {
     Status.OK: "OK",
     Status.WARN: "!!",
     Status.FAIL: "NG",
+    Status.UNKNOWN: "??",
     Status.SKIP: "--",
 }
 
@@ -89,11 +93,71 @@ class Style:
         return "■" if self.unicode else "#"
 
 
+# A console on an East Asian code page (cp932 on Japanese Windows) draws every
+# double-byte character two cells wide, including the "ambiguous" ones such as
+# "—", "≤", "…" and the stand-ins "―" and "≦" that replace them there.
+_EAST_ASIAN_CODECS = frozenset(
+    {
+        "cp932",
+        "shift_jis",
+        "shift_jis_2004",
+        "shift_jisx0213",
+        "euc_jp",
+        "euc_jis_2004",
+        "euc_jisx0213",
+        "iso2022_jp",
+        "gbk",
+        "gb2312",
+        "gb18030",
+        "cp949",
+        "euc_kr",
+        "johab",
+        "cp950",
+        "big5",
+        "big5hkscs",
+    }
+)
+
+
+_WINDOWS = os.name == "nt"
+
+
+def _drawn_with() -> str:
+    """The encoding the terminal on stdout draws with.
+
+    Python reports utf-8 for an interactive Windows console, which still draws
+    with its output code page (932 on Japanese Windows).
+    """
+    if _WINDOWS:
+        try:
+            if sys.stdout.isatty():
+                import ctypes
+
+                code_page = ctypes.windll.kernel32.GetConsoleOutputCP()
+                if code_page:
+                    return f"cp{code_page}"
+        except (AttributeError, OSError, ValueError):
+            pass
+    return getattr(sys.stdout, "encoding", None) or "utf-8"
+
+
+def _wide_classes() -> Tuple[str, ...]:
+    """East Asian width classes that take two cells on this process's stdout."""
+    try:
+        encoding = codecs.lookup(_drawn_with())
+    except LookupError:
+        return ("W", "F")
+    return ("W", "F", "A") if encoding.name in _EAST_ASIAN_CODECS else ("W", "F")
+
+
+def _cells(ch: str, wide: Tuple[str, ...]) -> int:
+    return 2 if unicodedata.east_asian_width(ch) in wide else 1
+
+
 def width(text: str) -> int:
-    """Display width (CJK full-width characters count as 2 columns)."""
-    return sum(
-        2 if unicodedata.east_asian_width(ch) in ("W", "F") else 1 for ch in text
-    )
+    """Display width in terminal cells (CJK full-width characters take 2)."""
+    wide = _wide_classes()
+    return sum(_cells(ch, wide) for ch in text)
 
 
 def pad(text: str, cols: int) -> str:
@@ -103,10 +167,12 @@ def pad(text: str, cols: int) -> str:
 def truncate(text: str, cols: int) -> str:
     if width(text) <= cols:
         return text
+    wide = _wide_classes()
+    room = cols - _cells("…", wide)
     out, w = "", 0
     for ch in text:
-        cw = 2 if unicodedata.east_asian_width(ch) in ("W", "F") else 1
-        if w + cw > cols - 1:
+        cw = _cells(ch, wide)
+        if w + cw > room:
             break
         out += ch
         w += cw
@@ -118,6 +184,7 @@ def status_word(status: Status) -> str:
         Status.OK: tr("正常", "OK"),
         Status.WARN: tr("注意", "Warning"),
         Status.FAIL: tr("異常", "Problem"),
+        Status.UNKNOWN: tr("測定不可", "Not measured"),
         Status.SKIP: tr("未評価", "Not checked"),
     }[status]
 

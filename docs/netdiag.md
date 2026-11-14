@@ -97,12 +97,9 @@ from before proves nothing — the device may have died seconds ago.
 | `netdiag soak [TARGET...] [-f FILE] [--duration 2h]` | Hours-long continuous measurement: outage timeline, correlation across devices, this PC's link drops/NIC errors |
 | `netdiag collect [--target IP] [--no-mask] [--no-ping]` | Zip the raw output of the OS commands netdiag parses (masked) for bug reports |
 | `netdiag explain [PROBE]` | With no `PROBE`, every check with its layer; with one, what it does, the manual commands, and the next steps |
-| `netdiag scenario FILE` | A YAML/JSON scenario: `checks` (host probes), `devices` (device list), `config` |
-| `netdiag snapshot save/list/diff [NAME]` | Save the network configuration while it works; diff later ("what changed?") |
-| `netdiag peer serve` / `peer test ADDR` | Two-host LAN quality (loss/jitter/throughput) for closed networks |
-| `netdiag watch` | Always-on: light loop, alerts only on state change (`--no-internet` on closed networks), webhook/Slack/desktop sinks; records every sweep to the history DB (`--no-save` to skip) |
-| `netdiag status` / `history` / `prune` | Watcher state, baseline & change-point analysis, retention |
-| `netdiag service print/install` | systemd unit for `watch` |
+| `netdiag scenario FILE` | A YAML/JSON/TOML scenario: `checks` (host probes), `devices` (device list), `config`; runs and exits like `check` |
+| `netdiag snapshot save/list/diff [NAME]` | Save the network configuration while it works; diff later ("what changed?"). Windows, macOS and Linux |
+| `netdiag peer serve` / `peer test ADDR` | Two-host LAN quality (loss/jitter/throughput) for closed networks; the `test` end must be 0.6.0 or later |
 
 Global options: `--lang ja|en` (default: `NETDIAG_LANG`, then the locale, else
 Japanese), `-v/--verbose`, `--log-file`. `python -m netdiag` works where the
@@ -123,10 +120,21 @@ Japanese), `-v/--verbose`, `--log-file`. `python -m netdiag` works where the
 - `--format text|json|html|csv` and `-o/--output FILE` (format inferred from
   the extension; CSV is written with a BOM for Excel).
 - `--all` shows not-applicable checks; `--reasoning` shows the engine's steps;
-  `--save` records metrics (per device, keyed by address) for `history`;
   `--no-host` checks devices only; `--jobs N` parallelises the host sweep.
 
-Exit codes: **0** healthy, **1** a failure was found, **2** warnings only.
+Exit codes. 3, 4, 5 and 130 mean the same for every command. `ping` follows
+the table (2: some replies lost). `snapshot diff` uses 2 for "changed", `soak`
+defines its own 1 and 2, and `peer test` its own 1; their sections say how:
+
+| code | meaning |
+| --- | --- |
+| 0 | healthy |
+| 1 | a problem was found |
+| 2 | warnings only, and everything wanted was measured |
+| 3 | incomplete: no problem found, but something wanted could not be measured (shown as `?`) |
+| 4 | usage error: a bad option, an unknown check name, an unreadable or invalid input file, an output path that cannot be used |
+| 5 | internal error: one sentence, then the traceback on stderr |
+| 130 | interrupted with Ctrl-C before a verdict existed |
 
 ### Machine-readable output
 
@@ -142,24 +150,53 @@ localised `summary`.
 (default every 0.2 s, 1 s timeout, ≤200 pps overall) and keeps per-device state
 with bounded memory, so it can run for a shift:
 
-- **Outages**: two or more consecutive losses (`--min-lost`) after a device has
-  replied once, with start time and length. Isolated single losses are counted
-  as sporadic loss instead.
-- **Correlation**: outages that overlap across devices are grouped into
-  incidents — *all* devices (≥80 % of those alive) → this PC's side (cable,
-  NIC, the switch next to the PC); *some* → a shared switch / cable run (the
-  groups of the device list are named); *single* → that device or its cable.
+- **Outages**: two or more consecutive losses (`--min-lost`), with start time
+  and length. A device that is down when the soak starts gets an outage from
+  its first request to its first reply; one that never replies is reported as
+  unreachable. Isolated single losses are counted as sporadic loss instead.
+- **Correlation**: outages that *start* together (within two ping intervals,
+  at least 1 s) are grouped into incidents. A long outage on one device does not
+  pull in drops elsewhere that merely happen while it lasts, and devices are
+  told apart by address, not by display name. The scope is judged against the
+  devices still answering at that moment: *all* (≥80 % of them) → this PC's
+  side (cable, NIC, the switch next to the PC); *some* → a shared switch /
+  cable run (the groups of the device list are named); *single* → that device
+  or its cable. With no other device answering (a one-device soak, or the
+  others down) the incident is *location unknown*
+  (`soak.outage_unlocated`): add a reference device on the same switch.
+- **Not measured**: a device that could not be pinged at all
+  (`soak.not_measured`), a stretch of more than 5 s (more with a long
+  `--interval` or `--timeout`) in which a device got no
+  request (the PC slept, netdiag was frozen or paused; `soak.unmeasured_time`)
+  and a measurement that stopped before the planned end, with the reason
+  (`soak.stopped_early`), make the result *not measured* (exit 3) unless an
+  outage already gives 1. The heatmap draws such time grey.
 - **This PC**: NIC error counters that grew, and on Linux link drops
   (`carrier_changes`), are put on the same timeline (per `--bucket`). On
   Windows/macOS a drop of the PC's own link shows up as an *all devices*
   incident, which already points at this PC's side.
-- **Live**: outage start/end lines on stderr as they happen; per-minute
-  summaries (`--bucket`). Ctrl-C stops and still writes the report.
-- **Output**: text, JSON (`kind: "soak"`), CSV (one row per device and minute,
+- **Time**: the run is timed on a steady clock that keeps counting while the
+  PC sleeps, so a clock change (NTP, w32time) neither ends nor stretches it.
+  Windows' steady clock may stop during sleep, so there a forward clock step
+  of more than 30 s is counted as sleep: time not measured. Times shown
+  follow the PC clock at the start; the report notes a clock change. A run
+  over midnight shows dates.
+- **Live**: outage start/end lines on stderr as they happen; one line per
+  completed cell (`--bucket`), labelled with the cell's start. Ctrl-C stops,
+  says so, and still writes the report; a second Ctrl-C does not lose it.
+- **Output**: text, JSON (`kind: "soak"`), CSV (one row per device and cell,
   written progressively with `-o x.csv` so a crash keeps the data) and a
-  self-contained HTML heatmap (device × time).
+  self-contained HTML heatmap (device × time). If the CSV cannot be appended
+  to (open in Excel), the soak warns and keeps measuring. If the report
+  cannot be saved at the end, it is saved next to it under a timestamped name
+  (or printed) and the exit code is 4. `-o` naming a device list being read,
+  or a path that cannot be written, is refused before measuring starts.
 
-Exit codes as for `check`: 0 clean, 1 outages, 2 sporadic loss only.
+Exit codes: 0 clean, 1 outages, 2 sporadic loss only, 3 a device or a time
+window was not measured; 4 a usage error (including an `--interval`,
+`--timeout` or `--bucket` that is not a positive number) or a report that
+could not be saved where asked; 5 as for `check`. A soak stopped with Ctrl-C
+still reports and exits with its verdict.
 
 ## Field data (`netdiag collect`)
 
@@ -171,10 +208,20 @@ stores the **raw bytes** (no decoding, so cp932 output stays inspectable) next
 to netdiag's own interpretation (`netinfo.json`, `check.json`, `ping.json`).
 
 Masking is on by default and preserves structure: IPv4 addresses are mapped
-per /24 (subnet relationships and the last octet survive; netmasks, loopback,
-link-local and public resolvers are kept), MACs keep the vendor (OUI) half,
-IPv6 keeps the prefix type, and host names, user names, SSIDs and internal
-domains are replaced. `--no-mask` keeps everything (internal use only).
+so that /16 and /24 relationships and the last octet survive (each /16 gets
+its own /16 in the private ranges, from `10.100.x.x` on, and `.0` and `.255`
+stay; netmasks, loopback, link-local and public resolvers are kept). Coarser
+prefixes such as a `/8` route are not kept. MACs keep the vendor (OUI) half,
+in every form: `aa-bb-…`, `aa:bb:…`, the space-separated list in
+`route print`, the MAC inside a DHCPv6 DUID or an interface name (`enx…`,
+`wlx…`), and a MAC written without separators once it appears in any other
+form. The same adapter gets the same masked MAC in every file.
+IPv6 keeps the prefix type. Host names, user names, SSIDs (netsh SSID and
+Profile lines, `iw`, the Wi-Fi check's results) and internal domains (DNS
+suffixes and search domains from `ipconfig`, `resolv.conf` and `scutil`, plus
+any name with three or more labels) are replaced in every file of the zip.
+`--no-mask` keeps everything (internal use only). An output path that cannot
+be written exits 4.
 
 ## Ping back-ends
 
@@ -214,21 +261,84 @@ devices:
 ```
 
 Recognised columns/keys: name, host, ports, group, note, mac, rtt_warn_ms,
-loss_warn_pct, interval (Japanese aliases such as 名前・IPアドレス・ポート・
-ライン・備考・MACアドレス・遅延上限・ロス上限・監視間隔 are accepted). A
-`[[host]]` / `hosts` list whose entries give only `name` loads too, and each
-name is used as the host.
+loss_warn_pct (Japanese aliases such as 名前・IPアドレス・ポート・使用ポート・
+ライン・備考・MACアドレス・遅延上限・ロス上限 are accepted, in full-width
+letters too). Without such a host column, a column named for the device's
+IP, such as 機器IP, PLC IP or IPアドレス(PLC), is the host when it is the
+only one; a gateway, subnet mask or DNS column never is. A `[[host]]` /
+`hosts` list whose entries give only `name` loads too, and each name is used
+as the host. In YAML/TOML, a device's own keys win over `defaults`, whichever
+alias either uses.
 
-## Always-on watching (`netdiag watch`)
+How a CSV list is read:
 
-- **Tier 1 — every tick, cheap:** `interface, gateway, external, dns` (or
-  `interface, gateway, neighbor` with `--no-internet`).
-- **Tier 2 — on confirmed degradation, once:** the full sweep runs a single time
-  and its root cause is attached to the alert.
-- **Flap damping:** `--fail-threshold` / `--recover-threshold` consecutive ticks.
-- Alerts: `~/.netdiag/alerts.jsonl` (+ `.log`), optional `--webhook-url`,
-  `--slack-url`, `--desktop`; state in `~/.netdiag/state.json`.
-- History is downsampled hourly after 7 days and kept 90 days (`prune`).
+- The header is the first row that names a host column, so a title row or
+  blank rows above it are fine. Without a header, the cell that holds an IPv4
+  address is the host, the first cell after it that reads as ports holds the
+  ports, and a number before the address is a row number.
+- A row whose first cell is `#` followed by a space, or a commented-out row
+  such as `#192.168.3.38,...`, is a comment. A name such as `#1プレス` is a
+  device, and a header row whose first column is a `#` row number is the
+  header.
+- A zero-padded address such as `192.168.001.010` is read as decimal
+  (`192.168.1.10`), and the report shows that form. A cell of digits and dots
+  that is not a valid IPv4 address is an error.
+- MAC addresses may use colons, hyphens, Cisco dots (`0026.92aa.bbcc`) or no
+  separator; the report shows `00:26:92:aa:bb:cc`.
+- TCP ports come only from a ports column (ポート, ポート番号, 使用ポート,
+  TCPポート, port, ports, Port No. ...). Another column with "port" in its
+  header, such as スイッチポート, HUBポート or "switch port", is not read, and
+  netdiag says so in one line on stderr.
+- Anything netdiag cannot read is an error that names the file and line, and
+  `check` exits 4: an unknown port or protocol name, a MAC it cannot read, or a
+  row without an address. An Excel workbook (`.xlsx`) must be saved as CSV
+  first.
+
+A scenario file is `.yaml`/`.yml` (needs PyYAML), `.json` or `.toml`, in
+UTF-8, Shift_JIS or UTF-16 (what Notepad and Excel save). Top-level keys are
+`name`, `description`, `checks`, `devices`, `defaults` and `config`; `checks`
+is a list of check names or of mappings with `probe` and the check's own
+settings (`target`, `resolver`, `url`, …) and an optional `label`, shown as
+the check's title. A check may appear more than once with different
+settings; each one runs. Targets in `config.tcp_targets` go to a `tcp`
+check that has no `target`; when every `tcp` check has one, they join the
+first, and no target is checked twice. In YAML, `0012` stays the text
+`0012`. A file netdiag cannot use (a syntax error, an unknown key or check
+name, `checks` that is not a list, a bad device) exits 4 with the file name
+and the problem. `--all` shows not-applicable checks, and the exit codes are
+those of `check`.
+
+## Snapshots and peer tests
+
+`netdiag snapshot save NAME` records this PC's adapters (state, speed,
+duplex, MTU, MAC), IPv4 addresses and IPv6 prefixes, routes, DNS servers
+(the real upstream servers under systemd-resolved), ARP entries, the hosts
+file and, on Windows, the firewall profiles; on Linux also IPv6 routes, a few
+network sysctls and the listening TCP addresses. `snapshot diff NAME` compares
+them as sets of stable lines: counters, lease times, ARP states, IPv6 privacy
+addresses, Wi-Fi rates and line order never count as a change, and an ARP
+entry counts only when the same address answers with another MAC. Exit codes:
+0 no change, 2 changed, 3 nothing changed but a part could not be compared
+(read on one side only), 4 no such snapshot, a damaged one, one saved before
+0.6.0, a bad name, or an unsupported OS. `snapshot save` exits 3 and saves
+nothing when it could not read this PC's configuration.
+
+`netdiag peer serve` answers only netdiag's own 16-byte requests. It never
+answers a reply, a privileged source port or its own port, so two responders
+cannot loop. Each reply is a fixed-format 16 bytes, no larger than the
+request: a marker and a digest of the request, none of the request's own
+bytes. It sends at most 200 replies in any second. A request with a forged
+source address still gets its reply sent to that address, so run
+`peer serve` only while you test. It listens on every adapter so that the
+other PC can reach it; `--host` limits it to one address. It refuses to start
+(exit 4) when it cannot listen. `netdiag peer test ADDR` matches each reply to
+its request, so late or duplicated replies do not count as loss. With no reply
+at all it says whether nothing listens there or nothing answered, and exits 3
+instead of reporting 100 % loss; a throughput test that cannot connect also
+exits 3. Otherwise it exits 0 for a loss below 5 % and 1 for 5 % or more, or
+when there is no route to the address. A 0.6.0 `peer test` also works against a 0.5 `peer serve`; a 0.5
+`peer test` gets no reply from a 0.6.0 `peer serve`, so upgrade the `test`
+end too.
 
 ## Extending with plugins
 
@@ -254,7 +364,7 @@ netdiag/
 ├── measure/       icmp.py (socket / Windows API / system ping, streaming), winicmp.py, tcp.py, dns.py, stats.py
 ├── probes/        interface, link, ipconfig, gateway, neighbor, icmp/external, dns, dualstack,
 │                  tcp, firewall, http, tls, system/clock, wifi, traceroute, device (route/reach/ports)
-├── diagnosis/     engine (dep-graph, transitive gating), rules (advice), baseline, changepoint
+├── diagnosis/     engine (dep-graph, transitive gating), rules (advice)
 ├── runner.py      run_check(), live NIC-error / link-flap probe
 ├── soak.py        long-run recorder: outages, incidents, NIC events (report/soak.py renders it)
 ├── collect.py     raw command capture + structure-preserving masking
@@ -264,6 +374,6 @@ netdiag/
 ├── oui.py         MAC vendor lookup from an OUI database already on the system
 ├── report/        text / JSON / HTML / CSV
 ├── i18n.py        ja / en
-├── cli/           click commands (check, scan, ping, soak, collect, explain, scenario, snapshot, peer, watch …)
-├── snapshot/ peer/ scenario/ alerting.py watch.py storage.py scheduler.py plugins.py
+├── cli/           click commands (check, scan, ping, soak, collect, explain, scenario, snapshot, peer)
+├── snapshot/ peer/ scenario/ plugins.py
 ```

@@ -4,6 +4,7 @@ import pytest
 
 from netdiag import launcher
 from netdiag import runner as runner_mod
+from netdiag.core import CheckResult
 from netdiag.diagnosis import Diagnosis
 from netdiag.runner import CheckReport
 
@@ -17,7 +18,8 @@ def fake(monkeypatch, tmp_path):
     def run_check(devices, config=None, progress=None, **kw):
         calls["devices"] = devices
         calls["config"] = config
-        return CheckReport(host=Diagnosis(results=[], hypotheses=[], healthy=True))
+        ok = CheckResult.ok("interface", "eth0 up", code="interface.ok")
+        return CheckReport(host=Diagnosis(results=[ok], hypotheses=[], healthy=True))
 
     monkeypatch.setattr(runner_mod, "run_check", run_check)
     monkeypatch.setattr(launcher, "_folder_of_exe", lambda: tmp_path)
@@ -58,7 +60,7 @@ def test_unreadable_list_explains_and_waits(fake, tmp_path, capsys):
     bad.write_text("foo,bar\r\n1,2\r\n", encoding="utf-8")
     with pytest.raises(SystemExit) as e:
         launcher.main([str(bad)])
-    assert e.value.code == 2 and fake["paused"] == 1 and fake["devices"] is None
+    assert e.value.code == 4 and fake["paused"] == 1 and fake["devices"] is None
     assert "台帳を読めませんでした" in capsys.readouterr().out
 
 

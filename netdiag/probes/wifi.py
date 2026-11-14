@@ -58,6 +58,28 @@ def parse_netsh_wlan(text: str) -> List[dict]:
     return out
 
 
+def _no_link(name: str, idle: List[str]) -> CheckResult:
+    """No adapter is associated, so Wi-Fi is not this PC's path.
+
+    A PC that needs Wi-Fi and lost it has no usable adapter, which the
+    ``interface`` check reports as a failure.
+    """
+    if not idle:
+        return CheckResult.skip(
+            name, tr("Wi-Fi情報なし", "no Wi-Fi link info"), code="wifi.none"
+        )
+    names = ", ".join(idle)
+    return CheckResult.skip(
+        name,
+        tr(
+            f"{names}: アクセスポイント未接続（Wi-Fiは使用していません）",
+            f"{names}: not associated to any AP (Wi-Fi not in use)",
+        ),
+        metrics={"associated": 0.0},
+        code="wifi.not_associated",
+    )
+
+
 @register
 class WifiProbe(Probe):
     name = "wifi"
@@ -75,8 +97,8 @@ class WifiProbe(Probe):
     )
     manual_commands = ["netsh wlan show interfaces", "iw dev <iface> link"]
     means = Text(
-        "無線LANの電波が弱いか、アクセスポイントに接続していません。",
-        "The Wi-Fi radio link is weak or not associated.",
+        "無線LANの電波が弱く、通信が不安定になります。",
+        "The Wi-Fi radio link is weak, so traffic over it is unreliable.",
     )
     runbook = [
         Text(
@@ -115,19 +137,12 @@ class WifiProbe(Probe):
             )
 
         worst: Optional[CheckResult] = None
+        idle: List[str] = []
         for iface in ifaces:
             res = run(["iw", "dev", iface, "link"])
             text = res.stdout
             if "Not connected" in text or not text.strip():
-                worst = CheckResult.warn(
-                    self.name,
-                    tr(
-                        f"{iface}: アクセスポイント未接続",
-                        f"{iface}: not associated to any AP",
-                    ),
-                    metrics={"associated": 0.0},
-                    code="wifi.not_associated",
-                )
+                idle.append(iface)
                 continue
             sig = _SIGNAL_RE.search(text)
             rate = _BITRATE_RE.search(text)
@@ -157,9 +172,7 @@ class WifiProbe(Probe):
                 worst = CheckResult.ok(
                     self.name, desc, metrics=metrics, detail=detail, code="wifi.ok"
                 )
-        return worst or CheckResult.skip(
-            self.name, tr("Wi-Fi情報なし", "no Wi-Fi link info"), code="wifi.none"
-        )
+        return worst or _no_link(self.name, idle)
 
     def _check_windows(self) -> CheckResult:
         res = run(["netsh", "wlan", "show", "interfaces"], timeout=10)
@@ -171,17 +184,10 @@ class WifiProbe(Probe):
                 code="wifi.none",
             )
         worst: Optional[CheckResult] = None
+        idle: List[str] = []
         for w in ifaces:
             if not w.get("ssid"):
-                worst = CheckResult.warn(
-                    self.name,
-                    tr(
-                        f"{w['iface']}: アクセスポイント未接続",
-                        f"{w['iface']}: not associated to any AP",
-                    ),
-                    metrics={"associated": 0.0},
-                    code="wifi.not_associated",
-                )
+                idle.append(w["iface"])
                 continue
             q = w.get("quality_pct")
             metrics = {"associated": 1.0}
@@ -208,6 +214,4 @@ class WifiProbe(Probe):
                 worst = CheckResult.ok(
                     self.name, desc, metrics=metrics, detail=w, code="wifi.ok"
                 )
-        return worst or CheckResult.skip(
-            self.name, tr("Wi-Fi情報なし", "no Wi-Fi link info"), code="wifi.none"
-        )
+        return worst or _no_link(self.name, idle)

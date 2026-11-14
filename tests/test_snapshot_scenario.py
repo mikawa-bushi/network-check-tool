@@ -1,6 +1,6 @@
 """Tests for snapshot diffing and scenario parsing (no network needed)."""
 
-from netdiag.scenario.loader import merged_config, parse_scenario
+from netdiag.scenario.loader import parse_scenario
 from netdiag.snapshot.diff import diff_snapshots
 
 
@@ -39,7 +39,8 @@ def test_scenario_parse_and_config_merge():
     sc = parse_scenario(raw)
     assert sc.name == "office"
     assert sc.probe_names == ["gateway", "tcp", "dns"]
-    cfg = merged_config(sc)
+    (one_pass,) = sc.passes()
+    cfg = one_pass.config
     assert cfg["tcp_targets"] == ["proxy.corp.local:8080"]
     assert cfg["dns_name"] == "intranet.corp.local"
 

@@ -35,7 +35,7 @@ def result_from_ping(
     metrics = st.to_metrics()
     detail = {"host": host, "ping": st.to_dict()}
     if st.error:
-        return CheckResult.skip(
+        return CheckResult.unknown(
             name,
             tr(
                 f"{host}: 測定できません（{st.error}）",

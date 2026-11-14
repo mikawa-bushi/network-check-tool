@@ -1,5 +1,6 @@
 """Framework-independent core: results, probes, and shared helpers."""
 
+from .errors import InputError
 from .probe import (
     Context,
     Probe,
@@ -7,10 +8,12 @@ from .probe import (
     get_probe,
     register,
 )
-from .result import CheckResult, Status
+from .result import CheckResult, ExitCode, Status
 
 __all__ = [
     "CheckResult",
+    "ExitCode",
+    "InputError",
     "Status",
     "Context",
     "Probe",

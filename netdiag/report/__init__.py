@@ -5,7 +5,7 @@ evidence and the numbered next steps follow. HTML output is self-contained (no
 CDN, no JavaScript) so it works on an offline shop-floor PC.
 
 * ``render_terminal`` / ``render_json`` / ``render_html`` take a single
-  :class:`~netdiag.diagnosis.Diagnosis` (host sweep, scenario, watch).
+  :class:`~netdiag.diagnosis.Diagnosis` (host sweep, scenario).
 * ``render_check_*`` take a full :class:`~netdiag.runner.CheckReport` (this PC
   plus every device).
 """

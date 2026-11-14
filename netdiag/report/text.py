@@ -110,7 +110,7 @@ def render_terminal(
     show_all: bool = True,
     unicode: Optional[bool] = None,
 ) -> str:
-    """Render a single Diagnosis (host sweep, scenario, watch escalation)."""
+    """Render a single Diagnosis (host sweep, scenario)."""
     st = Style(color=color, unicode=unicode)
     lines: List[str] = []
     hidden = 0
@@ -123,35 +123,34 @@ def render_terminal(
         lines.append(_hidden_note(st, hidden))
 
     lines.append("")
-    if diag.healthy:
-        lines.append(
-            st.status(
-                Status.OK,
-                st.bold(
-                    tr(
-                        "診断: 異常は見つかりませんでした。",
-                        "Diagnosis: all checks passed.",
-                    )
-                ),
-            )
+    status = diag.status
+    unmeasured = [r.name for r in diag.results if r.status == Status.UNKNOWN]
+    if status == Status.OK:
+        verdict = tr(
+            "診断: 異常は見つかりませんでした。", "Diagnosis: all checks passed."
         )
-        return "\n".join(lines)
-
-    if not diag.hypotheses:
-        lines.append(
-            st.bold(
-                tr(
-                    "診断: 失敗はありませんが警告があります。",
-                    "Diagnosis: no failures, but warnings.",
-                )
-            )
+    elif unmeasured:
+        names = ", ".join(unmeasured)
+        verdict = tr(
+            f"診断: 測定できなかった項目があります（{names}）。",
+            f"Diagnosis: some checks could not be measured ({names}).",
         )
-        return "\n".join(lines)
-
-    lines.append(
-        st.bold(f"{st.rule} " + tr("診断 (Diagnosis)", "Diagnosis") + f" {st.rule}")
-    )
-    lines.extend(_hypothesis_lines(diag, st))
+    elif status == Status.UNKNOWN:
+        verdict = tr("診断: 何も測定していません。", "Diagnosis: nothing was measured.")
+    elif not diag.hypotheses:
+        verdict = tr(
+            "診断: 失敗はありませんが警告があります。",
+            "Diagnosis: no failures, but warnings.",
+        )
+    else:
+        verdict = ""
+    if verdict:
+        lines.append(st.status(status, st.bold(verdict)))
+    if diag.hypotheses:
+        lines.append(
+            st.bold(f"{st.rule} " + tr("診断 (Diagnosis)", "Diagnosis") + f" {st.rule}")
+        )
+        lines.extend(_hypothesis_lines(diag, st))
     if verbose and diag.reasoning:
         lines.append("")
         lines.append(st.bold(tr("推論過程:", "Reasoning:")))
@@ -196,6 +195,19 @@ def _fmt_num(v, digits: int = 2) -> str:
     return f"{v:.{digits}f}"
 
 
+def _fmt_pct(v: Optional[float]) -> str:
+    """A percentage that never rounds a non-zero value to 0 or a partial to 100."""
+    if v is None:
+        return "—"
+    if v == int(v):
+        return f"{v:.0f}%"
+    if v > 99.9:
+        return ">99.9%"
+    if v >= 1:
+        return f"{v:.1f}%"
+    return f"{v:.2g}%"
+
+
 class DeviceCells(NamedTuple):
     name: str
     address: str
@@ -213,14 +225,11 @@ def device_cells(dr) -> DeviceCells:
     reach = dr.result("reach")
     if m.sent:
         replies = f"{m.received}/{m.sent}"
-        loss = m.loss_pct
-        loss_s = (
-            f"{loss:.0f}%"
-            if loss is not None and (loss == 0 or loss >= 1)
-            else f"{loss:.1f}%"
-        )
+        loss_s = _fmt_pct(m.loss_pct)
         upper = m.loss_upper_pct
-        bound = f"≤{upper:.0f}%" if upper is not None and m.received == m.sent else ""
+        bound = (
+            f"≤{_fmt_pct(upper)}" if upper is not None and m.received == m.sent else ""
+        )
     else:
         replies, loss_s, bound = "—", "—", ""
     rtt_s = (
@@ -249,11 +258,18 @@ def device_cells(dr) -> DeviceCells:
 
 
 def _table(
-    rows: List[List[str]], header: List[str], max_widths: List[int]
+    rows: List[List[str]], header: List[str], max_widths: List[Optional[int]]
 ) -> List[str]:
+    """Columns padded to their widest cell; a ``None`` width is never clipped."""
     cols = len(header)
     widths = [width(h) for h in header]
-    clipped = [[truncate(c, max_widths[i]) for i, c in enumerate(r)] for r in rows]
+    clipped = [
+        [
+            c if max_widths[i] is None else truncate(c, max_widths[i])
+            for i, c in enumerate(r)
+        ]
+        for r in rows
+    ]
     for r in clipped:
         for i in range(cols):
             widths[i] = max(widths[i], width(r[i]))
@@ -284,21 +300,8 @@ def render_check_text(
     )
     lines.append(_headline(report, st))
 
-    # ---- this PC
-    lines.append("")
-    lines.append(
-        st.bold(f"{st.bullet} " + tr("このPCのネットワーク", "This PC's network"))
-    )
-    shown = [r for r in report.host.results if show_all or not is_not_applicable(r)]
-    title_w = min(22, max((width(r.title) for r in shown), default=8))
-    for r in shown:
-        name = pad(truncate(r.title, title_w), title_w)
-        layer = f"[{r.layer}]".ljust(8)  # "[SYSTEM]" is the widest tag
-        extra = st.dim(f" ({r.name})") if verbose else ""
-        lines.append(f"  {st.status(r.status)} {layer} {name}  {r.summary}{extra}")
-    hidden = len(report.host.results) - len(shown)
-    if hidden:
-        lines.append(_hidden_note(st, hidden))
+    if report.host_checked:
+        lines.extend(_host_section(report, st, verbose, show_all))
 
     # ---- devices
     if report.devices:
@@ -327,7 +330,7 @@ def render_check_text(
         for dr in report.devices:
             rows.append([st.sym(dr.status), *device_cells(dr)])
             statuses.append(dr.status)
-        table = _table(rows, header, [2, 18, 16, 7, 6, 7, 22, 30, 30])
+        table = _table(rows, header, [2, 18, None, None, None, None, None, 30, 30])
         lines.append("  " + st.dim(table[0]))
         for status, row in zip(statuses, table[1:]):
             sym = st.sym(status)
@@ -349,18 +352,49 @@ def render_check_text(
     return "\n".join(lines)
 
 
+def _host_section(report, st: Style, verbose: bool, show_all: bool) -> List[str]:
+    lines = [
+        "",
+        st.bold(f"{st.bullet} " + tr("このPCのネットワーク", "This PC's network")),
+    ]
+    shown = [r for r in report.host.results if show_all or not is_not_applicable(r)]
+    title_w = min(22, max((width(r.title) for r in shown), default=8))
+    for r in shown:
+        name = pad(truncate(r.title, title_w), title_w)
+        layer = f"[{r.layer}]".ljust(8)  # "[SYSTEM]" is the widest tag
+        extra = st.dim(f" ({r.name})") if verbose else ""
+        lines.append(f"  {st.status(r.status)} {layer} {name}  {r.summary}{extra}")
+    hidden = len(report.host.results) - len(shown)
+    if hidden:
+        lines.append(_hidden_note(st, hidden))
+    return lines
+
+
 def _headline(report, st: Style) -> str:
     status = report.status
     n = len(report.devices)
     bad = [d for d in report.devices if d.status == Status.FAIL]
     warn = [d for d in report.devices if d.status == Status.WARN]
+    unknown = [d for d in report.devices if d.status == Status.UNKNOWN]
     skipped = [d for d in report.devices if d.status == Status.SKIP]
     host_status = report.host_status
+    unmeasured = sum(1 for r in report.host.results if r.status == Status.UNKNOWN)
     parts: List[str] = []
     if host_status == Status.FAIL:
         parts.append(tr("このPCのネットワークに異常", "a problem on this PC's network"))
     elif host_status == Status.WARN:
         parts.append(tr("このPCに注意点", "warnings on this PC"))
+    if unmeasured:
+        parts.append(
+            tr(
+                f"このPCの {unmeasured} 項目は測定不可",
+                f"{unmeasured} check(s) on this PC not measured",
+            )
+        )
+    elif host_status == Status.UNKNOWN:
+        parts.append(
+            tr("このPCは何も測定していません", "nothing on this PC was measured")
+        )
     if bad:
         names = ", ".join(d.device.name for d in bad[:3]) + (
             " …" if len(bad) > 3 else ""
@@ -373,14 +407,17 @@ def _headline(report, st: Style) -> str:
         )
     if warn:
         parts.append(tr(f"{len(warn)}台に注意", f"{len(warn)} with warnings"))
+    if unknown:
+        parts.append(tr(f"{len(unknown)}台は測定不可", f"{len(unknown)} not measured"))
     if skipped:
         parts.append(tr(f"{len(skipped)}台は未評価", f"{len(skipped)} not checked"))
     if status == Status.OK:
-        what = (
-            tr(f"このPC と 機器 {n}台", f"this PC and {n} device(s)")
-            if n
-            else tr("このPC", "this PC")
-        )
+        if not report.host_checked:
+            what = tr(f"機器 {n}台", f"{n} device(s)")
+        elif n:
+            what = tr(f"このPC と 機器 {n}台", f"this PC and {n} device(s)")
+        else:
+            what = tr("このPC", "this PC")
         text = tr(
             f"結論: 異常は見つかりませんでした（{what}）",
             f"Result: no problems found ({what})",

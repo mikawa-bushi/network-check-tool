@@ -8,7 +8,7 @@ license = "MIT"
 homepage = "https://github.com/mikawa-bushi/network-check-tool"
 repository = "https://github.com/mikawa-bushi/network-check-tool"
 documentation = "https://github.com/mikawa-bushi/network-check-tool/blob/main/docs/netdiag.md"
-keywords = ["network", "monitoring", "diagnostics", "troubleshooting", "ping", "netdiag", "plc", "factory", "ot", "industrial", "cli"]
+keywords = ["network", "diagnostics", "troubleshooting", "ping", "netdiag", "plc", "factory", "ot", "industrial", "cli"]
 classifiers = [
     "Development Status :: 4 - Beta",
     "Environment :: Console",
@@ -21,11 +21,15 @@ classifiers = [
     "Operating System :: POSIX :: Linux",
     "Operating System :: MacOS",
     "Topic :: System :: Networking",
-    "Topic :: System :: Networking :: Monitoring",
     "Topic :: System :: Systems Administration",
 ]
 packages = [
     { include = "netdiag" },
+]
+# poetry-core reads this, not MANIFEST.in.
+include = [
+    { path = "docs/netdiag.md", format = "sdist" },
+    { path = "examples", format = "sdist" },
 ]
 
 [tool.poetry.dependencies]
@@ -45,6 +49,8 @@ netdiag = "netdiag.cli:main"
 [tool.poetry.group.dev.dependencies]
 pytest = "^9.0.3"
 black = "^26.10.1"
+# The same version as the ruff-check pre-commit hook and CI.
+ruff = "0.15.17"
 # Transitive via pre-commit -> virtualenv; 4.2.1 fixes GHSA advisories.
 filelock = ">=4.2.1"
 pre-commit = "^4.6.0"

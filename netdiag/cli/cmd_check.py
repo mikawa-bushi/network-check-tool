@@ -7,22 +7,27 @@ from typing import List
 
 import click
 
+from ..core import InputError
 from ..i18n import tr
 from ..inventory import (
     Device,
     InventoryError,
     load_devices,
+    normalize_host,
     parse_ports,
     parse_target_spec,
 )
 from ._app import (
     H,
+    HttpUrl,
     Progress,
     _build_config,
     _split_csv,
     cli,
     color_wanted,
     format_from_path,
+    log_file_apart_from,
+    output_path,
     write_output,
 )
 
@@ -44,6 +49,7 @@ def effective_interval(interval) -> float:
 
 
 def _collect_devices(targets, device_files, ports) -> List[Device]:
+    log_file_apart_from(device_files)
     devices: List[Device] = []
     try:
         extra = parse_ports(list(ports)) if ports else []
@@ -60,7 +66,54 @@ def _collect_devices(targets, device_files, ports) -> List[Device]:
     return devices
 
 
-@cli.command()
+def _host(ctx: click.Context, param: click.Parameter, value):
+    """A host from the command line, read like a ledger cell: ``192.168.001.010``
+    is ``192.168.1.10``, not the octal address the OS resolver would make of it."""
+    if value is None:
+        return None
+    try:
+        return normalize_host(value)
+    except InventoryError as e:
+        raise click.BadParameter(str(e)) from e
+
+
+_COUNT = click.IntRange(min=1)
+_SECONDS = click.FloatRange(min=0, min_open=True)
+
+_CHECK_HELP_JA = """このPCと機器のネットワークを診断します。
+
+\b
+TARGET の書き方:  192.168.3.39  /  192.168.3.39:502  /  PLC1=192.168.3.39:modbus,4840
+
+\b
+終了コード:
+  0    正常
+  1    異常あり
+  2    注意のみ（すべて測定できた）
+  3    測定できなかった項目あり（異常はなし）
+  4    指定の誤り（オプション・チェック名・入力ファイル・保存先）
+  5    内部エラー
+  130  Ctrl-C で中断
+"""
+
+_CHECK_HELP_EN = """Diagnose this PC and devices.
+
+\b
+TARGET:  192.168.3.39  /  192.168.3.39:502  /  PLC1=192.168.3.39:modbus,4840
+
+\b
+Exit codes:
+  0    healthy
+  1    a problem was found
+  2    warnings only, and everything wanted was measured
+  3    incomplete: no problem found, but something could not be measured
+  4    usage error (option, check name, input file, output path)
+  5    internal error
+  130  interrupted with Ctrl-C
+"""
+
+
+@cli.command(help=H(_CHECK_HELP_JA, _CHECK_HELP_EN))
 @click.argument("targets", nargs=-1, metavar="[TARGET]...")
 @click.option(
     "-f",
@@ -85,7 +138,7 @@ def _collect_devices(targets, device_files, ports) -> List[Device]:
 )
 @click.option(
     "--count",
-    type=int,
+    type=_COUNT,
     default=None,
     help=H(
         "1台あたりのping回数（既定 10）。断続的な不調は 100〜300 で測ると確実です",
@@ -94,13 +147,13 @@ def _collect_devices(targets, device_files, ports) -> List[Device]:
 )
 @click.option(
     "--interval",
-    type=float,
+    type=_SECONDS,
     default=None,
     help=H("ping間隔[秒]（既定 0.2）", "Seconds between pings (default 0.2)."),
 )
 @click.option(
     "--duration",
-    type=float,
+    type=_SECONDS,
     default=None,
     help=H(
         "測定時間[秒]。指定すると回数 = 時間 ÷ 間隔",
@@ -110,7 +163,7 @@ def _collect_devices(targets, device_files, ports) -> List[Device]:
 @click.option(
     "--timeout",
     "ping_timeout",
-    type=float,
+    type=_SECONDS,
     default=None,
     help=H(
         "1回のping応答待ち[秒]（既定 1.0）",
@@ -127,6 +180,7 @@ def _collect_devices(targets, device_files, ports) -> List[Device]:
 )
 @click.option(
     "--external-ip",
+    callback=_host,
     help=H(
         "外部到達確認に使うIP（指定すると --internet）",
         "Off-LAN IP for the reachability check (implies --internet).",
@@ -150,6 +204,7 @@ def _collect_devices(targets, device_files, ports) -> List[Device]:
 )
 @click.option(
     "--http-url",
+    type=HttpUrl(),
     help=H(
         "HTTP/TLSの段階別タイミングを測るURL",
         "URL for the HTTP/TLS phase-timing check.",
@@ -179,8 +234,11 @@ def _collect_devices(targets, device_files, ports) -> List[Device]:
 @click.option(
     "-o",
     "--output",
-    type=click.Path(dir_okay=False),
-    help=H("レポートをファイルに保存", "Write the report to a file."),
+    type=click.Path(dir_okay=False, allow_dash=True),
+    help=H(
+        "レポートをファイルに保存（- は標準出力）",
+        "Write the report to a file (- for stdout).",
+    ),
 )
 @click.option(
     "--all",
@@ -198,16 +256,11 @@ def _collect_devices(targets, device_files, ports) -> List[Device]:
     ),
 )
 @click.option(
-    "--save/--no-save",
-    default=False,
-    help=H("測定値を履歴DBに記録", "Record metrics to the history db."),
-)
-@click.option(
     "--no-color", is_flag=True, help=H("色を付けない", "Disable ANSI colour.")
 )
 @click.option(
     "--jobs",
-    type=int,
+    type=_COUNT,
     default=1,
     help=H(
         "このPCのチェックを並列実行（1=直列。3〜4推奨）",
@@ -241,22 +294,23 @@ def check(
     output,
     show_all,
     reasoning,
-    save,
     no_color,
     jobs,
     no_host,
 ):
-    """このPCと機器のネットワークを診断します / Diagnose this PC and devices.
-
-    \b
-    TARGET は  192.168.3.39  /  192.168.3.39:502  /  PLC1=192.168.3.39:modbus,4840
-    終了コード: 0 = 正常, 1 = 異常あり, 2 = 注意のみ
-    """
     from .. import report as report_mod
     from ..runner import run_check
 
     fmt = format_from_path(output, fmt)
+    output = output_path(output, inputs=device_files)
     devices = _collect_devices(targets, device_files, ports)
+    if no_host and not devices:
+        raise InputError(
+            tr(
+                "確認するものがありません。--no-host のときは TARGET か -f で機器を指定してください。",
+                "nothing to check: with --no-host, give devices as TARGET or with -f.",
+            )
+        )
     cfg = _build_config(external_ip, dns_name, tcp, http_url, count, internet=internet)
     if interval:
         cfg["interval"] = interval
@@ -286,17 +340,6 @@ def check(
         progress.done()
     rep.settings["devices"] = len(devices)
 
-    if save:
-        from ..storage import Storage
-
-        with Storage() as st:
-            st.record_diagnosis(
-                rep.host, target=cfg.get("external_ip") if cfg.get("internet") else None
-            )
-            for dr in rep.devices:
-                if dr.diagnosis is not None:
-                    st.record_diagnosis(dr.diagnosis, target=dr.device.host)
-
     if fmt == "json":
         text = report_mod.render_check_json(rep)
     elif fmt == "html":
@@ -317,20 +360,22 @@ def check(
 
 
 @cli.command()
-@click.argument("host")
-@click.option("--count", "-c", type=int, default=10, help=H("回数", "Number of pings."))
+@click.argument("host", callback=_host)
+@click.option(
+    "--count", "-c", type=_COUNT, default=10, help=H("回数", "Number of pings.")
+)
 @click.option(
     "--interval",
     "-i",
-    type=float,
+    type=_SECONDS,
     default=0.2,
     help=H("間隔[秒]", "Seconds between pings."),
 )
 @click.option(
     "--timeout",
-    type=float,
+    type=_SECONDS,
     default=1.0,
-    help=H("応答待ち[秒]", "Seconds to wait for each reply."),
+    help=H("1回の応答待ち[秒]", "Seconds to wait for each reply."),
 )
 @click.option("--json", "as_json", is_flag=True, help=H("JSONで出力", "Output JSON."))
 def ping(host, count, interval, timeout, as_json):
@@ -346,20 +391,19 @@ def ping(host, count, interval, timeout, as_json):
     from ..report.common import Style
 
     st = measure_ping(host, count=count, interval=interval, timeout=timeout)
+    if st.any_reply:
+        status = Status.WARN if st.lost else Status.OK
+    else:
+        status = Status.UNKNOWN if st.error else Status.FAIL
     if as_json:
         click.echo(json.dumps(st.to_dict(), ensure_ascii=False, indent=2))
-        sys.exit(0 if st.any_reply else 1)
+        sys.exit(status.exit_code)
     style = Style(color=color_wanted(False))
-    if st.error:
-        click.echo(f"{style.status(Status.SKIP)} {host}: {st.error}", err=True)
-        sys.exit(1)
-    status = (
-        Status.OK
-        if st.any_reply and not st.lost
-        else (Status.WARN if st.any_reply else Status.FAIL)
-    )
+    if status == Status.UNKNOWN:
+        click.echo(f"{style.status(status)} {host}: {st.error}", err=True)
+        sys.exit(status.exit_code)
     click.echo(f"{style.status(status)} {host}: {ping_summary(st)}")
     if st.errors:
         for msg, n in list(st.errors.items())[:3]:
             click.echo(style.dim(f"    {msg} ×{n}"))
-    sys.exit(0 if st.any_reply else 1)
+    sys.exit(status.exit_code)

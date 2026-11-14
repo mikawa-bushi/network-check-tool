@@ -298,7 +298,7 @@ def test_soak_csv_file_is_written_while_measuring(fake_soak, tmp_path):
     res = fake_soak("--duration", "2", "--bucket", "0.2", "-o", str(out))
     assert res.exit_code == 1, res.output
     # completed cells are reported live
-    assert re.search(r"^\d\d:\d\d (loss: |no loss on any device)", res.output, re.M)
+    assert re.search(r"^\d\d:\d\d:\d\d (loss: |no loss$)", res.output, re.M)
     rows = out.read_text(encoding="utf-8-sig").splitlines()
     assert rows[0].startswith("time,name,host") and len(rows) > 2
 
@@ -308,7 +308,7 @@ def test_soak_csv_goes_to_stdout_without_a_file(fake_soak):
     assert res.exit_code == 1
     assert (
         res.output.splitlines()[0]
-        == "time,name,host,sent,lost,loss_pct,rtt_median_ms,rtt_p95_ms,rtt_max_ms"
+        == "﻿time,name,host,sent,lost,loss_pct,rtt_median_ms,rtt_p95_ms,rtt_max_ms"
     )
 
 

@@ -6,6 +6,7 @@ where macOS reports speed and duplex; ``netstat -ibn`` provides error counters.
 
 from __future__ import annotations
 
+import ipaddress
 import re
 from typing import Dict, List, Optional
 
@@ -19,6 +20,7 @@ from .model import (
     NEIGH_INCOMPLETE,
     NEIGH_PERMANENT,
     NEIGH_STALE,
+    NO_ARP_FLAGS,
     Address,
     HostNetwork,
     Interface,
@@ -29,8 +31,10 @@ from .model import (
 )
 
 _IF_HEADER_RE = re.compile(r"^(\S+?):\s+flags=\w+<([^>]*)>(?:.*?\bmtu\s+(\d+))?")
+# Point-to-point links (utun, ppp) print the peer: "inet A --> B netmask M".
 _INET_RE = re.compile(
-    r"^\s+inet\s+(\d+\.\d+\.\d+\.\d+)\s+netmask\s+(0x[0-9a-fA-F]+|\S+)"
+    r"^\s+inet\s+(\d+\.\d+\.\d+\.\d+)(?:\s+-->\s+\S+)?\s+netmask\s+"
+    r"(0x[0-9a-fA-F]+|\S+)"
 )
 _MEDIA_RE = re.compile(r"^\s+media:.*?\(([^)]*)\)")
 _SPEED_RE = re.compile(r"(\d+)(G?)base", re.IGNORECASE)
@@ -56,6 +60,7 @@ def parse_ifconfig(
                 name=name, admin_up="UP" in flags, mtu=int(mtu) if mtu else None
             )
             cur.up = "UP" in flags and "RUNNING" in flags
+            cur.arp = not NO_ARP_FLAGS & set(flags)
             if "LOOPBACK" in flags:
                 cur.kind = KIND_LOOPBACK
             elif name in wifi:
@@ -98,6 +103,29 @@ def parse_ifconfig(
     return out
 
 
+def _netstat_destination(dst: str) -> Optional[str]:
+    """``10.20/16``, ``192.168.1``, ``default`` -> CIDR.
+
+    netstat drops trailing zero octets; without a prefix length the octets
+    written give it (``169.254`` is a /16, a full address a /32).
+    """
+    if dst == "default":
+        return "0.0.0.0/0"
+    addr, _, plen = dst.partition("/")
+    octets = addr.split(".")
+    if len(octets) > 4 or not all(o.isdigit() for o in octets):
+        return None
+    try:
+        net = ipaddress.ip_network(
+            ".".join(octets + ["0"] * (4 - len(octets)))
+            + f"/{plen or 8 * len(octets)}",
+            strict=False,
+        )
+    except ValueError:
+        return None
+    return str(net)
+
+
 def parse_netstat_routes(text: str) -> List[Route]:
     routes: List[Route] = []
     for line in text.splitlines():
@@ -105,14 +133,9 @@ def parse_netstat_routes(text: str) -> List[Route]:
         if len(parts) < 4 or parts[0] in ("Destination", "Routing", "Internet:"):
             continue
         dst, gw, _flags, netif = parts[0], parts[1], parts[2], parts[3]
-        if dst == "default":
-            dst = "0.0.0.0/0"
-        elif "/" not in dst:
-            octets = dst.split(".")
-            if not all(o.isdigit() for o in octets):
-                continue
-            plen = 8 * len(octets)
-            dst = ".".join(octets + ["0"] * (4 - len(octets))) + f"/{plen}"
+        dst = _netstat_destination(dst)
+        if dst is None:
+            continue
         is_ip = re.fullmatch(r"\d+\.\d+\.\d+\.\d+", gw) is not None
         routes.append(
             Route(destination=dst, gateway=gw if is_ip else None, interface=netif)
@@ -172,7 +195,7 @@ def parse_netstat_ibn(text: str) -> Dict[str, LinkStats]:
                 return None
 
         out.setdefault(
-            parts[0],
+            parts[0].rstrip("*"),  # "en7*": the interface is down
             LinkStats(
                 rx_packets=_i("Ipkts"),
                 tx_packets=_i("Opkts"),
@@ -206,9 +229,10 @@ def collect() -> HostNetwork:
     stats = parse_netstat_ibn(run(["netstat", "-ibn"], timeout=8).stdout)
     for iface in hn.interfaces:
         iface.stats = stats.get(iface.name)
-    hn.routes = parse_netstat_routes(
-        run(["netstat", "-rn", "-f", "inet"], timeout=8).stdout
-    )
+    res = run(["netstat", "-rn", "-f", "inet"], timeout=8)
+    hn.routes = parse_netstat_routes(res.stdout)
+    if not res.ok:
+        hn.errors.append("could not read the routing table ('netstat -rn' failed)")
     hn.resolvers = parse_scutil_dns(run(["scutil", "--dns"], timeout=8).stdout)
     return hn
 
