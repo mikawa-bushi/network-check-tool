@@ -45,28 +45,16 @@ class GatewayProbe(Probe):
 
     def check(self, ctx: Context) -> CheckResult:
         hn = ctx.network()
-        routes = hn.default_routes()
-        if not routes:
-            if ctx.get("internet", True):
-                return CheckResult.fail(
-                    self.name,
-                    tr(
-                        "デフォルトゲートウェイが設定されていません（LAN外へ出る経路なし）",
-                        "no default gateway configured (no route off-LAN)",
-                    ),
-                    metrics={"has_gateway": 0.0},
-                    code="gateway.none",
-                )
-            return CheckResult.skip(
+        if not hn.routes and hn.errors:
+            return CheckResult.unknown(
                 self.name,
-                tr(
-                    "デフォルトゲートウェイなし（閉じた設備ネットワークでは正常）",
-                    "no default gateway (normal for a closed equipment network)",
-                ),
-                metrics={"has_gateway": 0.0},
-                code="gateway.none_closed",
+                tr("経路表を読み取れませんでした", "could not read the routes"),
+                detail={"errors": list(hn.errors)},
+                code="gateway.routes_unknown",
             )
         best = hn.preferred_default_route()
+        if best is None:
+            return self._no_gateway(ctx)
         gw = best.gateway
         detail = {"gateway": gw, "interface": best.interface}
         st = ping(gw, **ping_settings(ctx.get))
@@ -113,6 +101,38 @@ class GatewayProbe(Probe):
             metrics=metrics,
             detail=detail,
             code="gateway.ok",
+        )
+
+    def _no_gateway(self, ctx: Context) -> CheckResult:
+        link = ctx.network().link_default_route()
+        if link is not None:
+            return CheckResult.skip(
+                self.name,
+                tr(
+                    f"LAN外への通信は {link.interface} から直接出ます（pingするルーターはありません）",
+                    f"traffic leaves via {link.interface}, no router to ping",
+                ),
+                detail={"interface": link.interface},
+                code="gateway.via_link",
+            )
+        if ctx.get("internet", True):
+            return CheckResult.fail(
+                self.name,
+                tr(
+                    "デフォルトゲートウェイが設定されていません（LAN外へ出る経路なし）",
+                    "no default gateway configured (no route off-LAN)",
+                ),
+                metrics={"has_gateway": 0.0},
+                code="gateway.none",
+            )
+        return CheckResult.skip(
+            self.name,
+            tr(
+                "デフォルトゲートウェイなし（閉じた設備ネットワークでは正常）",
+                "no default gateway (normal for a closed equipment network)",
+            ),
+            metrics={"has_gateway": 0.0},
+            code="gateway.none_closed",
         )
 
     def advice(self, result, results=None):

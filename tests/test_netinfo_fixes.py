@@ -702,7 +702,7 @@ def test_a_suppressed_main_default_is_no_gateway_to_ping(answered_pings):
     ]
     assert hn.default_routes() == [] and hn.preferred_default_route() is None
     gw = _run(hn, ["gateway"], internet=True)["gateway"]
-    assert gw.code == "gateway.none" and answered_pings == []
+    assert gw.code == "gateway.via_link" and answered_pings == []
 
 
 def _laptop_with_idle_adapters(eth_state="Preferred"):
