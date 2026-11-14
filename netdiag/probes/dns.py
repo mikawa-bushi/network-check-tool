@@ -96,6 +96,15 @@ class DnsProbe(Probe):
     )
     manual_commands = ["nslookup example.com", "nslookup example.com <dns-server>"]
 
+    def path_dependencies(self, ctx: Context) -> List[str]:
+        """Resolvers all on this PC's LAN are asked without leaving it."""
+        resolver = ctx.get("_resolver")
+        servers = [resolver] if resolver else configured_resolvers()
+        hn = ctx.network()
+        if servers and all(hn.decide_route(s).arp for s in servers):
+            return []
+        return list(self.depends_on)
+
     def check(self, ctx: Context) -> CheckResult:
         name = ctx.get("dns_name", "example.com")
         timeout = float(ctx.get("dns_timeout", 3.0))
