@@ -97,9 +97,9 @@ from before proves nothing — the device may have died seconds ago.
 | `netdiag soak [TARGET...] [-f FILE] [--duration 2h]` | Hours-long continuous measurement: outage timeline, correlation across devices, this PC's link drops/NIC errors |
 | `netdiag collect [--target IP] [--no-mask] [--no-ping]` | Zip the raw output of the OS commands netdiag parses (masked) for bug reports |
 | `netdiag explain [PROBE]` | With no `PROBE`, every check with its layer; with one, what it does, the manual commands, and the next steps |
-| `netdiag scenario FILE` | A YAML/JSON scenario: `checks` (host probes), `devices` (device list), `config` |
-| `netdiag snapshot save/list/diff [NAME]` | Save the network configuration while it works; diff later ("what changed?") |
-| `netdiag peer serve` / `peer test ADDR` | Two-host LAN quality (loss/jitter/throughput) for closed networks |
+| `netdiag scenario FILE` | A YAML/JSON/TOML scenario: `checks` (host probes), `devices` (device list), `config`; runs and exits like `check` |
+| `netdiag snapshot save/list/diff [NAME]` | Save the network configuration while it works; diff later ("what changed?"). Windows, macOS and Linux |
+| `netdiag peer serve` / `peer test ADDR` | Two-host LAN quality (loss/jitter/throughput) for closed networks; the `serve` end must be 0.6.0 or later |
 | `netdiag watch` | Always-on: light loop, alerts only on state change (`--no-internet` on closed networks), webhook/Slack/desktop sinks; records every sweep to the history DB (`--no-save` to skip) |
 | `netdiag status` / `history` / `prune` | Watcher state, baseline & change-point analysis, retention |
 | `netdiag service print/install` | systemd unit for `watch` |
@@ -183,10 +183,17 @@ stores the **raw bytes** (no decoding, so cp932 output stays inspectable) next
 to netdiag's own interpretation (`netinfo.json`, `check.json`, `ping.json`).
 
 Masking is on by default and preserves structure: IPv4 addresses are mapped
-per /24 (subnet relationships and the last octet survive; netmasks, loopback,
-link-local and public resolvers are kept), MACs keep the vendor (OUI) half,
-IPv6 keeps the prefix type, and host names, user names, SSIDs and internal
-domains are replaced. `--no-mask` keeps everything (internal use only).
+so that /16 and /24 relationships and the last octet survive (each /16 gets
+its own `10.x` block, `.0` and `.255` stay; netmasks, loopback, link-local and
+public resolvers are kept). Coarser prefixes such as a `/8` route are not
+kept. MACs keep the vendor (OUI) half, in every form: `aa-bb-…`, `aa:bb:…`,
+the space-separated list in `route print`, and the MAC inside a DHCPv6 DUID.
+IPv6 keeps the prefix type. Host names, user names, SSIDs (netsh SSID and
+Profile lines, `iw`, the Wi-Fi check's results) and internal domains (DNS
+suffixes and search domains from `ipconfig`, `resolv.conf` and `scutil`, plus
+any name with three or more labels) are replaced in every file of the zip.
+`--no-mask` keeps everything (internal use only). An output path that cannot
+be written exits 4.
 
 ## Ping back-ends
 
@@ -230,6 +237,41 @@ loss_warn_pct, interval (Japanese aliases such as 名前・IPアドレス・ポ�
 ライン・備考・MACアドレス・遅延上限・ロス上限・監視間隔 are accepted). A
 `[[host]]` / `hosts` list whose entries give only `name` loads too, and each
 name is used as the host.
+
+A scenario file is `.yaml`/`.yml` (needs PyYAML), `.json` or `.toml`, in
+UTF-8, Shift_JIS or UTF-16 (what Notepad and Excel save). Top-level keys are
+`name`, `description`, `checks`, `devices`, `defaults` and `config`; `checks`
+is a list of check names or of mappings with `probe` and the check's own
+settings (`target`, `resolver`, `url`, …) and an optional `label`, shown as
+the check's title. A check may appear more than once with different
+settings; each one runs. In YAML, `0012` stays the text `0012`. A file
+netdiag cannot use (a syntax error, an unknown key or check name, `checks`
+that is not a list, a bad device) exits 4 with the file name and the problem.
+The exit codes are those of `check`.
+
+## Snapshots and peer tests
+
+`netdiag snapshot save NAME` records this PC's adapters (state, speed,
+duplex, MTU, MAC), IPv4 addresses and IPv6 prefixes, routes, DNS servers
+(the real upstream servers under systemd-resolved), ARP entries, the hosts
+file and, on Windows, the firewall profiles; on Linux also IPv6 routes, a few
+network sysctls and the listening TCP addresses. `snapshot diff NAME` compares
+them as sets of stable lines: counters, lease times, ARP states, IPv6 privacy
+addresses, Wi-Fi rates and line order never count as a change, and an ARP
+entry counts only when the same address answers with another MAC. Exit codes:
+0 no change, 2 changed, 3 nothing changed but a part could not be compared
+(read on one side only), 4 no such snapshot, a damaged one, one saved before
+0.6.0, a bad name, or a PC whose configuration could not be read.
+
+`netdiag peer serve` answers only netdiag's own 16-byte requests, never a
+reply, never a privileged or its own source port, and at most 200 replies a
+second, so it cannot be used to reflect packets at a PLC. It refuses to start
+(exit 4) when it cannot listen. `netdiag peer test ADDR` matches each reply to
+its request, so late or duplicated replies do not count as loss. With no reply
+at all it says whether nothing listens there or nothing answered, and exits 3
+instead of reporting 100 % loss; a throughput test that cannot connect also
+exits 3. A 0.6.0 `peer test` also works against a 0.5
+`peer serve`; a 0.5 `peer test` gets no reply from a 0.6.0 `peer serve`.
 
 ## Always-on watching (`netdiag watch`)
 
