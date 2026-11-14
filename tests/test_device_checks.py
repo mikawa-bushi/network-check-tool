@@ -13,6 +13,7 @@ from netdiag.core import CheckResult, Probe, Status, register
 from netdiag.core.probe import _REGISTRY
 from netdiag.inventory import Device
 from netdiag.measure import PingStats
+from netdiag.measure.tcp import PortCheck
 from netdiag.netinfo.model import (
     KIND_ETHERNET,
     Address,
@@ -205,13 +206,44 @@ def test_only_an_equal_up_subnet_makes_the_outgoing_nic_ambiguous(
 # --------------------------------------------------------------- ARP evidence
 
 
-def test_a_device_that_ignores_ping_but_holds_arp_is_present_every_run(line):
-    entry = Neighbor("192.0.2.39", mac=MAC, state="reachable", confirmed_age=20)
+def _arp_entry(line, confirmed_age):
+    entry = Neighbor(
+        "192.0.2.39", mac=MAC, state="reachable", confirmed_age=confirmed_age
+    )
     line["table"] = [entry]
     line["lookups"]["192.0.2.39"] = [entry]
+
+
+def test_an_arp_answer_during_the_test_shows_a_silent_device_is_present(line):
+    _arp_entry(line, confirmed_age=0.5)
     rep = _check([Device(name="HMI", host="192.0.2.39")])
     assert _codes(rep)["reach"] == "reach.icmp_blocked"
     assert rep.devices[0].status == Status.WARN
+
+
+@pytest.mark.parametrize("died_ago", [5.0, 20.0, 40.0])
+@pytest.mark.parametrize(
+    "ports, codes",
+    [
+        ([], {"reach": "reach.no_reply"}),
+        ([502], {"reach": "reach.no_icmp", "ports": "ports.no_response"}),
+    ],
+)
+def test_a_device_that_just_lost_power_is_not_called_present(
+    line, monkeypatch, died_ago, ports, codes
+):
+    _arp_entry(line, confirmed_age=died_ago)
+    monkeypatch.setattr(
+        device_probes,
+        "tcp_check_many",
+        lambda pairs, **kw: {
+            (h, p): PortCheck(host=h, port=p, attempts=2, state="filtered")
+            for h, p in pairs
+        },
+    )
+    rep = _check([Device(name="PLC", host="192.0.2.39", ports=ports)])
+    assert {k: v for k, v in _codes(rep).items() if k != "route"} == codes
+    assert (rep.devices[0].status, rep.exit_code) == (Status.FAIL, 1)
 
 
 def test_an_arp_entry_being_verified_is_waited_for(line):

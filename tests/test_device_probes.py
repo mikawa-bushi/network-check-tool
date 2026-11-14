@@ -195,7 +195,7 @@ def test_unmeasurable_ping_is_not_a_device_fault():
         (
             None,
             Neighbor(
-                "ip", mac="00:11:22:33:44:55", state="reachable", confirmed_age=120
+                "ip", mac="00:11:22:33:44:55", state="reachable", confirmed_age=60
             ),
             "unknown",
         ),

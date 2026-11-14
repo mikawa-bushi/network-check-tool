@@ -55,12 +55,6 @@ def evidence(ctx: Context) -> Optional[DeviceEvidence]:
     return ctx.get("evidence")
 
 
-# How long a reachable ARP entry counts as the device's answer. Linux keeps an
-# entry REACHABLE for at most 1.5 x base_reachable_time (30 s) after the last
-# confirmation.
-ARP_RECENT_S = 60.0
-
-
 def target(ctx: Context) -> Dict[str, Any]:
     t = ctx.get("target") or {}
     if isinstance(t, str):
@@ -78,11 +72,10 @@ def l2_evidence(
 ) -> str:
     """``present`` / ``absent`` / ``unknown`` from ARP state around a ping run.
 
-    Only *recent* evidence counts: an entry that appeared during the test, or
-    one the OS still holds as reachable, which it confirmed within its
-    reachable time (Linux reports the age). A device that ignores ping keeps
-    such an entry between runs, so it must not read as gone. A stale cache
-    entry proves nothing.
+    Only *fresh* evidence counts: an entry confirmed during the test (Linux
+    reports the confirmation age), or one that appeared during it. A cache
+    entry left over from before proves nothing — the device may have died
+    seconds ago. Linux still lists such an entry as REACHABLE for up to 45 s.
     """
     if after is None:
         return "unknown"
@@ -91,11 +84,10 @@ def l2_evidence(
     if not after.mac or nm.mac_is_null(after.mac) or after.state == nm.NEIGH_PERMANENT:
         return "unknown"
     if after.confirmed_age is not None:
-        recent = (
-            after.state == nm.NEIGH_REACHABLE
-            and after.confirmed_age <= window_s + ARP_RECENT_S
+        fresh = (
+            after.state == nm.NEIGH_REACHABLE and after.confirmed_age <= window_s + 1.0
         )
-        return "present" if recent else "unknown"
+        return "present" if fresh else "unknown"
     if before is None or not before.mac:
         return "present"  # resolved during our test
     if after.state == nm.NEIGH_REACHABLE and before.state != nm.NEIGH_REACHABLE:
