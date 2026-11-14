@@ -12,7 +12,7 @@ import click
 from ..core import ExitCode, InputError
 from ..i18n import tr
 from ..inventory import devices_to_csv, parse_ports
-from ._app import H, Progress, cli, color_wanted
+from ._app import H, Progress, cli, color_wanted, write_output
 
 
 @cli.command()
@@ -117,9 +117,11 @@ def scan(networks, save, count, timeout, ports, names, max_hosts, fmt, no_color)
     result.notes.extend(notes)
 
     if fmt == "json":
-        click.echo(json.dumps(result.to_dict(), ensure_ascii=False, indent=2))
+        write_output(
+            json.dumps(result.to_dict(), ensure_ascii=False, indent=2), None, fmt
+        )
     elif fmt == "csv":
-        click.echo(devices_to_csv(result.to_devices()), nl=False)
+        write_output(devices_to_csv(result.to_devices()), None, fmt)
     else:
         _print_text(result, no_color)
     if save:

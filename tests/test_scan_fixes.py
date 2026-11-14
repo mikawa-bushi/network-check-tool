@@ -1,6 +1,11 @@
 """`netdiag scan` sweeps every address it says it does and never loses a
 result or a ledger. The vendor table names makers, not addresses."""
 
+import csv
+import io
+import json
+import sys
+
 import pytest
 
 import netdiag.scan as scan_mod
@@ -141,6 +146,34 @@ def test_open_ports_found_with_p_reach_the_saved_ledger(sweep, tmp_path):
     )
     rows = path.read_text(encoding="utf-8-sig").splitlines()
     assert rows[1].split(",")[:3] == ["", "192.0.2.39", "502"]
+
+
+def _windows_redirected(*args):
+    """Run scan with stdout as Python sets it up on Japanese Windows when
+    redirected to a file (the ANSI code page, newline translation)."""
+    stream = io.TextIOWrapper(io.BytesIO(), encoding="cp932", newline="\r\n")
+    real, sys.stdout = sys.stdout, stream
+    try:
+        assert _scan(*args) in (0, None)
+        stream.flush()
+        return stream.buffer.getvalue()
+    finally:
+        sys.stdout = real
+
+
+def test_csv_on_redirected_stdout_is_the_ledger_excel_reads(sweep):
+    _answer(sweep, "192.0.2.39")
+    data = _windows_redirected("192.0.2.39", "--format", "csv")
+    assert data.startswith(b"\xef\xbb\xbf") and b"\r\r\n" not in data
+    rows = list(csv.reader(io.StringIO(data.decode("utf-8-sig"), newline="")))
+    assert rows[0][:2] == ["名前", "IPアドレス"] and rows[1][1] == "192.0.2.39"
+
+
+def test_json_on_redirected_stdout_is_utf8(sweep, monkeypatch):
+    _answer(sweep, "192.0.2.39")
+    monkeypatch.setattr(scan_mod, "_reverse_name", lambda ip, timeout=1.0: "プレス1")
+    data = _windows_redirected("192.0.2.39", "--names", "--format", "json")
+    assert json.loads(data.decode("utf-8"))["hits"][0]["hostname"] == "プレス1"
 
 
 def test_the_same_address_on_two_nics_is_not_an_ip_conflict(sweep, capsys):
