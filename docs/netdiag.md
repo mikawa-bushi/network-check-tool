@@ -122,7 +122,9 @@ Japanese), `-v/--verbose`, `--log-file`. `python -m netdiag` works where the
 - `--all` shows not-applicable checks; `--reasoning` shows the engine's steps;
   `--no-host` checks devices only; `--jobs N` parallelises the host sweep.
 
-Exit codes, the same for every command:
+Exit codes. 3, 4, 5 and 130 mean the same for every command; `snapshot diff`
+uses 2 for "changed", and `soak` and `peer test` describe their 1 and 2 in
+their own sections:
 
 | code | meaning |
 | --- | --- |
