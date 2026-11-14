@@ -533,6 +533,47 @@ def test_a_silent_gateway_on_a_closed_line_is_a_warning(world):
     assert any("clear the gateway field of eth0" in s for s in diag.primary.runbook)
 
 
+def gw_arp(state, confirmed_age=None):
+    return Neighbor(GW, GW_MAC, state, "eth0", confirmed_age=confirmed_age)
+
+
+@pytest.mark.parametrize(
+    "before, after, status, code",
+    [
+        (
+            gw_arp("reachable", 25.0),
+            gw_arp("reachable", 26.0),
+            Status.FAIL,
+            "gateway.unreachable",
+        ),
+        (gw_arp("reachable"), gw_arp("reachable"), Status.FAIL, "gateway.unreachable"),
+        (
+            gw_arp("reachable", 25.0),
+            gw_arp("reachable", 0.5),
+            Status.WARN,
+            "gateway.icmp_blocked",
+        ),
+        (gw_arp("stale"), gw_arp("reachable"), Status.WARN, "gateway.icmp_blocked"),
+    ],
+    ids=[
+        "linux-confirmed-25s-before-the-test",
+        "windows-reachable-before-and-after",
+        "linux-confirmed-during-the-test",
+        "windows-reachable-only-after",
+    ],
+)
+def test_only_arp_confirmed_during_the_test_proves_a_silent_gateway(
+    world, before, after, status, code
+):
+    world.arp_before, world.arp_after = before, after
+    diag = run(line_pc(INTERNET), ["interface", "gateway", "external"], internet=True)
+    res = by_name(diag)["gateway"]
+    assert (res.status, res.code) == (status, code)
+    assert ("is present" in res.summary) == (status == Status.WARN)
+    blamed = "gateway" if status == Status.FAIL else "external"
+    assert diag.primary.cause == blamed, diag.primary
+
+
 def test_the_advice_points_at_the_equipment_nic_gateway(world):
     hn = HostNetwork(
         interfaces=[
