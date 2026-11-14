@@ -262,6 +262,24 @@ def test_dualstack_sends_two_pings_per_family_whatever_the_count(monkeypatch):
     assert sent == [(4, 2), (6, 2)]
 
 
+def test_a_pc_without_an_ipv6_route_is_single_stack_not_broken(monkeypatch):
+    def fake(host, count=2, family=None, **kw):
+        if family == 4:
+            return PingStats(target=host, sent=count, received=count, raw="reply")
+        return PingStats(
+            target=host,
+            sent=count,
+            errors={"connect: Network is unreachable": count},
+            raw="ping: connect: Network is unreachable\n",
+        )
+
+    monkeypatch.setattr(dualstack, "system_ping", fake)
+    monkeypatch.setattr(dualstack, "_has_family", lambda host, fam: True)
+    monkeypatch.setattr(dualstack, "_tcp_family", lambda host, family, **kw: None)
+    res = dualstack.DualStackProbe().check(Context({"dns_name": "example.com"}))
+    assert (res.status, res.code) == (Status.OK, "dualstack.single_stack")
+
+
 # -- firewall: engine-11 -------------------------------------------------------
 
 UFW = """-P INPUT DROP
