@@ -139,6 +139,15 @@ def test_a_learned_mac_is_masked_without_separators_and_other_hex_is_not():
     assert b"deadbeef0123" in guid
 
 
+def test_masked_ipv4_stays_private_however_many_networks_there_are():
+    m = Masker()
+    nets = [(10, b) for b in range(256)] + [(172, b) for b in range(16, 32)]
+    nets += [(100, b) for b in range(64, 128)]
+    masked = [m.mask(f"{a}.{b}.7.9".encode()).decode() for a, b in nets]
+    assert all(ipaddress.ip_address(ip).is_private for ip in masked)
+    assert len({ip.rsplit(".", 2)[0] for ip in masked[:273]}) == 273
+
+
 def _masked_network(m, cidr):
     ip, plen = cidr.split("/")
     return ipaddress.ip_network(f"{m.mask(ip.encode()).decode()}/{plen}")

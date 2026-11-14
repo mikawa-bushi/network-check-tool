@@ -184,7 +184,8 @@ to netdiag's own interpretation (`netinfo.json`, `check.json`, `ping.json`).
 
 Masking is on by default and preserves structure: IPv4 addresses are mapped
 so that /16 and /24 relationships and the last octet survive (each /16 gets
-its own `10.x` block, `.0` and `.255` stay; netmasks, loopback, link-local and
+its own private /16, `10.100.x.x` onward, `.0` and `.255` stay; masked
+addresses never leave the private ranges; netmasks, loopback, link-local and
 public resolvers are kept). Coarser prefixes such as a `/8` route are not
 kept. MACs keep the vendor (OUI) half, in every form: `aa-bb-…`, `aa:bb:…`,
 the space-separated list in `route print`, the MAC inside a DHCPv6 DUID, and

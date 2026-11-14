@@ -9,12 +9,13 @@ interpretation shows up immediately.
 
 Masking (on by default) rewrites identifying values *in the bytes*, so the
 original encoding (UTF-8, cp932 ...) is preserved: IPv4 addresses are mapped
-consistently while keeping /16 and /24 groupings and the last octet, MACs
-(also inside a DHCPv6 DUID and in interface names such as ``enx`` + MAC) keep
-their vendor prefix (OUI), IPv6 interface IDs, the PC's host name, the user
-name, Wi-Fi SSIDs, the DNS suffixes and search domains, and names with three
-or more labels are replaced, in every file of the bundle. It is best effort —
-review the files before sending them outside the company.
+consistently into private ranges while keeping /16 and /24 groupings and the
+last octet, MACs (also inside a DHCPv6 DUID and in interface names such as
+``enx`` + MAC) keep their vendor prefix (OUI), IPv6 interface IDs, the PC's
+host name, the user name, Wi-Fi SSIDs, the DNS suffixes and search domains,
+and names with three or more labels are replaced, in every file of the
+bundle. It is best effort — review the files before sending them outside the
+company.
 """
 
 from __future__ import annotations
@@ -144,6 +145,16 @@ _NOT_TLDS = {
 }
 
 
+# Masked /16s come from the private ranges only: 10.100-10.255 first, then
+# the rest of 10/8, 172.16/12 and 192.168/16. Past 273 networks they repeat.
+_MASKED_NETS16 = (
+    [(10, b) for b in range(100, 256)]
+    + [(10, b) for b in range(100)]
+    + [(172, b) for b in range(16, 32)]
+    + [(192, 168)]
+)
+
+
 def _boundary(literal: bytes) -> re.Pattern:
     return re.compile(
         rb"(?<![\w.\-])" + re.escape(literal) + rb"(?![\w\-])", re.IGNORECASE
@@ -244,7 +255,7 @@ class Masker:
             or self._is_mask(octets)
         ):
             return m.group(0)
-        # Each /16 gets its own 10.x block and each /24 its own third octet
+        # Each /16 gets its own private /16 and each /24 its own third octet
         # in it, so /16 and /24 relationships survive. Third octets 0 and 255
         # stay, so a /16's network and broadcast addresses stay valid.
         n = self.nets16.setdefault((a, b), len(self.nets16))
@@ -255,7 +266,8 @@ class Masker:
                 used = sum(1 for k in self.thirds if k[:2] == (a, b))
                 self.thirds[(a, b, c)] = used + 1
             y = self.thirds[(a, b, c)]
-        return f"{10 + n // 155}.{100 + n % 155}.{y}.{d}".encode()
+        x1, x2 = _MASKED_NETS16[n % len(_MASKED_NETS16)]
+        return f"{x1}.{x2}.{y}.{d}".encode()
 
     @staticmethod
     def _is_mask(octets: List[int]) -> bool:
