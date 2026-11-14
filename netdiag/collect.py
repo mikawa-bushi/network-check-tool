@@ -31,7 +31,9 @@ from dataclasses import dataclass, field
 from pathlib import Path
 from typing import Any, Callable, Dict, List, Optional, Tuple
 
+from .core import InputError
 from .core.util import decode_output, os_name, run_bytes
+from .i18n import tr
 
 TEST_NET = "192.0.2.1"  # RFC 5737 documentation address: never answers
 UNKNOWN_HOST = "netdiag-nonexistent.invalid"  # RFC 6761: never resolves
@@ -609,11 +611,19 @@ def run_collect(
         for obj in parsed:
             masker.learn_object(obj)
         files = {name: masker.mask(data) for name, data in files.items()}
-    output.parent.mkdir(parents=True, exist_ok=True)
-    with zipfile.ZipFile(output, "w", compression=zipfile.ZIP_DEFLATED) as zf:
-        zf.writestr("netdiag-collect/README.txt", README)
-        for name, data in sorted(files.items()):
-            zf.writestr(f"netdiag-collect/{name}", data)
+    try:
+        output.parent.mkdir(parents=True, exist_ok=True)
+        with zipfile.ZipFile(output, "w", compression=zipfile.ZIP_DEFLATED) as zf:
+            zf.writestr("netdiag-collect/README.txt", README)
+            for name, data in sorted(files.items()):
+                zf.writestr(f"netdiag-collect/{name}", data)
+    except OSError as e:
+        raise InputError(
+            tr(
+                f"{output} に書き込めません（{e.strerror or e}）。-o で別の保存先を指定してください",
+                f"cannot write {output} ({e.strerror or e}); choose another path with -o",
+            )
+        ) from e
     return result
 
 

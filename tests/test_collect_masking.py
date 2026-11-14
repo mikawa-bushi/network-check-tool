@@ -9,8 +9,11 @@ import json
 import re
 import zipfile
 
+import pytest
+
 from netdiag import collect as collect_mod
 from netdiag import netinfo
+from netdiag.cli import main
 from netdiag.collect import Captured, Masker, run_collect
 from netdiag.netinfo.model import KIND_WIFI, Address, HostNetwork, Interface, Route
 
@@ -175,3 +178,23 @@ def test_collect_bundle_has_no_ssid_anywhere(monkeypatch, tmp_path):
             assert SSID.encode() not in z.read(name), name
         check = json.loads(z.read("netdiag-collect/netdiag/check.json"))
     assert check["host"]["results"][0]["code"] == "wifi.ok"
+
+
+def test_an_unwritable_output_is_a_usage_error(monkeypatch, tmp_path, capsys):
+    monkeypatch.setattr(netinfo, "collect", lambda: HostNetwork())
+    monkeypatch.setattr(
+        collect_mod, "run_raw", lambda cmd: Captured(cmd.name, cmd.args, 0, b"x")
+    )
+    import netdiag.runner as runner
+
+    monkeypatch.setattr(runner, "run_check", lambda devices, config=None: {}.get)
+    blocker = tmp_path / "file"
+    blocker.write_text("not a folder")
+    with pytest.raises(SystemExit) as exc:
+        main(
+            ["--lang", "en", "collect", "--no-ping", "-o", str(blocker / "c.zip")],
+            prog_name="netdiag",
+        )
+    err = capsys.readouterr().err
+    assert exc.value.code == 4
+    assert "cannot write" in err and "Traceback" not in err
