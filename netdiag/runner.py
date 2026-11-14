@@ -301,8 +301,11 @@ def run_check(
         reports = _check_devices(devices, cfg, host_diag, hn, say)
 
     # Errors that grew during the whole measurement (host + devices). They
-    # describe this PC, so --no-host and --skip link_errors leave them out.
-    if include_host and "link_errors" not in (skip or []):
+    # describe this PC and follow --only/--skip like every other check.
+    wanted = "link_errors" in (only or ["link_errors"]) and "link_errors" not in (
+        skip or []
+    )
+    if include_host and wanted:
         host_diag = _with_link_errors(engine, host_diag, cfg, counters_before)
 
     settings = {

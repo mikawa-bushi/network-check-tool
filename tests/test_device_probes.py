@@ -355,7 +355,9 @@ def test_run_check_end_to_end_with_fakes(monkeypatch):
         Device(name="ROBOT", host="192.168.3.41"),
         Device(name="OTHER", host="192.168.9.9"),
     ]
-    rep = runner.run_check(devices, config={"internet": False}, only=["interface"])
+    rep = runner.run_check(
+        devices, config={"internet": False}, only=["interface", "link_errors"]
+    )
     # only routable targets are pinged, all in one sweep
     assert calls["targets"] == ["192.168.3.39", "192.168.3.40", "192.168.3.41"]
     status = {d.device.name: d.status for d in rep.devices}
