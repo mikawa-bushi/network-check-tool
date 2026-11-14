@@ -251,10 +251,10 @@ the check's title. A check may appear more than once with different
 settings; each one runs. Targets in `config.tcp_targets` go to a `tcp`
 check that has no `target`; when every `tcp` check has one, they join the
 first, and no target is checked twice. In YAML, `0012` stays the text
-`0012`. A file
-netdiag cannot use (a syntax error, an unknown key or check name, `checks`
-that is not a list, a bad device) exits 4 with the file name and the problem.
-The exit codes are those of `check`.
+`0012`. A file netdiag cannot use (a syntax error, an unknown key or check
+name, `checks` that is not a list, a bad device) exits 4 with the file name
+and the problem. `--all` shows not-applicable checks, and the exit codes are
+those of `check`.
 
 ## Snapshots and peer tests
 

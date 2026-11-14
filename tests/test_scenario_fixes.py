@@ -141,6 +141,23 @@ def test_a_failing_second_check_is_not_hidden_by_a_passing_first(tmp_path, capsy
     assert "faily 192.0.2.9 fail" in out
 
 
+def test_all_shows_the_checks_the_hidden_note_points_at(tmp_path, capsys):
+    class _NotHere(Probe):
+        name = title = "nothere"
+        layer = "L1"
+        depends_on = []
+
+        def check(self, ctx):
+            return CheckResult.skip("nothere", "no such adapter", code="nothere.none")
+
+    _REGISTRY["nothere"] = _NotHere
+    sc = _write(tmp_path, "s.json", json.dumps({"checks": ["echo", "nothere"]}))
+    code, out, _ = _run(capsys, sc)
+    assert code == 0 and "use --all" in out and "no such adapter" not in out
+    code, out, _ = _run(capsys, sc, "--all")
+    assert code == 0 and "no such adapter" in out and "use --all" not in out
+
+
 def test_label_is_shown_as_the_check_title(tmp_path, capsys):
     sc = _write(
         tmp_path,

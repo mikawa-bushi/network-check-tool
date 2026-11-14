@@ -30,6 +30,12 @@ from ._app import (
     help=H("レポートをファイルに保存", "Write the report to a file."),
 )
 @click.option(
+    "--all",
+    "show_all",
+    is_flag=True,
+    help=H("対象外の項目も表示", "Also show not-applicable checks."),
+)
+@click.option(
     "--reasoning",
     is_flag=True,
     help=H(
@@ -40,7 +46,7 @@ from ._app import (
 @click.option(
     "--no-color", is_flag=True, help=H("色を付けない", "Disable ANSI colour.")
 )
-def scenario(path, fmt, output, reasoning, no_color):
+def scenario(path, fmt, output, show_all, reasoning, no_color):
     """シナリオファイル（YAML/JSON/TOML）どおりに診断 / Run a declarative diagnosis scenario.
 
     devices: を含むシナリオは、そのラインの機器も一緒に診断します。
@@ -79,6 +85,7 @@ def scenario(path, fmt, output, reasoning, no_color):
             rep,
             color=False if output else color_wanted(no_color),
             verbose=reasoning,
+            show_all=show_all,
             unicode=True if output else None,
         )
     write_output(text, output, fmt)
