@@ -7,8 +7,10 @@ user reboots the router or calls the ISP.
 
 from __future__ import annotations
 
+import ipaddress
 import re
-from typing import List
+import socket
+from typing import List, Optional, Set
 
 from ..core import CheckResult, Context, Probe, register
 from ..core.util import have, is_windows, run
@@ -17,8 +19,27 @@ from ..i18n import Text, tr
 # Matches both traceroute ("  1  10.0.0.1 ...") and tracepath (" 1:  10.0.0.1 ...");
 # the optional "?:" handles tracepath's localhost/pmtu discovery line.
 _HOP_RE = re.compile(r"^\s*(\d+)\??:?\s+(.*)$")
-_IP_RE = re.compile(r"(\d+\.\d+\.\d+\.\d+)")
 _MS_RE = re.compile(r"([\d.]+)\s*ms")
+TIMEOUT_S = 60
+
+
+def _hop_ip(rest: str) -> Optional[str]:
+    """The first IPv4 or IPv6 address on a hop line."""
+    for token in re.split(r"[\s()\[\]]+", rest):
+        try:
+            return str(ipaddress.ip_address(token.split("%", 1)[0]))
+        except ValueError:
+            continue
+    return None
+
+
+def _addresses_of(host: str) -> Set[str]:
+    """Every address *host* names, so a hop can be matched to a host name."""
+    try:
+        infos = socket.getaddrinfo(host, None)
+    except (OSError, UnicodeError):
+        return {host}
+    return {str(ipaddress.ip_address(i[4][0].split("%", 1)[0])) for i in infos}
 
 
 def _parse_hops(text: str) -> List[dict]:
@@ -34,13 +55,13 @@ def _parse_hops(text: str) -> List[dict]:
         if "pmtu" in rest or "[LOCALHOST]" in rest:
             continue
         n = int(m.group(1))
-        ipm = _IP_RE.search(rest)
+        ip = _hop_ip(rest)
         ms = [float(x) for x in _MS_RE.findall(rest)]
         rec = {
             "hop": n,
-            "ip": ipm.group(1) if ipm else None,
+            "ip": ip,
             "rtt_ms": round(sum(ms) / len(ms), 2) if ms else None,
-            "timeout": "*" in rest and not ipm,
+            "timeout": "*" in rest and not ip,
         }
         if n not in by_hop:
             order.append(n)
@@ -87,16 +108,16 @@ class TracerouteProbe(Probe):
         max_hops = int(ctx.get("max_hops", 20))
 
         if is_windows() and have("tracert"):
-            res = run(["tracert", "-d", "-h", str(max_hops), host], timeout=60)
+            res = run(["tracert", "-d", "-h", str(max_hops), host], timeout=TIMEOUT_S)
         elif have("traceroute"):
             res = run(
                 ["traceroute", "-n", "-w", "2", "-q", "1", "-m", str(max_hops), host],
-                timeout=60,
+                timeout=TIMEOUT_S,
             )
         elif have("tracepath"):
-            res = run(["tracepath", "-n", "-m", str(max_hops), host], timeout=60)
+            res = run(["tracepath", "-n", "-m", str(max_hops), host], timeout=TIMEOUT_S)
         else:
-            return CheckResult.skip(
+            return CheckResult.unknown(
                 self.name,
                 tr(
                     "traceroute/tracepath/tracert がありません",
@@ -106,7 +127,7 @@ class TracerouteProbe(Probe):
             )
 
         if not res.found:
-            return CheckResult.skip(
+            return CheckResult.unknown(
                 self.name,
                 tr(
                     "traceroute コマンドがありません",
@@ -116,9 +137,14 @@ class TracerouteProbe(Probe):
             )
 
         hops = _parse_hops(res.stdout or res.stderr)
-        detail = {"target": host, "hops": hops, "output": res.stdout}
+        detail = {
+            "target": host,
+            "hops": hops,
+            "output": res.stdout,
+            "timed_out": res.timed_out,
+        }
         if not hops:
-            return CheckResult.skip(
+            return CheckResult.unknown(
                 self.name,
                 tr(
                     "traceroute の出力を解析できません",
@@ -128,7 +154,8 @@ class TracerouteProbe(Probe):
                 code="traceroute.unparsed",
             )
 
-        reached = any(h["ip"] == host for h in hops)
+        wanted = _addresses_of(host) | {host}
+        reached = any(h["ip"] in wanted for h in hops)
         last_ok = None
         for h in hops:
             if h["ip"] and not h["timeout"]:
@@ -151,6 +178,25 @@ class TracerouteProbe(Probe):
                 metrics=metrics,
                 detail=detail,
                 code="traceroute.ok",
+            )
+        if res.timed_out:
+            last = (
+                tr(
+                    f"ホップ {last_ok['hop']} ({last_ok['ip']}) まで応答",
+                    f"last answer from hop {last_ok['hop']} ({last_ok['ip']})",
+                )
+                if last_ok
+                else tr("応答したホップなし", "no hop answered")
+            )
+            return CheckResult.unknown(
+                self.name,
+                tr(
+                    f"{host} への経路トレースが {TIMEOUT_S} 秒で打ち切られました（{last}）",
+                    f"the trace to {host} was cut off after {TIMEOUT_S} s ({last})",
+                ),
+                metrics=metrics,
+                detail=detail,
+                code="traceroute.timeout",
             )
         if last_ok:
             return CheckResult.warn(
