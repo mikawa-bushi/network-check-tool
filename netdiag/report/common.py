@@ -3,6 +3,7 @@
 from __future__ import annotations
 
 import codecs
+import os
 import sys
 import unicodedata
 from typing import Optional, Tuple
@@ -118,10 +119,32 @@ _EAST_ASIAN_CODECS = frozenset(
 )
 
 
+_WINDOWS = os.name == "nt"
+
+
+def _drawn_with() -> str:
+    """The encoding the terminal on stdout draws with.
+
+    Python reports utf-8 for an interactive Windows console, which still draws
+    with its output code page (932 on Japanese Windows).
+    """
+    if _WINDOWS:
+        try:
+            if sys.stdout.isatty():
+                import ctypes
+
+                code_page = ctypes.windll.kernel32.GetConsoleOutputCP()
+                if code_page:
+                    return f"cp{code_page}"
+        except (AttributeError, OSError, ValueError):
+            pass
+    return getattr(sys.stdout, "encoding", None) or "utf-8"
+
+
 def _wide_classes() -> Tuple[str, ...]:
     """East Asian width classes that take two cells on this process's stdout."""
     try:
-        encoding = codecs.lookup(getattr(sys.stdout, "encoding", None) or "utf-8")
+        encoding = codecs.lookup(_drawn_with())
     except LookupError:
         return ("W", "F")
     return ("W", "F", "A") if encoding.name in _EAST_ASIAN_CODECS else ("W", "F")

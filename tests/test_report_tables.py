@@ -76,3 +76,52 @@ def test_soak_table_columns_line_up_on_a_cp932_console(monkeypatch, ja):
     assert any("…" in r for r in rows) and any("—" in r for r in rows)
     for row in rows:
         assert _field_starts(row)[1:] == _field_starts(header), row
+
+
+class _Console(io.TextIOWrapper):
+    def isatty(self):
+        return True
+
+
+def _use_windows_console(monkeypatch, code_page, tty=True):
+    """An interactive Windows console: Python reports utf-8 for it, and the
+    console draws with its output code page. ctypes is stubbed; how a real
+    console draws is not verified here."""
+    import ctypes
+    from types import SimpleNamespace
+
+    import netdiag.report.common as common
+
+    kernel32 = SimpleNamespace(GetConsoleOutputCP=lambda: code_page)
+    monkeypatch.setattr(ctypes, "windll", SimpleNamespace(kernel32=kernel32), False)
+    monkeypatch.setattr(common, "_WINDOWS", True)
+    stream = (_Console if tty else io.TextIOWrapper)(io.BytesIO(), encoding="utf-8")
+    monkeypatch.setattr(sys, "stdout", stream)
+
+
+def test_soak_table_lines_up_on_an_interactive_japanese_console(monkeypatch, ja):
+    report = _soak(
+        [
+            ("第1ライン搬送PLC", "192.0.2.11", []),
+            ("検査装置ＨＭＩ（予備機・長い名前）", "192.0.2.13", [(50, 51)]),
+            ("未接続の機器", "192.0.2.14", [(0, 10**9)]),
+        ]
+    )
+    _use_windows_console(monkeypatch, 932)
+    lines = render_soak_text(report, color=False, unicode=False).splitlines()
+    head = next(i for i, line in enumerate(lines) if "名前" in line)
+    header, rows = lines[head], lines[head + 1 : head + 4]
+    assert any("—" in r for r in rows)
+    for row in rows:
+        assert _field_starts(row)[1:] == _field_starts(header), row
+
+
+def test_ambiguous_characters_follow_the_console_code_page(monkeypatch):
+    from netdiag.report.common import width
+
+    _use_windows_console(monkeypatch, 932)
+    assert width("—…") == 4
+    _use_windows_console(monkeypatch, 65001)
+    assert width("—…") == 2
+    _use_windows_console(monkeypatch, 932, tty=False)  # redirected to a file
+    assert width("—…") == 2
