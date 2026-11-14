@@ -15,6 +15,7 @@ from ..core import CheckResult, Context, Probe, register
 from ..i18n import Text, tr
 from ..netinfo import KIND_ETHERNET
 from ._common import oscmd
+from .interface import speed_text
 
 # Cumulative error ratio (since boot) worth mentioning. Counters also include
 # old incidents, so this is a WARN hint; live increases are judged separately
@@ -103,12 +104,8 @@ class LinkProbe(Probe):
                 code=codes[0],
             )
         desc = ", ".join(
-            f"{i.name} "
-            + (
-                f"{i.speed_mbps / 1000:g} Gbps"
-                if (i.speed_mbps or 0) >= 1000
-                else f"{i.speed_mbps or 0:g} Mbps"
-            )
+            i.name
+            + (f" {speed_text(i.speed_mbps)}" if i.speed_mbps else "")
             + (tr(" 全二重", " full") if i.duplex == "full" else "")
             for i in wired
         )
