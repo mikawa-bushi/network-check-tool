@@ -1,10 +1,8 @@
 from __future__ import annotations
 
-import sys
-
 import click
 
-from ..core import all_probes, get_probe
+from ..core import InputError, all_probes, get_probe
 from ..i18n import tr
 from ._app import cli
 
@@ -35,11 +33,13 @@ def explain(probe_name):
         return
     cls = get_probe(probe_name)
     if not cls:
-        click.echo(
-            tr(f"不明なチェック: {probe_name}", f"unknown probe: {probe_name}"),
-            err=True,
+        names = ", ".join(sorted(all_probes()))
+        raise InputError(
+            tr(
+                f"不明なチェック名: {probe_name}。使えるチェック名: {names}",
+                f"unknown check name: {probe_name}. Valid names: {names}",
+            )
         )
-        sys.exit(1)
     click.echo(f"# {probe_name} — {cls.title}  (layer {cls.layer})\n")
     click.echo(tr("内容: ", "What:  ") + str(cls.what))
     click.echo(tr("理由: ", "Why:   ") + str(cls.why))
