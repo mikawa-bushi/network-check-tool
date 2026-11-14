@@ -9,10 +9,12 @@ interpretation shows up immediately.
 
 Masking (on by default) rewrites identifying values *in the bytes*, so the
 original encoding (UTF-8, cp932 ...) is preserved: IPv4 addresses are mapped
-consistently while keeping /24 groupings and the last octet, MACs keep their
-vendor prefix (OUI), IPv6 interface IDs, the PC's host name, the user name,
-Wi-Fi SSIDs and multi-label domain names are replaced. It is best effort —
-review the files before sending them outside the company.
+consistently while keeping /16 and /24 groupings and the last octet, MACs
+(also inside a DHCPv6 DUID) keep their vendor prefix (OUI), IPv6 interface
+IDs, the PC's host name, the user name, Wi-Fi SSIDs, the DNS suffixes and
+search domains, and names with three or more labels are replaced, in every
+file of the bundle. It is best effort — review the files before sending them
+outside the company.
 """
 
 from __future__ import annotations
@@ -27,9 +29,9 @@ import time
 import zipfile
 from dataclasses import dataclass, field
 from pathlib import Path
-from typing import Callable, Dict, List, Optional, Tuple
+from typing import Any, Callable, Dict, List, Optional, Tuple
 
-from .core.util import os_name, run_bytes
+from .core.util import decode_output, os_name, run_bytes
 
 TEST_NET = "192.0.2.1"  # RFC 5737 documentation address: never answers
 UNKNOWN_HOST = "netdiag-nonexistent.invalid"  # RFC 6761: never resolves
@@ -57,18 +59,67 @@ KEEP_DOMAINS = {
 _IPV4_RE = re.compile(rb"(?<![\d])(\d{1,3})\.(\d{1,3})\.(\d{1,3})\.(\d{1,3})(?![\d])")
 # A lead byte of a Shift_JIS character must not be taken as part of a token.
 _NOT_TOKEN = rb"(?<![0-9A-Fa-f:\-\x81-\x9f\xe0-\xfc])"
+_HEX = rb"([0-9A-Fa-f]{1,2})"
 _MAC_RE = re.compile(
     _NOT_TOKEN
-    + rb"([0-9A-Fa-f]{1,2})([:\-])([0-9A-Fa-f]{1,2})\2([0-9A-Fa-f]{1,2})\2"
-    + rb"([0-9A-Fa-f]{1,2})\2([0-9A-Fa-f]{1,2})\2([0-9A-Fa-f]{1,2})(?![0-9A-Fa-f:])"
+    + _HEX
+    + rb"([:\-])"
+    + rb"\2".join([_HEX] * 5)
+    + rb"(?![0-9A-Fa-f:]|-[0-9A-Fa-f])"
+)
+# ``route print`` lists each adapter as ``12...00 15 5d 01 02 03 ......Name``.
+_MAC_SPACED_RE = re.compile(
+    rb"(?<=\.\.\.)" + _HEX + rb"( )" + rb"\2".join([_HEX] * 5) + rb"(?= \.)"
+)
+# Seven or more byte groups: a DHCPv6 DUID, whose last six bytes are a MAC.
+_HEX_RUN_RE = re.compile(
+    _NOT_TOKEN
+    + rb"([0-9A-Fa-f]{2}([:\-])[0-9A-Fa-f]{2}(?:\2[0-9A-Fa-f]{2}){5,})"
+    + rb"(?![:\-]?[0-9A-Fa-f])"
 )
 _IPV6_RE = re.compile(
     _NOT_TOKEN
     + rb"((?:[0-9A-Fa-f]{1,4}:){1,7}:?(?:[0-9A-Fa-f]{1,4})?(?::[0-9A-Fa-f]{1,4})*)(%[\w.]+)?(?![0-9A-Fa-f:])"
 )
-_SSID_RE = re.compile(rb"(?m)^(\s*SSID\s*:\s*)(\S.*?)\s*$")
 _DOMAIN_RE = re.compile(
     rb"(?<![\w.\-])((?:[A-Za-z0-9](?:[A-Za-z0-9\-]{0,61}[A-Za-z0-9])?\.){2,}[A-Za-z]{2,24})(?![\w\-])"
+)
+_DOMAIN_SHAPE = re.compile(
+    r"(?:[A-Za-z0-9](?:[A-Za-z0-9\-]{0,61}[A-Za-z0-9])?\.)+[A-Za-z]{2,24}\.?"
+)
+
+
+def _line_values(key: str) -> bytes:
+    """``key`` in UTF-8 or cp932, then ``:`` and the value to the end of the line."""
+    keys = {re.escape(key.encode(enc)) for enc in ("utf-8", "cp932")}
+    return (
+        rb"(?m)^[ \t]*(?:"
+        + b"|".join(sorted(keys))
+        + rb")[ \t]*:[ \t]*(\S[^\r\n]*?)[ \t]*\r?$"
+    )
+
+
+# Where SSIDs appear: netsh (``SSID :``, ``Profile :``), iw (``ssid X``,
+# ``SSID: X``).
+_SSID_RES = [
+    re.compile(_line_values("SSID")),
+    re.compile(_line_values("Profile")),
+    re.compile(_line_values("プロファイル")),
+    re.compile(rb"(?m)^[ \t]*ssid[ \t]+(\S[^\r\n]*?)[ \t]*\r?$"),
+]
+# Where internal domains appear: ipconfig DNS suffix lines (and the indented
+# lines that continue the search list), resolv.conf, ``scutil --dns``.
+_SUFFIX_KEY_RE = re.compile(
+    rb"(?i)^[^:\r\n]*(?:dns suffix|"
+    + "サフィックス".encode("cp932")
+    + b"|"
+    + "サフィックス".encode()
+    + rb")[^:\r\n]*:[ \t]*(\S*)"
+)
+_CONTINUATION_RE = re.compile(rb"^[ \t]{8,}(\S+)[ \t]*$")
+_RESOLV_RE = re.compile(rb"(?m)^(?:search|domain)[ \t]+([^\r\n#]+)")
+_SCUTIL_RE = re.compile(
+    rb"(?m)^[ \t]*(?:search domain\[\d+\]|domain)[ \t]*:[ \t]*(\S+)"
 )
 
 
@@ -87,16 +138,29 @@ _NOT_TLDS = {
 }
 
 
+def _boundary(literal: bytes) -> re.Pattern:
+    return re.compile(
+        rb"(?<![\w.\-])" + re.escape(literal) + rb"(?![\w\-])", re.IGNORECASE
+    )
+
+
 class Masker:
-    """Consistent, structure-preserving replacement of identifying values."""
+    """Consistent, structure-preserving replacement of identifying values.
+
+    SSIDs and internal domains are recognised where the OS prints them
+    (:meth:`learn`), then replaced wherever they occur in any file, summaries
+    and JSON included. :meth:`mask` learns from its input first, so masking
+    one buffer on its own works too.
+    """
 
     def __init__(
         self, hostnames: Optional[List[str]] = None, users: Optional[List[str]] = None
     ) -> None:
-        self.prefixes: Dict[Tuple[int, int, int], Tuple[int, int]] = {}
+        self.nets16: Dict[Tuple[int, int], int] = {}
+        self.thirds: Dict[Tuple[int, int, int], int] = {}
         self.macs: Dict[bytes, bytes] = {}
         self.v6: Dict[bytes, bytes] = {}
-        self.ssids: Dict[bytes, bytes] = {}
+        self.ssids: Dict[str, bytes] = {}
         self.domains: Dict[bytes, bytes] = {}
         self.literals: List[Tuple[bytes, bytes]] = []
         for h in hostnames or []:
@@ -105,6 +169,56 @@ class Masker:
         for u in users or []:
             if u and len(u) >= 3:
                 self.literals.append((u.encode("utf-8", "ignore"), b"USER"))
+
+    # learning --------------------------------------------------------------
+    def _learn_ssid(self, value: str) -> None:
+        value = value.strip()
+        if value and value not in self.ssids:
+            self.ssids[value] = f"SSID-{len(self.ssids) + 1}".encode()
+
+    def _learn_domain(self, value: bytes) -> None:
+        name = value.strip().rstrip(b".").lower()
+        text = name.decode("ascii", "ignore")
+        if _DOMAIN_SHAPE.fullmatch(text) and text not in KEEP_DOMAINS:
+            self.domains.setdefault(
+                name, f"domain{len(self.domains) + 1}.example".encode()
+            )
+
+    def learn(self, data: bytes) -> None:
+        """Remember the SSIDs and internal domains that *data* names."""
+        for rx in _SSID_RES:
+            for m in rx.finditer(data):
+                self._learn_ssid(decode_output(m.group(1)))
+        for m in _RESOLV_RE.finditer(data):
+            for token in m.group(1).split():
+                self._learn_domain(token)
+        for m in _SCUTIL_RE.finditer(data):
+            self._learn_domain(m.group(1))
+        in_suffix = False
+        for line in data.splitlines():
+            m = _SUFFIX_KEY_RE.match(line)
+            if m:
+                self._learn_domain(m.group(1))
+                in_suffix = True
+                continue
+            cont = _CONTINUATION_RE.match(line) if in_suffix else None
+            if cont:
+                self._learn_domain(cont.group(1))
+            else:
+                in_suffix = False
+
+    def learn_object(self, obj: Any) -> None:
+        """Learn from parsed data: ``ssid`` fields and raw tool text inside it."""
+        if isinstance(obj, dict):
+            for key, value in obj.items():
+                if str(key).lower() == "ssid" and isinstance(value, str):
+                    self._learn_ssid(value)
+                self.learn_object(value)
+        elif isinstance(obj, (list, tuple)):
+            for value in obj:
+                self.learn_object(value)
+        elif isinstance(obj, str):
+            self.learn(obj.encode("utf-8"))
 
     # IPv4 ------------------------------------------------------------------
     def _ipv4(self, m: re.Match) -> bytes:
@@ -121,12 +235,18 @@ class Masker:
             or self._is_mask(octets)
         ):
             return m.group(0)
-        key = (a, b, c)
-        if key not in self.prefixes:
-            n = len(self.prefixes)
-            self.prefixes[key] = (100 + n // 256, n % 256)
-        x, y = self.prefixes[key]
-        return f"10.{x}.{y}.{d}".encode()
+        # Each /16 gets its own 10.x block and each /24 its own third octet
+        # in it, so /16 and /24 relationships survive. Third octets 0 and 255
+        # stay, so a /16's network and broadcast addresses stay valid.
+        n = self.nets16.setdefault((a, b), len(self.nets16))
+        if c in (0, 255):
+            y = c
+        else:
+            if (a, b, c) not in self.thirds:
+                used = sum(1 for k in self.thirds if k[:2] == (a, b))
+                self.thirds[(a, b, c)] = used + 1
+            y = self.thirds[(a, b, c)]
+        return f"{10 + n // 155}.{100 + n % 155}.{y}.{d}".encode()
 
     @staticmethod
     def _is_mask(octets: List[int]) -> bool:
@@ -134,12 +254,10 @@ class Masker:
         return "01" not in bits and bits.startswith("1")  # 255.255.255.0 etc.
 
     # MAC -------------------------------------------------------------------
-    def _mac(self, m: re.Match) -> bytes:
-        groups = [m.group(i) for i in (1, 3, 4, 5, 6, 7)]
-        sep = m.group(2)
+    def _mac_groups(self, groups: List[bytes], sep: bytes) -> bytes:
         norm = b"".join(g.zfill(2).lower() for g in groups)
         if norm in (b"ffffffffffff", b"000000000000") or norm.startswith(b"01005e"):
-            return m.group(0)
+            return sep.join(groups)
         if norm not in self.macs:
             n = len(self.macs) + 1
             self.macs[norm] = (
@@ -151,6 +269,16 @@ class Masker:
         if upper:
             tail_parts = [t.upper() for t in tail_parts]
         return sep.join(groups[:3] + tail_parts)
+
+    def _mac(self, m: re.Match) -> bytes:
+        return self._mac_groups([m.group(i) for i in (1, 3, 4, 5, 6, 7)], m.group(2))
+
+    def _hex_run(self, m: re.Match) -> bytes:
+        sep = m.group(2)
+        groups = m.group(1).split(sep)
+        keep = min(2, len(groups) - 6)  # the DUID type
+        head = groups[:keep] + [b"00"] * (len(groups) - 6 - keep)
+        return sep.join(head + [self._mac_groups(groups[-6:], sep)])
 
     # IPv6 ------------------------------------------------------------------
     def _ipv6(self, m: re.Match) -> bytes:
@@ -165,12 +293,6 @@ class Masker:
             first = addr.split(b":")[0] or b""
             self.v6[addr] = first + b"::" + f"{len(self.v6) + 1:x}".encode()
         return self.v6[addr] + (m.group(2) or b"")
-
-    def _ssid(self, m: re.Match) -> bytes:
-        value = m.group(2)
-        if value not in self.ssids:
-            self.ssids[value] = f"SSID-{len(self.ssids) + 1}".encode()
-        return m.group(1) + self.ssids[value]
 
     def _domain(self, m: re.Match) -> bytes:
         name = m.group(1)
@@ -189,13 +311,28 @@ class Masker:
         return self.domains[low]
 
     def mask(self, data: bytes) -> bytes:
+        self.learn(data)
         for old, new in self.literals:
             data = re.sub(re.escape(old), new, data, flags=re.IGNORECASE)
-        data = _SSID_RE.sub(self._ssid, data)
+        for ssid, new in self.ssids.items():
+            for enc in ("utf-8", "cp932"):
+                try:
+                    literal = ssid.encode(enc)
+                except UnicodeEncodeError:
+                    continue
+                data = re.sub(
+                    rb"(?<![A-Za-z0-9])" + re.escape(literal) + rb"(?![A-Za-z0-9])",
+                    new,
+                    data,
+                )
         data = _IPV6_RE.sub(self._ipv6, data)
+        data = _HEX_RUN_RE.sub(self._hex_run, data)
         data = _MAC_RE.sub(self._mac, data)
+        data = _MAC_SPACED_RE.sub(self._mac, data)
         data = _IPV4_RE.sub(self._ipv4, data)
         data = _DOMAIN_RE.sub(self._domain, data)
+        for name, new in list(self.domains.items()):
+            data = _boundary(name).sub(new, data)
         return data
 
 
@@ -351,13 +488,13 @@ netdiag 自身の解釈結果が入っています。開発者が実機の出力
   netdiag/    netdiag による解釈（netinfo.json, check.json, ping.json）
   manifest.json  実行したコマンド・終了コード・所要時間・マスク有無
 
-マスク（既定で有効）: IPアドレス（/24 のまとまりと末尾は保持）、MACアドレス
+マスク（既定で有効）: IPアドレス（/16・/24 のまとまりと末尾は保持）、MACアドレス
 （メーカー部分は保持）、IPv6、PC名、ユーザー名、Wi-Fi の SSID、ドメイン名を置き換えています。
 自動処理のため完全ではありません。社外に送る前に内容を確認してください。
 
 This zip holds the raw bytes of the OS commands netdiag relies on and netdiag's
 own interpretation, for building test fixtures from real machines. Masking is
-best effort (IPs keep their /24 grouping and last octet, MACs their vendor
+best effort (IPs keep their /16 and /24 grouping and last octet, MACs their vendor
 prefix; host/user names, SSIDs and domains are replaced) — review before sharing.
 """
 
@@ -396,23 +533,24 @@ def run_collect(
         users=[_user()],
     )
 
-    def clean(data: bytes) -> bytes:
-        return masker.mask(data) if mask else data
-
+    # Everything is gathered unmasked first: an SSID or domain learned from
+    # one file must be masked in every other file too.
     result = CollectResult(path=output, masked=mask)
     files: Dict[str, bytes] = {}
+    parsed: List[Any] = []
     for cmd in plan(kind, gateways[0] if gateways else None, targets, ping=ping):
         if progress:
             progress(cmd.name)
         cap = runner(cmd)
         result.commands.append(cap)
-        files[f"commands/{cmd.name}.out"] = clean(cap.stdout)
+        files[f"commands/{cmd.name}.out"] = cap.stdout
         if cap.stderr:
-            files[f"commands/{cmd.name}.err"] = clean(cap.stderr)
+            files[f"commands/{cmd.name}.err"] = cap.stderr
 
     def dump(obj) -> bytes:
-        return clean(
-            json.dumps(obj, ensure_ascii=False, indent=2, default=str).encode("utf-8")
+        parsed.append(obj)
+        return json.dumps(obj, ensure_ascii=False, indent=2, default=str).encode(
+            "utf-8"
         )
 
     files["netdiag/netinfo.json"] = dump(hn.to_dict())
@@ -426,7 +564,7 @@ def run_collect(
         rep = run_check([], config={"internet": False})
         files["netdiag/check.json"] = dump(rep.to_dict())
     except Exception as e:  # interpretation errors are exactly what we want to see
-        files["netdiag/check_error.txt"] = clean(f"{type(e).__name__}: {e}".encode())
+        files["netdiag/check_error.txt"] = f"{type(e).__name__}: {e}".encode()
     if ping:
         if progress:
             progress("netdiag ping")
@@ -437,7 +575,7 @@ def run_collect(
                 {t: s.to_dict() for t, s in stats.items()}
             )
         except Exception as e:
-            files["netdiag/ping_error.txt"] = clean(f"{type(e).__name__}: {e}".encode())
+            files["netdiag/ping_error.txt"] = f"{type(e).__name__}: {e}".encode()
 
     manifest = {
         "netdiag_version": __version__,
@@ -464,10 +602,16 @@ def run_collect(
             for c in result.commands
         ],
     }
+    files["manifest.json"] = dump(manifest)
+    if mask:
+        for data in files.values():
+            masker.learn(data)
+        for obj in parsed:
+            masker.learn_object(obj)
+        files = {name: masker.mask(data) for name, data in files.items()}
     output.parent.mkdir(parents=True, exist_ok=True)
     with zipfile.ZipFile(output, "w", compression=zipfile.ZIP_DEFLATED) as zf:
         zf.writestr("netdiag-collect/README.txt", README)
-        zf.writestr("netdiag-collect/manifest.json", dump(manifest))
         for name, data in sorted(files.items()):
             zf.writestr(f"netdiag-collect/{name}", data)
     return result
