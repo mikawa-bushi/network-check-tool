@@ -149,11 +149,15 @@ def _as_new_server(data):
 
 
 def test_one_late_reply_does_not_make_later_probes_count_as_lost():
+    first = []
+
     def late_first(sock, data, addr, n):
         if n == 0:
-            threading.Timer(0.3, sock.sendto, (_as_new_server(data), addr)).start()
-        else:
-            sock.sendto(_as_new_server(data), addr)
+            first.append(data)
+            return
+        if n == 3:  # probe 0 timed out long ago; its reply lands just before 3's
+            sock.sendto(_as_new_server(first[0]), addr)
+        sock.sendto(_as_new_server(data), addr)
 
     port, stop = _fake_echo(late_first)
     rep = measure_loss_jitter("127.0.0.1", port, count=10, interval=0.0, timeout=0.2)
