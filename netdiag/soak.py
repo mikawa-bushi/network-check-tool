@@ -1244,10 +1244,8 @@ def run_soak(
     stop.set()
     if addrs:
         pinger.join(rec.window + 5.0)
-    # Ctrl-C also stops the system ping, so requests still waiting for their
-    # reply then have no verdict; requests sent after the stop never left.
-    finished = max(started, stopped_at - timeout) if interrupted else stopped_at
-    rec.flush(finished)
+    finished = stopped_at
+    rec.flush(finished)  # a request sent after the stop is not part of the run
     stats = outcome.get("stats") or {}
     for t in tracks:
         st = stats.get(t.address) if t.address else None

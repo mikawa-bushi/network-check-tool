@@ -577,7 +577,7 @@ def test_a_second_ctrl_c_does_not_lose_the_report(tmp_path):
 
         measure.ping_stream = stream
         from netdiag.cli import main
-        main(["soak", "192.0.2.1", "--duration", "1h", "--format", "json"])
+        main(["soak", "192.0.2.1", "--duration", "1h", "--timeout", "5", "--format", "json"])
         """)
     p = subprocess.Popen(
         [sys.executable, "-c", script],

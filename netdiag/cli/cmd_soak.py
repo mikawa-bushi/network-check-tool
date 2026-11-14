@@ -212,7 +212,7 @@ def soak(
                 f"測定時間 {duration!r} は使えません（例: 600, 10m, 2h, 1h30m）",
                 f"cannot use {duration!r} as a duration (examples: 600, 10m, 2h, 1h30m)",
             ),
-            param_hint="--duration",
+            param_hint="'--duration'",
         )
     devices = _collect_devices(targets, device_files, ())
     if not devices:
