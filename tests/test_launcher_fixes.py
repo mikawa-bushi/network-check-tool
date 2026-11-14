@@ -8,6 +8,7 @@ import pytest
 
 from netdiag import launcher
 from netdiag import runner as runner_mod
+from netdiag.core import CheckResult
 from netdiag.diagnosis import Diagnosis
 from netdiag.runner import CheckReport
 
@@ -23,7 +24,8 @@ def exe(monkeypatch, tmp_path, capsys):
         if state["crash"]:
             raise state["crash"]
         state["devices"] = devices
-        return CheckReport(host=Diagnosis(results=[], hypotheses=[], healthy=True))
+        ok = CheckResult.ok("interface", "eth0 up", code="interface.ok")
+        return CheckReport(host=Diagnosis(results=[ok], hypotheses=[], healthy=True))
 
     monkeypatch.setattr(runner_mod, "run_check", run_check)
     monkeypatch.setattr(launcher, "_folder_of_exe", lambda: tmp_path)
