@@ -6,8 +6,9 @@ All notable changes to the `netdiag` package are documented in this file.
 
 netdiag's verdicts now follow what it measured. A check that could not
 measure says "not measured" instead of passing, several exit codes changed,
-and the unattended-monitoring commands are gone. Read "Upgrading from 0.5"
-before you update scripts, or a PC that ran `netdiag service install`.
+and the unattended-monitoring commands are gone. netdiag now runs on Linux
+and macOS only. Read "Upgrading from 0.5" before you update scripts, or a PC
+that ran `netdiag service install`.
 
 ### Fixed
 
@@ -37,12 +38,10 @@ before you update scripts, or a PC that ran `netdiag service install`.
   is single-stack again.
 - Routes follow the OS. On Linux, metrics, policy rules (Tailscale, wg-quick)
   and multipath defaults are read as the kernel uses them, and a PC without
-  iproute2 reads `/proc` and `/sys`. Windows reads only active routes and
-  ignores disconnected adapters. macOS reads abbreviated routes and utun
+  iproute2 reads `/proc` and `/sys`. macOS reads abbreviated routes and utun
   addresses.
-- WireGuard, PPP and other links without ARP are never judged by ARP. Invalid
-  (無効) rows of Windows `arp -a` count as no answer. CRC errors are counted
-  once in the NIC error total.
+- WireGuard, PPP and other links without ARP are never judged by ARP. CRC
+  errors are counted once in the NIC error total.
 - Ping through the system `ping` no longer stops at "Network is unreachable"
   and reports no loss: each request that falls due counts as lost. Requests
   that were never sent, or whose wait Ctrl-C cut short, are not counted.
@@ -92,22 +91,14 @@ before you update scripts, or a PC that ran `netdiag service install`.
   append its traceback to the device list.
 - The report no longer depends on a history database, so a damaged or locked
   `history.db` cannot lose it (`check --save` is removed).
-- The exe never replaces an earlier report. Report names carry the seconds,
-  and `-2`, `-3` on a clash. A dropped workbook, several files or a folder
-  get a sentence that says what to drop. After an internal error the window
-  waits too. It waits for Enter only when stdin is a console, so a batch job
-  no longer hangs.
 
-#### Windows and Japanese output
+#### Japanese output
 
 - html, json and csv sent to a redirected stdout are the UTF-8 bytes a file
-  gets, for `check`, `scan`, `soak` and `scenario`. Japanese Windows used to
-  write cp932 under a utf-8 header, and Excel showed an empty row between CSV
-  rows.
-- Colour and the progress line first switch a Windows console to VT mode, or
-  stay off. Raw escape codes no longer appear.
-- Table columns line up on a Japanese console, including an interactive one
-  that Python reports as utf-8. The device table no longer cuts "1000/1000".
+  gets, for `check`, `scan`, `soak` and `scenario`, whatever the locale's
+  encoding.
+- Table columns line up on a Japanese terminal, including one in an EUC-JP or
+  Shift_JIS locale. The device table no longer cuts "1000/1000".
 - `--lang` takes effect before the command line is parsed, so help and usage
   errors follow it. Under `LANG=C`, netdiag stays Japanese. Each help text has
   one translation, so help no longer shows another command's wording.
@@ -129,8 +120,7 @@ before you update scripts, or a PC that ran `netdiag service install`.
   down from the start gets an outage, not "sporadic loss", and a live
   "dropped" line.
 - The run is timed on a clock that counts sleep, so a clock change neither
-  ends nor stretches it. On Windows, where that clock may stop during sleep,
-  a forward clock step of more than 30 s that it did not see counts as sleep.
+  ends nor stretches it.
 - Bad options and an unusable `-o` are refused before measuring. A CSV that
   becomes unwritable during the run gives a warning and the run goes on. A
   second Ctrl-C no longer loses the report.
@@ -145,13 +135,13 @@ before you update scripts, or a PC that ran `netdiag service install`.
   `config.tcp_targets` entry is checked once. An unusable file exits 4 with
   the file name and the problem. Shift_JIS and UTF-16 files load, and YAML
   `0012` stays `"0012"`. `--format csv` writes CSV, and `--all` exists.
-- Windows and macOS snapshots record the network. They recorded nothing, so
+- macOS snapshots record the network. They recorded nothing, so
   `snapshot diff` always said "no change". DHCP lease countdowns, counters
   and line order are not changes.
 - `peer serve` answers only netdiag's own requests, and `peer test`
   matches each reply to its request, so late or duplicate replies are not
   loss.
-- `collect` masks MACs, SSIDs and DNS suffixes in every file and in every
+- `collect` masks MACs, SSIDs and search domains in every file and in every
   form, including `enx…` interface names and DHCPv6 DUIDs. Masked IPv4
   addresses keep their /16 and /24 relationships. An unwritable `-o` exits 4.
 - `explain link_errors` works.
@@ -183,9 +173,7 @@ before you update scripts, or a PC that ran `netdiag service install`.
   - `peer test`: 0 loss below 5 %, 1 loss of 5 % or more or no route, 3 no
     reply or a throughput test that could not connect (new). `peer serve`
     exits 4 when it cannot listen.
-  - `explain` with an unknown name exits 4 (was 1). The exe exits 4 for a
-    dropped list it cannot read (was 2) and for a report it cannot save
-    anywhere.
+  - `explain` with an unknown name exits 4 (was 1).
 - `check --only wifi` on a PC without a Wi-Fi tool exits 3, because nothing
   that was asked for was measured.
 - CSV on stdout starts with a UTF-8 BOM, as an `-o` file does, so Excel reads a
@@ -223,6 +211,11 @@ before you update scripts, or a PC that ran `netdiag service install`.
 
 ### Removed
 
+- Windows support: the exe and every Windows code path (the PowerShell,
+  `ipconfig`, `route print`, `arp -a` and `netsh` parsers, the Windows ICMP
+  API pinger, `ping.exe` and `tracert` support, and the Windows console
+  handling). On Windows, every command prints one sentence and exits 4, with
+  the note to use 0.5.0 (`pip install "network-check-tool==0.5.0"`).
 - The commands `watch`, `status`, `history`, `prune` and `service`, and
   `check --save` and `--no-save`. Each is a usage error (exit 4). netdiag is an
   analysis tool. Each command answers a question and exits.
@@ -246,11 +239,13 @@ before you update scripts, or a PC that ran `netdiag service install`.
   privileged source port or its own port. Its reply is a fixed 16 bytes (a
   marker and a digest of the request) that carry none of the sender's bytes,
   and it sends at most 200 replies per second.
-- `collect` left MACs, SSIDs and DNS suffixes that it reported as masked in
-  some files. They are now masked everywhere.
+- `collect` left MACs, SSIDs and internal domains that it reported as masked
+  in some files. They are now masked everywhere.
 
 ### Upgrading from 0.5
 
+- On Windows, stay on 0.5.0: `pip install "network-check-tool==0.5.0"`. 0.6.0
+  exits 4 there without checking anything.
 - In scripts that read exit codes, 2 now means warnings only, and a usage
   error exits 4. Treat 3 as incomplete, 5 as an internal error and 130 as
   Ctrl-C, which used to exit 1. See the tables above for `ping`, `soak`,
@@ -279,15 +274,12 @@ before you update scripts, or a PC that ran `netdiag service install`.
 
 ### Known limits
 
-- On Windows, a batch ping of an IPv6 target runs `ping.exe` without a
-  console, so Ctrl-C cannot reach it. netdiag stops waiting after 2 s, and
-  that `ping.exe` finishes its count in the background.
 - Error text from the OS `ping`, such as "Network is unreachable", stays in
   the OS language, whatever `--lang` says.
 - Linux `throw` routes are ignored. Only Tailscale's exit-node LAN access uses
   them, and netdiag resolves local subnets first.
-- One multipath default route is recognised on Linux only. Windows and macOS
-  defaults with equal metrics still warn, and two Linux DHCP defaults with one
+- One multipath default route is recognised on Linux only. macOS defaults
+  with equal metrics still warn, and two Linux DHCP defaults with one
   metric read as one route.
 - The duplicate-IP check of `neighbor` rarely fires, because the OS keeps one
   MAC per address and link.
@@ -300,11 +292,8 @@ before you update scripts, or a PC that ran `netdiag service install`.
   reported as present by mistake.
 - In a soak, a drop shared by several devices that starts within about two ping
   intervals of the end can be blamed on one device.
-- On Windows, a forward clock step of more than 30 s during a soak counts as
-  time not measured, even when the PC did not sleep.
-- The Windows and macOS parsers, the Windows console widths and the Windows
-  sleep handling are tested with reconstructed output and stubs, not on real
-  machines.
+- The macOS parsers are tested with reconstructed output, not on a real
+  machine.
 - `peer serve` still replies to a request with a forged source address. Run
   it only while you test.
 
