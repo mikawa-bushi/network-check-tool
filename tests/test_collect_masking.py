@@ -109,6 +109,36 @@ def test_two_label_internal_domains_are_masked_and_codes_are_not():
     assert codes == b'{"code": "wifi.ok", "next": "gateway.ok", "web": "example.com"}'
 
 
+IP_J_ADDR = (
+    b'[{"ifindex":2,"ifname":"eth0","link_type":"ether",'
+    b'"address":"3c:a9:f4:12:34:56","broadcast":"ff:ff:ff:ff:ff:ff",'
+    b'"altnames":["enp2s5","enx3ca9f4123456"],"addr_info":[]}]'
+)
+IP_O_LINK = b"3: wlx00155d010203: <BROADCAST,MULTICAST,UP> mtu 1500\n"
+
+
+def test_macs_inside_interface_names_are_masked_like_every_other_mac():
+    m = Masker()
+    link = json.loads(m.mask(IP_J_ADDR))[0]
+    assert "3ca9f4123456" not in json.dumps(link)
+    masked = link["address"].replace(":", "")
+    assert masked.startswith("3ca9f4") and link["altnames"] == [
+        "enp2s5",
+        "enx" + masked,
+    ]
+    named_only = m.mask(IP_O_LINK).decode()
+    assert "00155d010203" not in named_only
+    assert re.match(r"3: wlx00155d[0-9a-f]{6}: ", named_only)
+
+
+def test_a_learned_mac_is_masked_without_separators_and_other_hex_is_not():
+    m = Masker()
+    m.learn(b"Physical Address: 00-15-5D-01-02-03\n")
+    guid = m.mask(b"{c0a8e1f2-3b4c-11d0-8e2f-00155D010203} build deadbeef0123\n")
+    assert b"00155D010203" not in guid and b"-00155D" in guid
+    assert b"deadbeef0123" in guid
+
+
 def _masked_network(m, cidr):
     ip, plen = cidr.split("/")
     return ipaddress.ip_network(f"{m.mask(ip.encode()).decode()}/{plen}")

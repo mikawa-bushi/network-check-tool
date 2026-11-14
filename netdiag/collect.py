@@ -10,11 +10,11 @@ interpretation shows up immediately.
 Masking (on by default) rewrites identifying values *in the bytes*, so the
 original encoding (UTF-8, cp932 ...) is preserved: IPv4 addresses are mapped
 consistently while keeping /16 and /24 groupings and the last octet, MACs
-(also inside a DHCPv6 DUID) keep their vendor prefix (OUI), IPv6 interface
-IDs, the PC's host name, the user name, Wi-Fi SSIDs, the DNS suffixes and
-search domains, and names with three or more labels are replaced, in every
-file of the bundle. It is best effort — review the files before sending them
-outside the company.
+(also inside a DHCPv6 DUID and in interface names such as ``enx`` + MAC) keep
+their vendor prefix (OUI), IPv6 interface IDs, the PC's host name, the user
+name, Wi-Fi SSIDs, the DNS suffixes and search domains, and names with three
+or more labels are replaced, in every file of the bundle. It is best effort —
+review the files before sending them outside the company.
 """
 
 from __future__ import annotations
@@ -73,6 +73,10 @@ _MAC_RE = re.compile(
 _MAC_SPACED_RE = re.compile(
     rb"(?<=\.\.\.)" + _HEX + rb"( )" + rb"\2".join([_HEX] * 5) + rb"(?= \.)"
 )
+# Twelve hex digits with no separator: a MAC inside an interface name
+# (systemd's ``enx``/``wlx``/``wwx``/``slx`` + MAC) or a version-1 GUID.
+_MAC_COMPACT_RE = re.compile(rb"(?<![0-9A-Fa-f])([0-9A-Fa-f]{12})(?![0-9A-Fa-f])")
+_MAC_NAME_PREFIXES = (b"enx", b"wlx", b"wwx", b"slx")
 # Seven or more byte groups: a DHCPv6 DUID, whose last six bytes are a MAC.
 _HEX_RUN_RE = re.compile(
     _NOT_TOKEN
@@ -187,7 +191,10 @@ class Masker:
             )
 
     def learn(self, data: bytes) -> None:
-        """Remember the SSIDs and internal domains that *data* names."""
+        """Remember the MACs, SSIDs and internal domains that *data* names."""
+        _HEX_RUN_RE.sub(self._hex_run, data)
+        _MAC_RE.sub(self._mac, data)
+        _MAC_SPACED_RE.sub(self._mac, data)
         for rx in _SSID_RES:
             for m in rx.finditer(data):
                 self._learn_ssid(decode_output(m.group(1)))
@@ -275,6 +282,15 @@ class Masker:
     def _mac(self, m: re.Match) -> bytes:
         return self._mac_groups([m.group(i) for i in (1, 3, 4, 5, 6, 7)], m.group(2))
 
+    def _mac_compact(self, m: re.Match) -> bytes:
+        hexes = m.group(1)
+        named = (
+            m.string[max(0, m.start() - 3) : m.start()].lower() in _MAC_NAME_PREFIXES
+        )
+        if not named and hexes.lower() not in self.macs:
+            return hexes
+        return self._mac_groups([hexes[i : i + 2] for i in range(0, 12, 2)], b"")
+
     def _hex_run(self, m: re.Match) -> bytes:
         sep = m.group(2)
         groups = m.group(1).split(sep)
@@ -331,6 +347,7 @@ class Masker:
         data = _HEX_RUN_RE.sub(self._hex_run, data)
         data = _MAC_RE.sub(self._mac, data)
         data = _MAC_SPACED_RE.sub(self._mac, data)
+        data = _MAC_COMPACT_RE.sub(self._mac_compact, data)
         data = _IPV4_RE.sub(self._ipv4, data)
         data = _DOMAIN_RE.sub(self._domain, data)
         for name, new in list(self.domains.items()):
