@@ -364,6 +364,14 @@ def test_log_file_gets_the_debug_log(crashing_check, tmp_path):
     assert "RuntimeError: parser fell over" in log.read_text(encoding="utf-8")
 
 
+def test_log_file_that_is_the_device_list_is_refused(crashing_check, tmp_path, capsys):
+    ledger = tmp_path / "ledger.csv"
+    ledger.write_text("name,host\nPLC-1,192.0.2.10\n", encoding="utf-8")
+    assert _main("--log-file", str(ledger), "check", "-f", str(ledger)) == 4
+    assert "another file name" in capsys.readouterr().err
+    assert ledger.read_text(encoding="utf-8") == "name,host\nPLC-1,192.0.2.10\n"
+
+
 def test_unusable_log_file_is_a_usage_error(crashing_check, tmp_path, capsys):
     assert _main("--log-file", str(tmp_path / "nodir" / "x.log"), "check") == 4
     assert capsys.readouterr().err.startswith("Error: cannot open the log file")

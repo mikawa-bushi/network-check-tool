@@ -26,6 +26,7 @@ from ._app import (
     cli,
     color_wanted,
     format_from_path,
+    log_file_apart_from,
     output_path,
     write_output,
 )
@@ -48,6 +49,7 @@ def effective_interval(interval) -> float:
 
 
 def _collect_devices(targets, device_files, ports) -> List[Device]:
+    log_file_apart_from(device_files)
     devices: List[Device] = []
     try:
         extra = parse_ports(list(ports)) if ports else []

@@ -205,6 +205,27 @@ def test_report_never_overwrites_the_scenario_it_runs(tmp_path, capsys):
     assert sc.read_text(encoding="utf-8") == text
 
 
+def test_log_file_that_is_the_scenario_is_refused(tmp_path, capsys):
+    import logging
+
+    text = json.dumps({"checks": ["crashy"]})
+    sc = _write(tmp_path, "s.json", text)
+    lg = logging.getLogger("netdiag")
+    handlers, level = lg.handlers[:], lg.level
+    try:
+        with pytest.raises(SystemExit) as exc:
+            main(["--log-file", str(sc), "scenario", str(sc)], prog_name="netdiag")
+    finally:
+        for h in lg.handlers[:]:
+            if h not in handlers:
+                h.close()
+        lg.handlers[:] = handlers
+        lg.setLevel(level)
+    assert exc.value.code == 4
+    assert "another file name" in capsys.readouterr().err
+    assert sc.read_text(encoding="utf-8") == text
+
+
 def test_json_output_names_the_scenario(tmp_path, capsys):
     sc = _write(tmp_path, "s.json", json.dumps({"name": "Line 1", "checks": ["echo"]}))
     code, out, _ = _run(capsys, sc, "--format", "json")

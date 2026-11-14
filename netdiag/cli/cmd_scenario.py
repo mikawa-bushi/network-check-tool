@@ -14,6 +14,7 @@ from ._app import (
     cli,
     color_wanted,
     format_from_path,
+    log_file_apart_from,
     output_path,
     write_output,
 )
@@ -57,6 +58,7 @@ def scenario(path, fmt, output, show_all, reasoning, no_color):
     from ..scenario import load_scenario
     from ..scenario.run import run_scenario
 
+    log_file_apart_from([path])
     sc = load_scenario(path)
     cfg = dict(DEFAULT_CONFIG)
     cfg["internet"] = False

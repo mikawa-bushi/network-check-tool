@@ -225,6 +225,24 @@ def output_path(output: Optional[str], inputs: Iterable[str] = ()) -> Optional[s
     return output
 
 
+def log_file_apart_from(inputs: Iterable[str]) -> None:
+    """Refuse a ``--log-file`` that is one of *inputs*, before anything is
+    logged: a crashed check would append its traceback to the device list."""
+    ctx = click.get_current_context(silent=True)
+    log_file = ctx.find_root().params.get("log_file") if ctx is not None else None
+    if not log_file or not Path(log_file).exists():
+        return
+    if any(os.path.samefile(log_file, src) for src in inputs):
+        raise InputError(
+            tr(
+                f"ログファイル {log_file} は読み込むファイルそのものです。"
+                "ログには別のファイル名を指定してください。",
+                f"the log file {log_file} is a file being read. Give the log "
+                "another file name.",
+            )
+        )
+
+
 def write_output(text: str, output: Optional[str], fmt: str) -> None:
     """Print *text*, or save it to *output* (``-`` is stdout).
 
