@@ -12,15 +12,19 @@ from __future__ import annotations
 
 import errno
 import socket
+import threading
 import time
 from concurrent.futures import ThreadPoolExecutor
 from dataclasses import dataclass, field
-from typing import Dict, Iterable, List, Tuple
+from typing import Any, Dict, Iterable, List, Tuple
 
 from .stats import summarize
 
 DEFAULT_ATTEMPTS = 2
 DEFAULT_TIMEOUT = 1.5
+LOOKUP_TIMEOUT = 2.0  # seconds a host name lookup may take (LLMNR fallback is slow)
+
+_AddrInfo = Tuple[Any, ...]  # one socket.getaddrinfo() entry
 
 _UNREACHABLE = {
     getattr(errno, name)
@@ -81,16 +85,62 @@ def _classify(exc: BaseException) -> str:
     return str(exc)
 
 
+def _resolve(host: str, port: int, timeout: float) -> List[_AddrInfo]:
+    """Addresses to connect to, looked up once and outside the timed connect.
+
+    A name lookup runs in a worker bounded by ``max(timeout, LOOKUP_TIMEOUT)``,
+    so a dead resolver cannot stall the check for its own full timeout.
+    """
+    if not 1 <= port <= 65535:
+        raise ValueError(f"port {port} out of range (1-65535)")
+    try:
+        return socket.getaddrinfo(
+            host, port, type=socket.SOCK_STREAM, flags=socket.AI_NUMERICHOST
+        )
+    except socket.gaierror:
+        pass  # a name, not an address literal
+    found: List[List[_AddrInfo]] = []
+
+    def lookup() -> None:
+        try:
+            found.append(socket.getaddrinfo(host, port, type=socket.SOCK_STREAM))
+        except (OSError, UnicodeError):
+            pass
+
+    worker = threading.Thread(target=lookup, daemon=True)
+    worker.start()
+    worker.join(max(timeout, LOOKUP_TIMEOUT))
+    if not found:
+        raise socket.gaierror(f"cannot resolve {host}")
+    return found[0]
+
+
+def _connect(infos: List[_AddrInfo], timeout: float) -> Tuple[bool, float, str]:
+    elapsed, reason = 0.0, "no address"
+    for family, kind, proto, _name, sockaddr in infos:
+        start = time.perf_counter()
+        try:
+            with socket.socket(family, kind, proto) as s:
+                s.settimeout(timeout)
+                s.connect(sockaddr)
+            return True, (time.perf_counter() - start) * 1000.0, "connected"
+        except OSError as e:
+            elapsed, reason = (time.perf_counter() - start) * 1000.0, _classify(e)
+    return False, elapsed, reason
+
+
 def tcp_connect_once(
     host: str, port: int, timeout: float = DEFAULT_TIMEOUT
 ) -> Tuple[bool, float, str]:
-    """One connect attempt: ``(connected, elapsed_ms, reason)``."""
-    start = time.perf_counter()
+    """One connect attempt: ``(connected, elapsed_ms, reason)``.
+
+    ``elapsed_ms`` times the connect alone, not the name lookup before it.
+    """
     try:
-        with socket.create_connection((host, port), timeout=timeout):
-            return True, (time.perf_counter() - start) * 1000.0, "connected"
+        infos = _resolve(host, port, timeout)
     except (OSError, ValueError) as e:
-        return False, (time.perf_counter() - start) * 1000.0, _classify(e)
+        return False, 0.0, _classify(e)
+    return _connect(infos, timeout)
 
 
 def tcp_check(
@@ -101,9 +151,16 @@ def tcp_check(
     pause: float = 0.1,
 ) -> PortCheck:
     res = PortCheck(host=host, port=port)
+    try:
+        infos = _resolve(host, port, timeout)
+    except (OSError, ValueError) as e:
+        res.attempts = 1
+        res.reasons[_classify(e)] = 1
+        res.state = _verdict(res)
+        return res
     failures = 0
     for i in range(max(1, attempts)):
-        ok, ms, reason = tcp_connect_once(host, port, timeout)
+        ok, ms, reason = _connect(infos, timeout)
         res.attempts += 1
         if ok:
             res.times_ms.append(ms)

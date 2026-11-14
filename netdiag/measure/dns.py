@@ -60,25 +60,32 @@ def build_query(name: str, qid: int, qtype: int = 1) -> bytes:
     return header + qname + b"\x00" + struct.pack("!HH", qtype, 1)
 
 
+class DnsReplyError(ValueError):
+    """The server's reply to our query is cut short or garbled."""
+
+
+def _take(data: bytes, offset: int, size: int) -> bytes:
+    if offset + size > len(data):
+        raise DnsReplyError("reply cut short")
+    return data[offset : offset + size]
+
+
 def _skip_name(data: bytes, offset: int) -> int:
     while True:
-        if offset >= len(data):
-            raise ValueError("truncated name")
-        length = data[offset]
+        length = _take(data, offset, 1)[0]
         if length == 0:
             return offset + 1
         if length & 0xC0 == 0xC0:  # compression pointer
+            _take(data, offset, 2)
             return offset + 2
         offset += 1 + length
 
 
 def parse_response(data: bytes, qid: int) -> Tuple[str, List[str]]:
-    """Return ``(rcode name, IPv4 answers)``; raises ValueError if malformed."""
-    if len(data) < 12:
-        raise ValueError("short response")
-    rid, flags, qd, an, _ns, _ar = struct.unpack("!HHHHHH", data[:12])
+    """Return ``(rcode name, IPv4 answers)``; raises DnsReplyError if malformed."""
+    rid, flags, qd, an, _ns, _ar = struct.unpack("!HHHHHH", _take(data, 0, 12))
     if rid != qid:
-        raise ValueError("id mismatch")
+        raise DnsReplyError("id mismatch")
     rcode = RCODES.get(flags & 0x000F, str(flags & 0x000F))
     offset = 12
     for _ in range(qd):
@@ -86,17 +93,20 @@ def parse_response(data: bytes, qid: int) -> Tuple[str, List[str]]:
     addrs: List[str] = []
     for _ in range(an):
         offset = _skip_name(data, offset)
-        rtype, _rclass, _ttl, rdlen = struct.unpack("!HHIH", data[offset : offset + 10])
-        offset += 10
-        rdata = data[offset : offset + rdlen]
-        offset += rdlen
+        rtype, _rclass, _ttl, rdlen = struct.unpack("!HHIH", _take(data, offset, 10))
+        rdata = _take(data, offset + 10, rdlen)
+        offset += 10 + rdlen
         if rtype == 1 and rdlen == 4:
             addrs.append(socket.inet_ntoa(rdata))
     return rcode, addrs
 
 
 def query(name: str, server: str, timeout: float = 2.0, port: int = 53) -> DnsAnswer:
-    """Ask *server* for the A records of *name* (one UDP round trip)."""
+    """Ask *server* for the A records of *name* (one UDP round trip).
+
+    No answer at all is an ``error`` on the result. A reply that carries our
+    query id but cannot be parsed raises :class:`DnsReplyError`.
+    """
     ans = DnsAnswer(server=server, name=name)
     qid = struct.unpack("!H", os.urandom(2))[0]
     try:
@@ -113,11 +123,11 @@ def query(name: str, server: str, timeout: float = 2.0, port: int = 53) -> DnsAn
             deadline = start + timeout
             while True:
                 s.settimeout(max(0.01, deadline - time.perf_counter()))
-                data, _addr = s.recvfrom(4096)
-                try:
-                    ans.rcode, ans.addresses = parse_response(data, qid)
-                except ValueError:
-                    continue  # stray/garbled datagram: keep waiting for ours
+                # The largest UDP datagram: a smaller buffer cuts a long reply.
+                data, _addr = s.recvfrom(65535)
+                if data[:2] != packet[:2]:
+                    continue  # someone else's datagram: keep waiting for ours
+                ans.rcode, ans.addresses = parse_response(data, qid)
                 ans.elapsed_ms = (time.perf_counter() - start) * 1000.0
                 return ans
     except (socket.timeout, TimeoutError):
