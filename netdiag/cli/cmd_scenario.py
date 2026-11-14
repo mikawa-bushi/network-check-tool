@@ -1,4 +1,4 @@
-"""``netdiag scenario``: run a declarative YAML/JSON check (one file per line)."""
+"""``netdiag scenario``: run a declarative YAML/JSON/TOML check (one file per line)."""
 
 from __future__ import annotations
 
@@ -6,11 +6,20 @@ import sys
 
 import click
 
-from ._app import DEFAULT_CONFIG, H, cli, color_wanted, format_from_path, write_output
+from ..i18n import tr
+from ._app import (
+    DEFAULT_CONFIG,
+    H,
+    Progress,
+    cli,
+    color_wanted,
+    format_from_path,
+    write_output,
+)
 
 
 @cli.command()
-@click.argument("path", type=click.Path(exists=True))
+@click.argument("path", type=click.Path(exists=True, dir_okay=False))
 @click.option(
     "--format", "fmt", type=click.Choice(["text", "json", "html", "csv"]), default=None
 )
@@ -19,6 +28,12 @@ from ._app import DEFAULT_CONFIG, H, cli, color_wanted, format_from_path, write_
     "--output",
     type=click.Path(dir_okay=False),
     help=H("レポートをファイルに保存", "Write the report to a file."),
+)
+@click.option(
+    "--all",
+    "show_all",
+    is_flag=True,
+    help=H("対象外の項目も表示", "Also show not-applicable checks."),
 )
 @click.option(
     "--reasoning",
@@ -31,51 +46,47 @@ from ._app import DEFAULT_CONFIG, H, cli, color_wanted, format_from_path, write_
 @click.option(
     "--no-color", is_flag=True, help=H("色を付けない", "Disable ANSI colour.")
 )
-def scenario(path, fmt, output, reasoning, no_color):
-    """シナリオファイル（YAML/JSON）どおりに診断 / Run a declarative diagnosis scenario.
+def scenario(path, fmt, output, show_all, reasoning, no_color):
+    """シナリオファイル（YAML/JSON/TOML）どおりに診断 / Run a declarative diagnosis scenario.
 
     devices: を含むシナリオは、そのラインの機器も一緒に診断します。
+    終了コードは check と同じです。
     """
     from .. import report as report_mod
-    from ..diagnosis import Engine
-    from ..scenario import load_scenario, merged_config
+    from ..scenario import load_scenario
+    from ..scenario.run import run_scenario, scenario_status
 
     sc = load_scenario(path)
     cfg = dict(DEFAULT_CONFIG)
-    cfg.setdefault("internet", False)
-    cfg.update(merged_config(sc))
+    cfg["internet"] = False
+    cfg.update(sc.config)
     fmt = format_from_path(output, fmt)
 
-    if sc.devices:
-        from ..runner import run_check
+    progress = Progress()
+    on_probe = (
+        (lambda name: progress(tr(f"確認中: {name}", f"checking {name}")))
+        if progress.enabled
+        else None
+    )
+    try:
+        rep = run_scenario(sc, cfg, progress=progress, on_probe=on_probe)
+    finally:
+        progress.done()
 
-        rep = run_check(sc.devices, config=cfg, only=sc.probe_names or None)
-        if fmt == "json":
-            text = report_mod.render_check_json(rep)
-        elif fmt == "html":
-            text = report_mod.render_check_html(rep)
-        elif fmt == "csv":
-            text = report_mod.render_check_csv(rep)
-        else:
-            text = f"# {sc.name}\n" + (sc.description + "\n" if sc.description else "")
-            text += report_mod.render_check_text(
-                rep,
-                color=False if output else color_wanted(no_color),
-                verbose=reasoning,
-            )
-        write_output(text, output, fmt)
-        sys.exit(rep.exit_code)
-
-    engine = Engine(config=cfg, verbose=reasoning)
-    diag = engine.run(only=sc.probe_names)
     if fmt == "json":
-        text = report_mod.render_json(diag)
+        text = report_mod.render_check_json(rep)
     elif fmt == "html":
-        text = report_mod.render_html(diag)
+        text = report_mod.render_check_html(rep, show_all=True)
+    elif fmt == "csv":
+        text = report_mod.render_check_csv(rep)
     else:
-        header = f"# {sc.name}\n" + (sc.description + "\n\n" if sc.description else "")
-        text = header + report_mod.render_terminal(
-            diag, color=False if output else color_wanted(no_color), verbose=reasoning
+        text = f"# {sc.name}\n" + (sc.description + "\n" if sc.description else "")
+        text += report_mod.render_check_text(
+            rep,
+            color=False if output else color_wanted(no_color),
+            verbose=reasoning,
+            show_all=show_all,
+            unicode=True if output else None,
         )
     write_output(text, output, fmt)
-    sys.exit(0 if diag.healthy else 1)
+    sys.exit(scenario_status(rep).exit_code)
