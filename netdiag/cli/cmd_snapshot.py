@@ -7,6 +7,7 @@ import sys
 
 import click
 
+from ..core import ExitCode, InputError
 from ..i18n import tr
 from ._app import cli
 
@@ -44,50 +45,65 @@ def snapshot_list():
     )
 
 
+def _exit_code(d) -> ExitCode:
+    if d.any_change:
+        return ExitCode.WARN
+    return ExitCode.INCOMPLETE if d.not_compared else ExitCode.OK
+
+
 @snapshot.command("diff")
 @click.argument("name", default="default")
 @click.option("--format", "fmt", type=click.Choice(["text", "json"]), default="text")
 def snapshot_diff(name, fmt):
-    """保存時と現在の設定の差分（終了コード 0=変化なし, 2=変化あり）/ Diff against now."""
+    """保存時と現在の設定の差分 / Diff against now.
+
+    終了コード: 0 = 変化なし, 2 = 変化あり, 3 = 一部を比較できなかった（変化は見つからず）
+    """
     from .. import snapshot as snap
 
     baseline = snap.load(name)
     if baseline is None:
-        click.echo(
+        raise InputError(
             tr(
-                f"'{name}' という名前のスナップショットはありません — 正常なときに 'netdiag snapshot save {name}' を実行してください。",
-                f"no snapshot named '{name}' — run 'netdiag snapshot save {name}' while the network works.",
-            ),
-            err=True,
+                f"'{name}' という名前のスナップショットはありません。"
+                f"正常なときに 'netdiag snapshot save {name}' を実行してください",
+                f"no snapshot named '{name}'; run 'netdiag snapshot save {name}' "
+                "while the network works",
+            )
         )
-        sys.exit(1)
     current = snap.capture()
     d = snap.diff_snapshots(baseline, current)
 
     if fmt == "json":
-        # Same exit-code contract as the text form: 0 = no change, 2 = changed.
         click.echo(json.dumps(d.to_dict(), ensure_ascii=False, indent=2))
-        sys.exit(2 if d.any_change else 0)
+        sys.exit(_exit_code(d))
 
-    if not d.any_change:
+    if d.any_change:
+        click.echo(
+            tr(
+                f"'{name}'（{d.baseline_time} 保存）からの変化:\n",
+                f"changes since '{name}' (saved {d.baseline_time}):\n",
+            )
+        )
+        for sd in d.changed:
+            click.echo(f"■ {sd.label} — {sd.why}")
+            for line in sd.removed:
+                click.echo(f"    - {line}")
+            for line in sd.added:
+                click.echo(f"    + {line}")
+            click.echo("")
+    else:
         click.echo(
             tr(
                 f"'{name}'（{d.baseline_time} 保存）から設定の変化はありません。",
                 f"no configuration changes since '{name}' (saved {d.baseline_time}).",
             )
         )
-        return
-    click.echo(
-        tr(
-            f"'{name}'（{d.baseline_time} 保存）からの変化:\n",
-            f"changes since '{name}' (saved {d.baseline_time}):\n",
+    for n in d.not_compared:
+        click.echo(
+            tr(
+                f"? {n.label}: 比較できませんでした（{n.reason}）",
+                f"? {n.label}: not compared ({n.reason})",
+            )
         )
-    )
-    for sd in d.changed:
-        click.echo(f"■ {sd.label} — {sd.why}")
-        for line in sd.removed:
-            click.echo(f"    - {line}")
-        for line in sd.added:
-            click.echo(f"    + {line}")
-        click.echo("")
-    sys.exit(2)
+    sys.exit(_exit_code(d))
