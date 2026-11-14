@@ -434,14 +434,19 @@ def _looks_like_host(value: str) -> bool:
     return bool(re.fullmatch(r"(?:\d+\.){3}\d+", host))
 
 
+def _column_keys(cells: List[str]) -> List[Optional[str]]:
+    return [_HEADER_LOOKUP.get(_header_key(c)) for c in cells if c]
+
+
 def _is_comment(cells: List[str]) -> bool:
     """``# text``, ``#`` alone, or a commented-out device row.
 
     A name such as ``#1プレス`` on a device row is kept: only a ``#`` followed
     by a space, another ``#``, an address, or nothing else on the row counts.
+    A header row whose first column is a ``#`` row number is kept too.
     """
     first = cells[0] if cells else ""
-    if not first.startswith("#"):
+    if not first.startswith("#") or "host" in _column_keys(cells):
         return False
     rest = first[1:]
     filled = [c for c in cells if c]
@@ -475,7 +480,7 @@ def _header_row(records: List[Tuple[int, List[str]]]) -> Optional[int]:
     header means the list has no header at all.
     """
     for i, (_n, cells) in enumerate(records):
-        keys = [_HEADER_LOOKUP.get(_header_key(c)) for c in cells if c]
+        keys = _column_keys(cells)
         if "host" in keys or keys == ["name"]:
             return i
         if any(_looks_like_host(c) for c in cells):

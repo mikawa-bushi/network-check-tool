@@ -75,6 +75,19 @@ def test_names_starting_with_hash_are_devices_and_comments_are_not():
     ]
 
 
+def test_a_header_with_a_hash_row_number_column_is_the_header():
+    devs = parse_csv_text(
+        "#,名前,IPアドレス,ライン番号,ポート\n"
+        "1,PLC-1,192.0.2.39,2,502\n"
+        "#,PLC-old,192.0.2.38,2,502\n"
+        "2,HMI-1,192.0.2.40,3,\n"
+    )
+    assert _rows(devs) == [
+        ("PLC-1", "192.0.2.39", [502]),
+        ("HMI-1", "192.0.2.40", []),
+    ]
+
+
 def test_headerless_rows_take_ports_only_after_the_address():
     devs = parse_csv_text(
         "1,ゲートウェイ,192.0.2.1\n"

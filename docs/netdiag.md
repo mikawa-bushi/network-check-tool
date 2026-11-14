@@ -240,7 +240,8 @@ How a CSV list is read:
   ports, and a number before the address is a row number.
 - A row whose first cell is `#` followed by a space, or a commented-out row
   such as `#192.168.3.38,...`, is a comment. A name such as `#1プレス` is a
-  device.
+  device, and a header row whose first column is a `#` row number is the
+  header.
 - A zero-padded address such as `192.168.001.010` is read as decimal
   (`192.168.1.10`), and the report shows that form. A cell of digits and dots
   that is not a valid IPv4 address is an error.
