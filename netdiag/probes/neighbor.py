@@ -7,7 +7,7 @@ even though routing looks fine. Duplicate-IP situations cause the same flapping.
 from __future__ import annotations
 
 from collections import defaultdict
-from typing import Dict
+from typing import Dict, Optional, Set, Tuple
 
 from ..core import CheckResult, Context, Probe, register
 from ..i18n import Text, tr
@@ -52,12 +52,13 @@ class NeighborProbe(Probe):
                 code="neighbor.unavailable",
             )
 
-        # Duplicate IP detection: same IP, multiple distinct MACs.
-        macs_by_ip: Dict[str, set] = defaultdict(set)
+        # The same IP may sit on two NICs (two networks that both use
+        # 192.168.1.1); only two MACs on one link are a conflict.
+        macs: Dict[Tuple[Optional[str], str], Set[str]] = defaultdict(set)
         for n in neigh:
             if n.mac:
-                macs_by_ip[n.ip].add(n.mac)
-        dups = {ip: sorted(m) for ip, m in macs_by_ip.items() if len(m) > 1}
+                macs[(n.interface, n.ip)].add(n.mac)
+        dups = {ip: sorted(m) for (_, ip), m in macs.items() if len(m) > 1}
 
         gw = default_gateway()
         gw_entry = next((n for n in neigh if n.ip == gw), None)
