@@ -184,14 +184,13 @@ to netdiag's own interpretation (`netinfo.json`, `check.json`, `ping.json`).
 
 Masking is on by default and preserves structure: IPv4 addresses are mapped
 so that /16 and /24 relationships and the last octet survive (each /16 gets
-its own private /16, `10.100.x.x` onward, `.0` and `.255` stay; masked
-addresses never leave the private ranges; netmasks, loopback, link-local and
-public resolvers are kept). Coarser prefixes such as a `/8` route are not
-kept. MACs keep the vendor (OUI) half, in every form: `aa-bb-…`, `aa:bb:…`,
-the space-separated list in `route print`, the MAC inside a DHCPv6 DUID, and
-the MAC inside an interface name (`enx…`, `wlx…`), and a MAC written
-without separators once it appears in any other form. The same adapter gets
-the same masked MAC in every file.
+its own /16 in the private ranges, from `10.100.x.x` on, and `.0` and `.255`
+stay; netmasks, loopback, link-local and public resolvers are kept). Coarser
+prefixes such as a `/8` route are not kept. MACs keep the vendor (OUI) half,
+in every form: `aa-bb-…`, `aa:bb:…`, the space-separated list in
+`route print`, the MAC inside a DHCPv6 DUID or an interface name (`enx…`,
+`wlx…`), and a MAC written without separators once it appears in any other
+form. The same adapter gets the same masked MAC in every file.
 IPv6 keeps the prefix type. Host names, user names, SSIDs (netsh SSID and
 Profile lines, `iw`, the Wi-Fi check's results) and internal domains (DNS
 suffixes and search domains from `ipconfig`, `resolv.conf` and `scutil`, plus

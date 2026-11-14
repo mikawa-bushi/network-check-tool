@@ -122,10 +122,8 @@ def test_macs_inside_interface_names_are_masked_like_every_other_mac():
     link = json.loads(m.mask(IP_J_ADDR))[0]
     assert "3ca9f4123456" not in json.dumps(link)
     masked = link["address"].replace(":", "")
-    assert masked.startswith("3ca9f4") and link["altnames"] == [
-        "enp2s5",
-        "enx" + masked,
-    ]
+    assert masked.startswith("3ca9f4")
+    assert link["altnames"] == ["enp2s5", "enx" + masked]
     named_only = m.mask(IP_O_LINK).decode()
     assert "00155d010203" not in named_only
     assert re.match(r"3: wlx00155d[0-9a-f]{6}: ", named_only)
