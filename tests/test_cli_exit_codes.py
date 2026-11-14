@@ -62,3 +62,48 @@ def test_ctrl_c_before_a_verdict_exits_130_with_one_line(monkeypatch, capsys):
 def test_help_and_version_exit_0(monkeypatch, capsys):
     assert _run_main(monkeypatch, ["--help"]) == 0
     assert _run_main(monkeypatch, ["--version"]) == 0
+
+
+@pytest.mark.parametrize("fmt", ["text", "json"])
+def test_a_check_that_crashes_makes_check_incomplete_not_healthy(
+    monkeypatch, capsys, fmt
+):
+    """The real runner, engine and report, with one probe that has no layer
+    and raises."""
+    import json
+
+    import netdiag.runner  # noqa: F401  (registers the built-in probes first)
+    from netdiag import netinfo
+    from netdiag.core import CheckResult, Probe, Status
+    from netdiag.core.probe import _REGISTRY
+    from netdiag.netinfo.model import HostNetwork
+
+    class Fine(Probe):
+        name = "fine"
+        layer = "L3"
+
+        def check(self, ctx):
+            return CheckResult(name="fine", status=Status.OK, summary="fine")
+
+    class Crashy(Probe):
+        name = "crashy"
+
+        def check(self, ctx):
+            raise RuntimeError("parser fell over")
+
+    monkeypatch.setitem(_REGISTRY, "fine", Fine)
+    monkeypatch.setitem(_REGISTRY, "crashy", Crashy)
+    monkeypatch.setattr(netinfo, "snapshot", lambda max_age=5.0: HostNetwork())
+    monkeypatch.setattr(netinfo, "link_stats", lambda: {})
+    args = ["check", "--only", "fine,crashy", "--format", fmt, "--no-color"]
+    code = _run_main(monkeypatch, args)
+    out = capsys.readouterr().out
+    assert code == 3
+    assert "no problems found" not in out.lower()
+    if fmt == "json":
+        report = json.loads(out)
+        assert (report["status"], report["exit_code"]) == ("unknown", 3)
+        crashed = {r["name"]: r for r in report["host"]["results"]}["crashy"]
+        assert (crashed["status"], crashed["code"]) == ("unknown", "crashy.error")
+    else:
+        assert "Result: Not measured" in out
