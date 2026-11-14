@@ -109,20 +109,6 @@ def _setup_logging(verbose: bool = False, log_file: Optional[str] = None) -> Non
     lg.addHandler(handler)
 
 
-def _resolve_version() -> str:
-    """Installed package version, falling back to the in-tree __version__.
-
-    Lets ``netdiag --version`` work both when pip-installed and when run from a
-    source checkout (where the distribution metadata isn't present).
-    """
-    from importlib.metadata import PackageNotFoundError, version
-
-    try:
-        return version("network-check-tool")
-    except PackageNotFoundError:
-        return __version__
-
-
 DEFAULT_CONFIG = {
     "external_ip": "1.1.1.1",
     "dns_name": "example.com",
@@ -458,7 +444,7 @@ class Progress:
     context_settings={"help_option_names": ["-h", "--help"]},
     invoke_without_command=True,
 )
-@click.version_option(version=_resolve_version(), prog_name="netdiag")
+@click.version_option(version=__version__, prog_name="netdiag")
 @click.option(
     "--lang",
     type=click.Choice(["ja", "en"]),
