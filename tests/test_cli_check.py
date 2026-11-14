@@ -7,6 +7,7 @@ language and the closed-network default.
 
 import json
 
+import pytest
 from click.testing import CliRunner
 
 import netdiag.runner as runner_mod
@@ -243,8 +244,12 @@ def test_scan_command_and_save(monkeypatch, tmp_path):
 
 
 def test_scan_rejects_bad_ports_and_networks():
-    assert CliRunner().invoke(cli, ["scan", "-p", "nope"]).exit_code == 2
-    assert CliRunner().invoke(cli, ["scan", "not-a-network"]).exit_code == 2
+    from netdiag.cli import main
+
+    for args in (["scan", "-p", "nope"], ["scan", "not-a-network"]):
+        with pytest.raises(SystemExit) as exc:
+            main(args, "netdiag")
+        assert exc.value.code == 4
 
 
 def test_scenario_with_devices_runs_the_device_check(monkeypatch, tmp_path):

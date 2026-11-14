@@ -4,11 +4,14 @@ from __future__ import annotations
 
 import json
 import sys
+from pathlib import Path
+from typing import List, Optional
 
 import click
 
+from ..core import ExitCode, InputError
 from ..i18n import tr
-from ..inventory import InventoryError, devices_to_csv, parse_ports
+from ..inventory import devices_to_csv, parse_ports
 from ._app import H, Progress, cli, color_wanted
 
 
@@ -69,22 +72,20 @@ def scan(networks, save, count, timeout, ports, names, max_hosts, fmt, no_color)
     ping（ICMP）とARPだけを使い、指定しない限りポートには接続しません。
     """
     from .. import netinfo
-    from ..core import Status
-    from ..report.common import Style, pad, width
     from ..scan import default_networks, parse_networks
     from ..scan import scan as run_scan
 
-    try:
-        port_list = parse_ports(list(ports)) if ports else []
-    except InventoryError as e:
-        raise click.UsageError(str(e)) from e
-    notes = []
-    try:
-        nets = parse_networks(networks) if networks else None
-    except ValueError as e:
-        raise click.UsageError(str(e)) from e
+    port_list = parse_ports(list(ports)) if ports else []
+    notes: List[str] = []
+    nets = parse_networks(networks) if networks else None
+    if save:
+        _check_save_path(Path(save))
+    # The default networks are bounded per NIC; a range the user named is
+    # bounded as a whole.
+    limit: Optional[int] = max_hosts
     if nets is None:
         nets, notes = default_networks(netinfo.snapshot(), max_hosts=max_hosts)
+        limit = None
     if not nets:
         click.echo(
             tr(
@@ -93,7 +94,7 @@ def scan(networks, save, count, timeout, ports, names, max_hosts, fmt, no_color)
             ),
             err=True,
         )
-        sys.exit(1)
+        sys.exit(ExitCode.INCOMPLETE)
 
     progress = Progress()
     progress(
@@ -109,31 +110,67 @@ def scan(networks, save, count, timeout, ports, names, max_hosts, fmt, no_color)
             timeout=timeout,
             ports=port_list,
             resolve_names=names,
-            max_hosts=max_hosts,
+            max_hosts=limit,
         )
-    except ValueError as e:
+    finally:
         progress.done()
-        raise click.UsageError(str(e)) from e
-    progress.done()
     result.notes.extend(notes)
-
-    if save:
-        from pathlib import Path
-
-        Path(save).write_text(
-            devices_to_csv(result.to_devices()), encoding="utf-8-sig", newline=""
-        )
-        click.echo(
-            tr(f"台帳CSVを保存しました: {save}", f"device list saved to {save}"),
-            err=True,
-        )
 
     if fmt == "json":
         click.echo(json.dumps(result.to_dict(), ensure_ascii=False, indent=2))
-        return
-    if fmt == "csv":
+    elif fmt == "csv":
         click.echo(devices_to_csv(result.to_devices()), nl=False)
-        return
+    else:
+        _print_text(result, no_color)
+    if save:
+        _save(Path(save), devices_to_csv(result.to_devices()))
+
+
+def _check_save_path(path: Path) -> None:
+    """Refuse a --save target before the sweep, so no scan is wasted."""
+    if path.exists():
+        raise InputError(
+            tr(
+                f"{path} は既にあります。台帳を上書きしないため保存しません。"
+                "別のファイル名を --save に指定してください",
+                f"{path} already exists, and netdiag never overwrites a device "
+                "list. Give --save a new file name.",
+            )
+        )
+    if not path.parent.is_dir():
+        raise InputError(
+            tr(
+                f"保存先のフォルダ {path.parent} がありません",
+                f"the folder {path.parent} for --save does not exist",
+            )
+        )
+
+
+def _save(path: Path, text: str) -> None:
+    """Write a new device list; the results are already on screen."""
+    try:
+        with path.open("x", encoding="utf-8-sig", newline="") as f:
+            f.write(text)
+    except OSError as e:
+        click.echo(
+            tr(
+                f"台帳CSVを保存できませんでした（{path}: {e.strerror or e}）。"
+                "結果は上に表示したとおりです",
+                f"could not save the device list ({path}: {e.strerror or e}); "
+                "the results are shown above",
+            ),
+            err=True,
+        )
+        sys.exit(ExitCode.USAGE)
+    click.echo(
+        tr(f"台帳CSVを保存しました: {path}", f"device list saved to {path}"),
+        err=True,
+    )
+
+
+def _print_text(result, no_color: bool) -> None:
+    from ..core import Status
+    from ..report.common import Style, pad, width
 
     st = Style(color=color_wanted(no_color))
     found = len(result.hits)
@@ -190,12 +227,13 @@ def scan(networks, save, count, timeout, ports, names, max_hosts, fmt, no_color)
             "  " + "  ".join(pad(r[i], widths[i]) for i in range(len(r))).rstrip()
         )
     for ip, macs in result.duplicates:
+        seen = f" (MAC {', '.join(macs)})" if macs else ""
         click.echo(
             st.status(
                 Status.FAIL,
                 tr(
-                    f"  IP重複の疑い: {ip} に複数のMAC {', '.join(macs)}",
-                    f"  possible IP conflict: {ip} has MACs {', '.join(macs)}",
+                    f"  IP重複の疑い: {ip} が1回のpingに複数回応答{seen}",
+                    f"  possible IP conflict: {ip} answered one ping more than once{seen}",
                 ),
             )
         )

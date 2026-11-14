@@ -16,14 +16,42 @@ import threading
 import time
 from concurrent.futures import ThreadPoolExecutor
 from dataclasses import dataclass, field
-from typing import Dict, List, Optional, Sequence, Tuple
+from typing import Dict, Iterator, List, Optional, Sequence, Tuple, Union
 
 from . import netinfo, oui
-from .inventory import Device
+from .core import InputError
+from .i18n import tr
+from .inventory import Device, InventoryError, normalize_host
 from .measure import PingStats, ping_many, tcp_check_many
 from .netinfo import model as nm
 
 DEFAULT_MAX_HOSTS = 512  # a /23; stays below Linux' default ARP table limits
+
+
+class ScanError(InputError, ValueError):
+    """A scan range netdiag will not sweep (message says why)."""
+
+
+@dataclass(frozen=True)
+class AddressRange:
+    """``192.168.3.10-50``: every address from *start* to *end*, inclusive."""
+
+    start: ipaddress.IPv4Address
+    end: ipaddress.IPv4Address
+
+    @property
+    def num_addresses(self) -> int:
+        return int(self.end) - int(self.start) + 1
+
+    def addresses(self) -> Iterator[ipaddress.IPv4Address]:
+        for n in range(int(self.start), int(self.end) + 1):
+            yield ipaddress.IPv4Address(n)
+
+    def __str__(self) -> str:
+        return f"{self.start}-{self.end}"
+
+
+ScanTarget = Union[ipaddress.IPv4Network, AddressRange]
 
 
 @dataclass
@@ -74,7 +102,13 @@ class ScanResult:
 
     def to_devices(self) -> List[Device]:
         return [
-            Device(name="", host=h.ip, mac=h.mac, note=h.vendor or "")
+            Device(
+                name="",
+                host=h.ip,
+                ports=sorted(p for p, state in h.ports.items() if state == "open"),
+                mac=h.mac,
+                note=h.vendor or "",
+            )
             for h in self.hits
             if not h.is_self
         ]
@@ -82,12 +116,13 @@ class ScanResult:
 
 def default_networks(
     hn: netinfo.HostNetwork, max_hosts: int = DEFAULT_MAX_HOSTS
-) -> Tuple[List[ipaddress.IPv4Network], List[str]]:
-    """The subnets of this PC's physical, connected NICs (bounded in size).
+) -> Tuple[List[ScanTarget], List[str]]:
+    """The subnets of this PC's physical, connected NICs (each bounded in size).
 
     A subnet larger than *max_hosts* is narrowed to the /24 around the PC's own
     address, with a note — sweeping a /16 by accident would take minutes and is
-    rude on a production network.
+    rude on a production network. The bound is per NIC: a PC on an office
+    network and two lines sweeps all three.
     """
     nets: List[ipaddress.IPv4Network] = []
     notes: List[str] = []
@@ -106,28 +141,75 @@ def default_networks(
     return nets, notes
 
 
-def parse_networks(specs: Sequence[str]) -> List[ipaddress.IPv4Network]:
-    """``192.168.3.0/24``, ``192.168.3.10`` (one host) or ``192.168.3.10-50``."""
-    nets: List[ipaddress.IPv4Network] = []
+def _ipv4(text: str, spec: str) -> ipaddress.IPv4Address:
+    """One address of a scan range, zero-padded parts read as decimal."""
+    try:
+        addr = ipaddress.ip_address(normalize_host(text))
+    except (InventoryError, ValueError) as e:
+        raise ScanError(
+            tr(
+                f"走査範囲を読めません: {spec}（例: 192.168.3.0/24、192.168.3.10-50）",
+                f"cannot read the scan range {spec} (e.g. 192.168.3.0/24 or 192.168.3.10-50)",
+            )
+        ) from e
+    if addr.version != 4:
+        raise ScanError(
+            tr(
+                f"IPv6 の範囲は走査できません: {spec}（scan は IPv4 のサブネットを走査します）",
+                f"IPv6 ranges are not supported: {spec} (scan sweeps IPv4 subnets)",
+            )
+        )
+    return addr
+
+
+def parse_networks(specs: Sequence[str]) -> List[ScanTarget]:
+    """``192.168.3.0/24``, ``192.168.3.10`` (one host) or ``192.168.3.10-50``.
+
+    Raises :class:`ScanError` for anything else, IPv6 included.
+    """
+    targets: List[ScanTarget] = []
     for spec in specs:
         spec = spec.strip()
         if "-" in spec and "/" not in spec:
-            start_s, end_s = spec.split("-", 1)
-            start = ipaddress.ip_address(start_s)
+            start_s, end_s = (s.strip() for s in spec.split("-", 1))
+            start = _ipv4(start_s, spec)
             if "." not in end_s:
-                end_s = ".".join(start_s.split(".")[:3] + [end_s])
-            end = ipaddress.ip_address(end_s)
-            nets.extend(ipaddress.summarize_address_range(start, end))
+                end_s = ".".join(str(start).split(".")[:3] + [end_s])
+            end = _ipv4(end_s, spec)
+            if end < start:
+                raise ScanError(
+                    tr(
+                        f"走査範囲の終わりが始まりより前です: {spec}",
+                        f"the scan range ends before it starts: {spec}",
+                    )
+                )
+            targets.append(AddressRange(start, end))
         else:
-            nets.append(ipaddress.ip_network(spec, strict=False))
-    return [n for n in nets if n.version == 4]
+            addr, _, prefix = spec.partition("/")
+            base = _ipv4(addr, spec)
+            try:
+                targets.append(
+                    ipaddress.ip_network(f"{base}/{prefix or 32}", strict=False)
+                )
+            except ValueError as e:
+                raise ScanError(
+                    tr(
+                        f"走査範囲を読めません: {spec}",
+                        f"cannot read the scan range {spec}",
+                    )
+                ) from e
+    return targets
 
 
-def _hosts(nets: Sequence[ipaddress.IPv4Network]) -> List[str]:
+def _hosts(nets: Sequence[ScanTarget]) -> List[str]:
     out: List[str] = []
     for n in nets:
-        hosts = [str(h) for h in n.hosts()] if n.prefixlen < 31 else [str(h) for h in n]
-        out.extend(hosts)
+        if isinstance(n, AddressRange):
+            out.extend(str(a) for a in n.addresses())
+        elif n.prefixlen < 31:
+            out.extend(str(h) for h in n.hosts())
+        else:
+            out.extend(str(h) for h in n)
     return list(dict.fromkeys(out))
 
 
@@ -147,17 +229,22 @@ def _reverse_name(ip: str, timeout: float = 1.0) -> Optional[str]:
 
 
 def scan(
-    nets: Sequence[ipaddress.IPv4Network],
+    nets: Sequence[ScanTarget],
     count: int = 2,
     timeout: float = 1.0,
     ports: Sequence[int] = (),
     resolve_names: bool = False,
-    max_hosts: int = DEFAULT_MAX_HOSTS,
+    max_hosts: Optional[int] = DEFAULT_MAX_HOSTS,
 ) -> ScanResult:
+    """Sweep *nets*. ``max_hosts`` None means each range is already bounded
+    (the default networks of :func:`default_networks`)."""
     hosts = _hosts(nets)
-    if len(hosts) > max_hosts:
-        raise ValueError(
-            f"{len(hosts)} addresses exceed the limit of {max_hosts} (use --max-hosts)"
+    if max_hosts is not None and len(hosts) > max_hosts:
+        raise ScanError(
+            tr(
+                f"{len(hosts)} アドレスは上限 {max_hosts} を超えています（--max-hosts で変更）",
+                f"{len(hosts)} addresses exceed the limit of {max_hosts} (use --max-hosts)",
+            )
         )
     hn = netinfo.snapshot()
     own = set(hn.local_ips())
@@ -169,14 +256,8 @@ def scan(
     )
     window = time.monotonic() - t0 + 1.0
     after_list = netinfo.neighbors()
-    after: Dict[str, nm.Neighbor] = {}
-    macs_by_ip: Dict[str, set] = {}
-    for n in after_list:
-        after[n.ip] = n
-        if n.mac and not nm.mac_is_null(n.mac):
-            macs_by_ip.setdefault(n.ip, set()).add(n.mac)
+    after: Dict[str, nm.Neighbor] = {n.ip: n for n in after_list}
 
-    hostset = set(hosts)
     hits: List[ScanHit] = []
     for ip in hosts:
         st = stats.get(ip)
@@ -222,8 +303,17 @@ def scan(
                 pc = res.get((h.ip, p))
                 if pc is not None:
                     h.ports[p] = pc.state
+    # An IP conflict shows as two answers to one ping. Different MACs for one
+    # address on two NICs are two separate networks, not a conflict.
     dups = sorted(
-        (ip, sorted(m)) for ip, m in macs_by_ip.items() if len(m) > 1 and ip in hostset
+        (
+            ip,
+            sorted(
+                {n.mac for n in after_list if n.ip == ip and not nm.mac_is_null(n.mac)}
+            ),
+        )
+        for ip, st in stats.items()
+        if st.duplicates
     )
     hits.sort(key=lambda h: ipaddress.ip_address(h.ip))
     return ScanResult(
