@@ -24,7 +24,6 @@ from __future__ import annotations
 import heapq
 import math
 import random
-import sys
 import threading
 import time
 from dataclasses import dataclass, field
@@ -46,51 +45,29 @@ CLOCK_STEP_NOTE_S = 2.0
 EventFn = Callable[[str, Dict[str, Any]], None]
 Span = Tuple[float, float]
 
-if hasattr(time, "CLOCK_BOOTTIME"):  # Linux: CLOCK_MONOTONIC stops while asleep
+# Steady clocks that keep counting while the PC sleeps: CLOCK_BOOTTIME on
+# Linux (its CLOCK_MONOTONIC stops), CLOCK_MONOTONIC on macOS.
+_STEADY_CLOCK = getattr(time, "CLOCK_BOOTTIME", time.CLOCK_MONOTONIC)
 
-    def _monotonic() -> float:
-        return time.clock_gettime(time.CLOCK_BOOTTIME)
 
-elif sys.platform == "darwin":  # time.monotonic() stops while asleep there
-
-    def _monotonic() -> float:
-        return time.clock_gettime(time.CLOCK_MONOTONIC)
-
-else:
-    _monotonic = time.monotonic
-
-# Windows' time.monotonic() (QPC) may stop while the PC sleeps. There, a
-# forward step of the PC clock that the steady clock did not see, longer than
-# SLEEP_STEP_S, is counted as sleep; a shorter one is a clock correction.
-_STEADY_COUNTS_SLEEP = hasattr(time, "CLOCK_BOOTTIME") or sys.platform == "darwin"
-SLEEP_STEP_S = 30.0
+def _monotonic() -> float:
+    return time.clock_gettime(_STEADY_CLOCK)
 
 
 class SoakClock:
     """The run's timeline: the wall clock at the start, then a steady clock.
 
-    A clock change (NTP, w32time) then cannot end the run early, stretch it, or
-    fake a gap, and every time shown reads like the PC clock did at the start.
+    A clock change (NTP) then cannot end the run early, stretch it, or fake a
+    gap, and every time shown reads like the PC clock did at the start.
     Sleep keeps counting, so a sleeping PC shows up as unmeasured time.
     """
 
     def __init__(self) -> None:
         self.wall0 = time.time()
         self.mono0 = _monotonic()
-        self._slept = 0.0  # sleep the steady clock did not count
-        self._step = 0.0
-        self._lock = threading.Lock()  # the pinger thread reads it too
 
     def now(self) -> float:
-        with self._lock:
-            wall = time.time()
-            t = self.wall0 + (_monotonic() - self.mono0) + self._slept
-            jump = wall - t - self._step
-            if not _STEADY_COUNTS_SLEEP and jump > SLEEP_STEP_S:
-                self._slept += jump
-                t += jump
-            self._step = wall - t
-            return t
+        return self.wall0 + (_monotonic() - self.mono0)
 
     def step(self) -> float:
         """How far the PC clock has been moved since the start."""
@@ -440,7 +417,7 @@ class SoakRecorder:
             if t.address:
                 self.by_addr.setdefault(t.address, []).append(t)
         # A loss is reported up to max(timeout, ping pace) + 0.3 s after its
-        # send; ping.exe keeps a 1 s pace.
+        # send; ping6 on macOS and a plain `ping -c` keep a 1 s pace.
         self.window = max(timeout, interval, 1.0) + 0.5
         self.min_lost = max(1, min_lost)
         self.on_event = on_event
