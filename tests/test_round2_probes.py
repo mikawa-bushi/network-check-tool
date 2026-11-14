@@ -46,9 +46,9 @@ def test_no_reply_fails():
     assert "rtt_ms" not in r.metrics
 
 
-def test_measurement_error_is_skip_not_fail():
+def test_measurement_error_is_unknown_not_fail():
     r = result_from_ping("external", "h", _stats(0, error="ping command not available"))
-    assert r.status is Status.SKIP
+    assert r.status is Status.UNKNOWN
 
 
 def test_slow_wan_reply_warns():
