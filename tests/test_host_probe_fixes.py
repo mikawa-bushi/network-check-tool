@@ -315,9 +315,18 @@ FIREWALLD = """table inet firewalld {
 \tchain filter_IN_public {
 \t\tlog prefix "drop: " reject
 \t}
+\tchain filter_FORWARD {
+\t\ttype filter hook forward priority filter + 10; policy accept;
+\t\tct state { established, related } accept
+\t\tct state invalid drop
+\t\tip6 daddr { ::/96, ::ffff:0.0.0.0/96, 2002::/24, 2002:a00::/24, 2002:7f00::/24, 2002:a9fe::/32, 2002:ac10::/28, 2002:c0a8::/32, 2002:e000::/19 } reject with icmpv6 addr-unreachable
+\t\treject with icmpx admin-prohibited
+\t}
 \tchain filter_OUTPUT {
 \t\ttype filter hook output priority filter + 10; policy accept;
+\t\tct state { established, related } accept
 \t\toifname "lo" accept
+\t\tip6 daddr { ::/96, ::ffff:0.0.0.0/96, 2002::/24, 2002:a00::/24, 2002:7f00::/24, 2002:a9fe::/32, 2002:ac10::/28, 2002:c0a8::/32, 2002:e000::/19 } reject with icmpv6 addr-unreachable
 \t\tjump filter_OUTPUT_POLICIES
 \t}
 \tchain filter_OUTPUT_POLICIES {
@@ -391,6 +400,53 @@ def test_outbound_blocking_is_flagged(monkeypatch, tool, text, summary):
 def test_an_input_drop_without_established_eats_the_replies(monkeypatch):
     res = _firewall(monkeypatch, "nft", NFT_NO_REPLIES)
     assert (res.status, res.code) == (Status.WARN, "firewall.replies_blocked")
+
+
+def nft_output(rule):
+    return (
+        "table inet filter {\n"
+        "\tchain input {\n"
+        "\t\ttype filter hook input priority filter; policy drop;\n"
+        "\t\tct state established,related accept\n"
+        "\t}\n"
+        "\tchain output {\n"
+        "\t\ttype filter hook output priority filter; policy accept;\n"
+        f"\t\t{rule}\n"
+        "\t}\n"
+        "}\n"
+    )
+
+
+@pytest.mark.parametrize(
+    "rule",
+    [
+        "ip6 daddr ::ffff:0.0.0.0/96 drop",
+        "ip6 daddr ::ffff:192.0.2.1 reject",
+        "ip6 daddr { 2002:c0a8::/32,\n\t\t\t    2002:a00::/24 } meta l4proto tcp reject",
+        "ip6 daddr { 2002:e000::/20, ::/96 } counter reject with icmpv6 no-route",
+    ],
+)
+def test_rules_aimed_only_at_addresses_this_pc_never_sends_to_are_fine(
+    monkeypatch, rule
+):
+    res = _firewall(monkeypatch, "nft", nft_output(rule))
+    assert (res.status, res.code) == (Status.OK, "firewall.ok")
+
+
+@pytest.mark.parametrize(
+    "rule",
+    [
+        "ip6 daddr 2001:db8::50 tcp dport 502 reject",
+        "ip6 daddr { ::ffff:0.0.0.0/96, 2001:db8::/32 } reject",
+        "ip6 daddr != { ::/96, ::ffff:0.0.0.0/96 } reject",
+        "ip6 daddr 2002::/16 drop",
+        "ip6 daddr @blocked drop",
+    ],
+)
+def test_ipv6_rules_that_reach_real_destinations_still_warn(monkeypatch, rule):
+    res = _firewall(monkeypatch, "nft", nft_output(rule))
+    assert (res.status, res.code) == (Status.WARN, "firewall.outbound_block")
+    assert res.summary.startswith("nftables: 1 rule(s) drop or reject outbound")
 
 
 # -- gateway: engine-3, engine-7, engine-10, routes, link defaults -------------

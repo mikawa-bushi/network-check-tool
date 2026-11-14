@@ -9,6 +9,7 @@ from __future__ import annotations
 
 import re
 from dataclasses import dataclass, field
+from ipaddress import IPv4Network, IPv6Network
 from typing import Dict, List, Optional
 
 from ..core import CheckResult, Context, Probe, register
@@ -28,7 +29,7 @@ _WIN_FW_SCRIPT = (
 
 @dataclass
 class Rule:
-    blocks: bool  # its verdict drops or rejects the packet
+    blocks: bool  # it drops or rejects traffic this PC really sends or receives
     jumps: List[str] = field(default_factory=list)  # chains it continues in
 
 
@@ -39,9 +40,53 @@ class Chain:
     rules: List[Rule] = field(default_factory=list)
 
 
+# IPv6 destinations this PC never sends to: IPv4-compatible and IPv4-mapped
+# addresses, and the 6to4 form of IPv4 ranges no 6to4 relay can reach
+# (RFC 3964 5.1). Stock firewalld rejects these on output.
+_NEVER_SENT_TO = [IPv6Network("::/96"), IPv6Network("::ffff:0:0/96")] + [
+    IPv6Network((0x2002 << 112 | int(v4.network_address) << 80, 16 + v4.prefixlen))
+    for v4 in map(
+        IPv4Network,
+        (
+            "0.0.0.0/8",
+            "10.0.0.0/8",
+            "127.0.0.0/8",
+            "169.254.0.0/16",
+            "172.16.0.0/12",
+            "192.168.0.0/16",
+            "224.0.0.0/3",
+        ),
+    )
+]
+_NFT_DADDR6 = re.compile(r"\bip6\s+daddr\s+(\{[^}]*\}|\S+)")
+
+
+def _only_never_sent_to(text: str) -> bool:
+    """The rule matches only IPv6 destinations this PC never sends to."""
+    m = _NFT_DADDR6.search(text)
+    if m is None:
+        return False
+    try:
+        nets = [
+            IPv6Network(a.strip(), strict=False)
+            for a in m.group(1).strip("{}").split(",")
+            if a.strip()
+        ]
+    except ValueError:  # a negation, a named set, a range: assume it is real
+        return False
+    return bool(nets) and all(
+        any(n.subnet_of(never) for never in _NEVER_SENT_TO) for n in nets
+    )
+
+
 def _rule(blocks: bool, text: str, jumps: List[str]) -> Rule:
     # "ct state invalid drop" only discards packets that belong to no connection.
-    return Rule(blocks=blocks and "invalid" not in text.lower(), jumps=jumps)
+    return Rule(
+        blocks=blocks
+        and "invalid" not in text.lower()
+        and not _only_never_sent_to(text),
+        jumps=jumps,
+    )
 
 
 _NFT_JUMP = re.compile(r"\b(?:jump|goto)\s+([\w.-]+)")
