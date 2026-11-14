@@ -14,6 +14,7 @@ from netdiag.measure import PingStats
 from netdiag.netinfo import linux, macos, windows
 from netdiag.netinfo.model import KIND_ETHERNET, NEIGH_STALE, HostNetwork, Neighbor
 from netdiag.probes import gateway as gateway_probe
+from netdiag.probes.device import DeviceEvidence
 
 
 def _run(hn, only, **config):
@@ -852,11 +853,13 @@ def test_device_that_answers_arp_after_an_invalid_row_is_present():
         _line_pc(),
         ["route", "reach"],
         target={"name": "PLC1", "host": "192.0.2.39"},
-        _address="192.0.2.39",
-        _ping=PingStats(target="192.0.2.39", sent=10, received=0),
-        _ping_window=3.0,
-        _neighbor_before=before.get("192.0.2.39"),
-        _neighbor_after=after,
+        evidence=DeviceEvidence(
+            address="192.0.2.39",
+            ping=PingStats(target="192.0.2.39", sent=10, received=0),
+            ping_window=3.0,
+            neighbor_before=before.get("192.0.2.39"),
+            neighbor_after=after,
+        ),
     )
     assert res["reach"].code == "reach.icmp_blocked"
 

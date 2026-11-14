@@ -9,6 +9,9 @@ network, so each field situation is reproduced exactly:
 * port closed (alive, nothing listening) vs no answer at all.
 """
 
+from contextlib import contextmanager
+from unittest import mock
+
 import pytest
 
 from netdiag import netinfo
@@ -27,7 +30,8 @@ from netdiag.netinfo.model import (
     Neighbor,
     Route,
 )
-from netdiag.probes.device import l2_evidence
+from netdiag.probes import device as device_probes
+from netdiag.probes.device import DeviceEvidence, l2_evidence
 
 DEVICE = ["route", "reach", "ports"]
 
@@ -59,13 +63,28 @@ def _ping(received, sent=10, dups=0, rtt=0.4, error=None):
     )
 
 
+def _cfg(target, hn=None, ping=None, before=None, after=None):
+    evidence = DeviceEvidence(
+        address=target["host"],
+        ping=ping,
+        ping_window=3.0,
+        neighbor_before=before,
+        neighbor_after=after,
+    )
+    return {"target": target, "_netinfo": hn or _hn(), "evidence": evidence}
+
+
+@contextmanager
+def _answering_ports(ports):
+    """The ports probe connects; *ports* maps a port to its PortCheck."""
+    fake = lambda pairs, **kw: {(h, p): ports[p] for h, p in pairs}  # noqa: E731
+    with mock.patch.object(device_probes, "tcp_check_many", fake):
+        yield
+
+
 def _run(target, hn=None, ping=None, before=None, after=None, ports=None):
-    cfg = {"target": target, "_netinfo": hn or _hn(), "_ping": ping}
-    cfg["_neighbor_before"] = before
-    cfg["_neighbor_after"] = after
-    if ports is not None:
-        cfg["_ports"] = ports
-    return Engine(config=cfg).run(only=DEVICE)
+    with _answering_ports(ports or {}):
+        return Engine(config=_cfg(target, hn, ping, before, after)).run(only=DEVICE)
 
 
 def _tgt(host="192.168.3.39", ports=(), **kw):
@@ -100,7 +119,8 @@ def test_link_down_nic_and_special_addresses():
 def test_routed_target_via_gateway_is_fine():
     diag = _run(_tgt("10.9.0.5"), hn=_hn(gateway="192.168.3.1"), ping=_ping(10))
     assert diag.healthy
-    assert diag.results_by_name()["route"].code == "route.via_gateway"
+    assert diag.results_by_name()["route"].code == "route.via_default"
+    assert diag.results_by_name()["route"].status == Status.OK
 
 
 # ------------------------------------------------------------------ reach
@@ -150,7 +170,7 @@ def test_intermittent_loss_and_custom_rtt_limit():
 
 def test_unmeasurable_ping_is_not_a_device_fault():
     diag = _run(_tgt(), ping=_ping(0, error="ping command not available"))
-    assert diag.results_by_name()["reach"].status == Status.SKIP
+    assert diag.results_by_name()["reach"].status == Status.UNKNOWN
     assert diag.primary is None or diag.primary.cause != "reach"
 
 
@@ -175,7 +195,7 @@ def test_unmeasurable_ping_is_not_a_device_fault():
         (
             None,
             Neighbor(
-                "ip", mac="00:11:22:33:44:55", state="reachable", confirmed_age=60
+                "ip", mac="00:11:22:33:44:55", state="reachable", confirmed_age=120
             ),
             "unknown",
         ),
@@ -384,14 +404,9 @@ def test_ports_ok_settles_an_icmp_silent_device():
     from netdiag.runner import reconcile_device
 
     hn = _hn(gateway="192.168.3.1")
-    cfg = {
-        "target": _tgt("10.9.0.5", ports=[44818]),
-        "_netinfo": hn,
-        "_ping": _ping(0),
-        "_ports": {44818: _pc(44818, "open", ok=2)},
-    }
-    engine = Engine(config=cfg)
-    diag = reconcile_device(engine, engine.run(only=DEVICE))
+    engine = Engine(config=_cfg(_tgt("10.9.0.5", ports=[44818]), hn, _ping(0)))
+    with _answering_ports({44818: _pc(44818, "open", ok=2)}):
+        diag = reconcile_device(engine, engine.run(only=DEVICE))
     assert diag.healthy
     assert diag.results_by_name()["reach"].code == "reach.icmp_silent_ports_ok"
 

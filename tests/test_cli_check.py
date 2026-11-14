@@ -34,7 +34,10 @@ def _fake_report(devices, status=Status.OK):
     reps = []
     for d in devices:
         if status == Status.OK:
-            diag = Diagnosis(results=[], hypotheses=[], healthy=True)
+            reach = CheckResult(
+                name="reach", status=Status.OK, summary="10/10", code="reach.ok"
+            )
+            diag = Diagnosis(results=[reach], hypotheses=[], healthy=True)
         else:
             diag = Diagnosis(
                 results=[

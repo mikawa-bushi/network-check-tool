@@ -15,15 +15,16 @@ the lowest broken step as the cause:
   or no answer.
 
 The device is ``ctx.config["target"]`` (a dict, see :mod:`netdiag.inventory`).
-Measurements may be pre-computed by the device runner (``_ping``,
-``_neighbor_before``, ``_neighbor_after``, ``_ports``) so that many devices share
-one fast ping sweep; without them each probe measures on its own.
+The device runner measures every device in one fast ping sweep and hands each
+one its :class:`DeviceEvidence` as ``ctx.config["evidence"]``; without it, the
+probes measure on their own.
 """
 
 from __future__ import annotations
 
 import ipaddress
 import time
+from dataclasses import dataclass
 from typing import Any, Dict, List, Optional
 
 from ..core import CheckResult, Context, Probe, register
@@ -33,6 +34,31 @@ from ..measure import PingStats, ping, tcp_check_many
 from ..measure.icmp import _literal_family, _resolve_v4
 from ..netinfo import model as nm
 from ._common import classify_latency, fmt_ms, oscmd, ping_settings, ping_summary
+
+
+@dataclass(frozen=True)
+class DeviceEvidence:
+    """What the device runner measured for one device before its probes ran.
+
+    ``address`` is None when the host did not resolve. ``ping`` is None when
+    the device was not pinged because its route already fails.
+    """
+
+    address: Optional[str]
+    ping: Optional[PingStats] = None
+    ping_window: float = 0.0
+    neighbor_before: Optional[nm.Neighbor] = None
+    neighbor_after: Optional[nm.Neighbor] = None
+
+
+def evidence(ctx: Context) -> Optional[DeviceEvidence]:
+    return ctx.get("evidence")
+
+
+# How long a reachable ARP entry counts as the device's answer. Linux keeps an
+# entry REACHABLE for at most 1.5 x base_reachable_time (30 s) after the last
+# confirmation.
+ARP_RECENT_S = 60.0
 
 
 def target(ctx: Context) -> Dict[str, Any]:
@@ -52,10 +78,11 @@ def l2_evidence(
 ) -> str:
     """``present`` / ``absent`` / ``unknown`` from ARP state around a ping run.
 
-    Only *fresh* evidence counts: an entry confirmed during the test (Linux
-    reports the confirmation age), or one that appeared during it. A cache
-    entry left over from before proves nothing — the device may have died
-    seconds ago.
+    Only *recent* evidence counts: an entry that appeared during the test, or
+    one the OS still holds as reachable, which it confirmed within its
+    reachable time (Linux reports the age). A device that ignores ping keeps
+    such an entry between runs, so it must not read as gone. A stale cache
+    entry proves nothing.
     """
     if after is None:
         return "unknown"
@@ -64,15 +91,28 @@ def l2_evidence(
     if not after.mac or nm.mac_is_null(after.mac) or after.state == nm.NEIGH_PERMANENT:
         return "unknown"
     if after.confirmed_age is not None:
-        fresh = (
-            after.state == nm.NEIGH_REACHABLE and after.confirmed_age <= window_s + 1.0
+        recent = (
+            after.state == nm.NEIGH_REACHABLE
+            and after.confirmed_age <= window_s + ARP_RECENT_S
         )
-        return "present" if fresh else "unknown"
+        return "present" if recent else "unknown"
     if before is None or not before.mac:
         return "present"  # resolved during our test
     if after.state == nm.NEIGH_REACHABLE and before.state != nm.NEIGH_REACHABLE:
         return "present"
     return "unknown"
+
+
+def _default_route_only(hn: nm.HostNetwork, ip: str) -> bool:
+    """No route but the default one covers *ip*."""
+    try:
+        addr = ipaddress.ip_address(ip)
+    except ValueError:
+        return False
+    return not any(
+        r.network is not None and r.network.prefixlen > 0 and addr in r.network
+        for r in hn.routes
+    )
 
 
 @register
@@ -102,28 +142,30 @@ class RouteProbe(Probe):
                 tr("機器のアドレスが未指定", "no device address given"),
                 code="route.no_host",
             )
-        if _literal_family(host) is None:
-            ip = ctx.get("_address") or _resolve_v4(
-                host, timeout=float(ctx.get("dns_timeout", 3.0))
-            )
-            if ip is None:
-                return CheckResult.fail(
-                    self.name,
-                    tr(
-                        "ホスト名を解決できません（DNS/hostsファイルを確認、またはIPで指定）",
-                        "cannot resolve the host name (check DNS/hosts, or use the IP)",
-                    ),
-                    detail={"host": host},
-                    code="route.dns",
-                )
+        ev = evidence(ctx)
+        if ev is not None:
+            ip = ev.address
+        elif _literal_family(host) is None:
+            ip = _resolve_v4(host, timeout=float(ctx.get("dns_timeout", 3.0)))
         else:
             ip = host
+        if ip is None:
+            return CheckResult.fail(
+                self.name,
+                tr(
+                    "ホスト名を解決できません（DNS/hostsファイルを確認、またはIPで指定）",
+                    "cannot resolve the host name (check DNS/hosts, or use the IP)",
+                ),
+                detail={"host": host},
+                code="route.dns",
+            )
         hn = ctx.network()
         dec = hn.decide_route(ip)
         detail = {
             "host": host,
             "address": ip,
             "on_link": dec.on_link,
+            "arp": dec.arp,
             "interface": dec.interface.name if dec.interface else None,
             "local_address": dec.address.cidr if dec.address else None,
             "gateway": dec.gateway,
@@ -189,7 +231,16 @@ class RouteProbe(Probe):
                     detail=detail,
                     code="route.link_down",
                 )
-            others = [f"{i.name}" for i, _a in dec.candidates if i.name != iface.name]
+            # The OS picks among NICs only for an equally specific subnet on an
+            # up link; a longer prefix or a link-down NIC leaves no choice.
+            others = [
+                i.name
+                for i, a in dec.candidates
+                if i.name != iface.name
+                and i.up
+                and addr is not None
+                and a.prefixlen == addr.prefixlen
+            ]
             via = f"{iface.name} {addr.cidr}" if addr else iface.name
             if others:
                 return CheckResult.warn(
@@ -207,6 +258,22 @@ class RouteProbe(Probe):
                 detail=detail,
                 code="route.on_link",
             )
+        local = ", ".join(
+            a.cidr for i in hn.lan_interfaces() for a in i.usable_ipv4
+        ) or tr("なし", "none")
+        if dec.gateway and _default_route_only(hn, ip):
+            # The route to the internet, not one to this device. A routed
+            # device answers through it and a device in another subnet on this
+            # line does not; the device runner settles which (reconcile_device).
+            return CheckResult.ok(
+                self.name,
+                tr(
+                    f"別サブネット — ゲートウェイ {dec.gateway} 経由",
+                    f"routed via gateway {dec.gateway}",
+                ),
+                detail={**detail, "local_networks": local},
+                code="route.via_default",
+            )
         if dec.gateway:
             return CheckResult.ok(
                 self.name,
@@ -217,9 +284,6 @@ class RouteProbe(Probe):
                 detail=detail,
                 code="route.via_gateway",
             )
-        local = ", ".join(
-            a.cidr for i in hn.lan_interfaces() for a in i.usable_ipv4
-        ) or tr("なし", "none")
         return CheckResult.fail(
             self.name,
             tr(
@@ -234,7 +298,7 @@ class RouteProbe(Probe):
         code = result.code if result is not None else ""
         d = result.detail if result is not None else {}
         ip = d.get("address") or tr("<機器IP>", "<device-ip>")
-        if code == "route.no_route":
+        if code in ("route.no_route", "route.default_only"):
             try:
                 net24 = ipaddress.ip_network(f"{ip}/24", strict=False)
                 example = f"{'.'.join(str(net24.network_address).split('.')[:3])}.x/24"
@@ -263,7 +327,19 @@ class RouteProbe(Probe):
                         "機器側のIP・サブネットマスク設定が想定どおりかも確認する",
                         "Also confirm the device's own IP/mask settings",
                     ),
-                ],
+                ]
+                + (
+                    [
+                        tr(
+                            f"機器がルーターの先にある構成なら、ゲートウェイ {d.get('gateway')} から先の経路を確認する: "
+                            + oscmd(f"tracepath {ip}", f"tracert -d {ip}"),
+                            f"If the device really sits behind a router, check the path past {d.get('gateway')}: "
+                            + oscmd(f"tracepath {ip}", f"tracert -d {ip}"),
+                        )
+                    ]
+                    if code == "route.default_only"
+                    else []
+                ),
             )
         if code == "route.link_down":
             return (
@@ -336,25 +412,30 @@ class ReachProbe(Probe):
         rd = route.detail if route is not None else {}
         ip = rd.get("address") or t.get("host")
         on_link = bool(rd.get("on_link"))
+        # ARP proves presence or absence only on an ARP link of this PC; a
+        # tunnel or point-to-point route is on-link but has no ARP at all.
+        arp = bool(rd.get("arp"))
 
-        before = ctx.get("_neighbor_before")
-        st: Optional[PingStats] = ctx.get("_ping")
-        started = time.monotonic()
-        if st is None:
-            if on_link and before is None:
-                from .. import netinfo
-
-                before = netinfo.neighbor(ip)
-            st = ping(ip, **ping_settings(ctx.get))
-        window = max(
-            time.monotonic() - started, float(ctx.get("_ping_window", 0.0)), 1.0
-        )
-        after = ctx.get("_neighbor_after")
-        if on_link and after is None:
+        ev = evidence(ctx)
+        st: Optional[PingStats]
+        if ev is not None:
+            st, before, after = ev.ping, ev.neighbor_before, ev.neighbor_after
+            window = max(ev.ping_window, 1.0)
+        else:
             from .. import netinfo
 
-            after = netinfo.neighbor(ip)
-        l2 = l2_evidence(before, after, window) if on_link else "n/a"
+            before = netinfo.neighbor(ip) if arp else None
+            started = time.monotonic()
+            st = ping(ip, **ping_settings(ctx.get))
+            window = max(time.monotonic() - started, 1.0)
+            after = netinfo.neighbor(ip) if arp else None
+        if st is None:
+            return CheckResult.unknown(
+                self.name,
+                tr("pingで測定していません", "not measured by ping"),
+                code="reach.unmeasured",
+            )
+        l2 = l2_evidence(before, after, window) if arp else "n/a"
         mac = after.mac if after is not None and after.mac else None
 
         from .. import oui
@@ -363,6 +444,7 @@ class ReachProbe(Probe):
         detail: Dict[str, Any] = {
             "address": ip,
             "on_link": on_link,
+            "arp": arp,
             "ping": st.to_dict(),
             "mac": mac,
             "vendor": vendor,
@@ -375,7 +457,7 @@ class ReachProbe(Probe):
         has_ports = bool(t.get("ports"))
 
         if st.error:
-            return CheckResult.skip(
+            return CheckResult.unknown(
                 self.name,
                 tr(f"測定できません（{st.error}）", f"cannot measure ({st.error})"),
                 detail=detail,
@@ -405,7 +487,7 @@ class ReachProbe(Probe):
             )
 
         if not st.any_reply:
-            if on_link and l2 == "present":
+            if l2 == "present":
                 return CheckResult.warn(
                     self.name,
                     tr(
@@ -416,7 +498,7 @@ class ReachProbe(Probe):
                     detail=detail,
                     code="reach.icmp_blocked",
                 )
-            if on_link and l2 == "absent":
+            if l2 == "absent":
                 return CheckResult.fail(
                     self.name,
                     tr(
@@ -630,21 +712,15 @@ class PortsProbe(Probe):
         ip = (route.detail.get("address") if route is not None else None) or t.get(
             "host"
         )
-        checks = ctx.get("_ports")
-        if checks is None:
-            pairs = [(ip, p) for p in ports]
-            res = tcp_check_many(
-                pairs,
-                attempts=int(ctx.get("tcp_attempts", 2)),
-                timeout=float(ctx.get("tcp_timeout", 2.0)),
-            )
-            checks = {p: res[(ip, p)] for p in ports}
-        rows = []
-        for p in ports:
-            pc = checks.get(p)
-            if pc is None:
-                continue
-            rows.append({"port": p, "service": SERVICE_NAMES.get(p), **pc.to_dict()})
+        res = tcp_check_many(
+            [(ip, p) for p in ports],
+            attempts=int(ctx.get("tcp_attempts", 2)),
+            timeout=float(ctx.get("tcp_timeout", 2.0)),
+        )
+        rows = [
+            {"port": p, "service": SERVICE_NAMES.get(p), **res[(ip, p)].to_dict()}
+            for p in ports
+        ]
         detail = {"address": ip, "ports": rows}
         opened = [r for r in rows if r["state"] == "open"]
         closed = [r for r in rows if r["state"] == "closed"]
