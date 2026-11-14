@@ -142,30 +142,41 @@ def _densest(times, window):
     return max(sum(1 for x in times if s <= x < s + window) for s in times)
 
 
-def _stall_once(seconds):
-    """An on_sample that freezes the pinger thread once, like Ctrl-Z then fg."""
-    seen = []
+# A pinger that keeps its pace with 50 ms between requests sends at most 3 in
+# any 30 ms, even when its waits overrun on a slow machine: the request it
+# overslept, the one that fell due meanwhile, and the next one. After a stall
+# the old pinger sent every request it had missed at once.
+_MOST_IN_30_MS = 3
+
+
+def _stall_once(seconds, samples):
+    """An on_sample that freezes the pinger thread once, like Ctrl-Z then fg,
+    and the stop it sets after *samples* samples (or 10 s)."""
+    seen, stop = [], threading.Event()
+    cap = threading.Timer(10.0, stop.set)
+    cap.daemon = True
+    cap.start()
 
     def on_sample(target, sent_at, rtt, error):
         seen.append(sent_at)
         if len(seen) == 3:
             time.sleep(seconds)
+        if len(seen) >= samples:
+            stop.set()
 
-    return seen, on_sample
+    return seen, on_sample, stop
 
 
 @pytest.mark.skipif(
     not icmpmod.icmp_socket_available(), reason="no unprivileged ICMP socket"
 )
 def test_socket_pinger_resumes_its_pace_after_a_stall():
-    sent, on_sample = _stall_once(1.0)
-    stop = threading.Event()
-    threading.Timer(2.0, stop.set).start()
+    sent, on_sample, stop = _stall_once(1.0, samples=15)
     icmpmod.ping_stream(
         ["127.0.0.1"], on_sample, stop, interval=0.05, timeout=0.5, method="socket"
     )
     assert len(sent) >= 15
-    assert _densest(sent, 0.03) <= 2  # was 20 requests at once after the stall
+    assert _densest(sent, 0.03) <= _MOST_IN_30_MS  # was 20 at once after the stall
 
 
 class _EchoApi:
@@ -187,21 +198,19 @@ class _EchoApi:
 
 def test_windows_pinger_resumes_its_pace_after_a_stall():
     api = _EchoApi()
-    _sent, on_sample = _stall_once(0.5)
-    stop = threading.Event()
-    threading.Timer(1.2, stop.set).start()
+    _sent, on_sample, stop = _stall_once(0.5, samples=13)
     winicmp.WinIcmpPinger(
         {"plc": "192.0.2.10"},
         interval=0.05,
         timeout=0.2,
         size=32,
-        max_pps=1000,
+        max_pps=0,  # no rate ceiling to spread a backlog out
         on_sample=on_sample,
         stop=stop,
         api=api,
     ).run()
-    assert len(api.calls) >= 10
-    assert _densest(api.calls, 0.03) <= 2  # was 10 echoes back to back
+    assert len(api.calls) >= 13
+    assert _densest(api.calls, 0.03) <= _MOST_IN_30_MS  # was 10 echoes back to back
 
 
 # ------------------------------------------------------------- Ctrl-C in a sweep

@@ -36,13 +36,17 @@ for delay, text in run["steps"]:
     time.sleep(delay)
     out.write((text + run.get("newline", "\n")).encode(run.get("encoding", "utf-8")))
     out.flush()
+open(counter + ".exited", "w").close()
 sys.exit(run.get("exit", 0))
 """
 
 
 @pytest.fixture
 def fake_ping(tmp_path, monkeypatch):
-    """Make every ping run play back the next of the given runs (the last repeats)."""
+    """Make every ping run play back the next of the given runs (the last repeats).
+
+    Returns the path of a file that appears once a run has exited.
+    """
     script = tmp_path / "fake_ping.py"
     script.write_text(FAKE_PING, encoding="utf-8")
     plan = tmp_path / "plan.json"
@@ -56,6 +60,7 @@ def fake_ping(tmp_path, monkeypatch):
     def play(*runs, windows=False):
         monkeypatch.setattr(icmpmod, "is_windows", lambda: windows)
         plan.write_text(json.dumps(list(runs)), encoding="utf-8")
+        return tmp_path / "runs.exited"
 
     return play
 
@@ -85,8 +90,9 @@ def iputils(count, lost=(), transmitted=None, header=None, base=1):
 NO_ROUTE = {"steps": [[0.0, "ping: connect: Network is unreachable"]], "exit": 2}
 
 
-def stream(seconds, timeout=0.5):
-    """Run ping_stream for *seconds*; return its samples and its result."""
+def stream(seconds, timeout=0.5, until=None):
+    """Run ping_stream for *seconds*, or until *until()* is true; return its
+    samples, its result and when it was stopped."""
     samples, result = [], {}
     stop = threading.Event()
 
@@ -99,7 +105,11 @@ def stream(seconds, timeout=0.5):
         )
     )
     th.start()
-    th.join(seconds)
+    deadline = time.monotonic() + seconds
+    while th.is_alive() and time.monotonic() < deadline:
+        if until is not None and until():
+            break
+        time.sleep(0.01)
     stopped = time.time()
     stop.set()
     th.join(10)
@@ -139,9 +149,10 @@ def test_a_lost_first_request_is_placed_first_when_seq_counts_from_0(fake_ping):
 def test_ping_cut_short_by_ctrl_c_does_not_count_unsent_requests_as_lost(
     fake_ping,
 ):
-    # Ctrl-C reaches ping too: it prints its statistics after 3 of 5 and exits.
-    fake_ping(iputils(3, transmitted=3))
-    samples, total, stopped = stream(0.5)
+    # Ctrl-C reaches ping too: it prints its statistics after 3 of 5 and exits,
+    # and netdiag's stop follows at once, however slowly ping started.
+    exited = fake_ping(iputils(3, transmitted=3))
+    samples, total, stopped = stream(5.0, until=exited.exists)
     assert [s[1] is None for s in samples] == [False, False, False]
     assert total.sent == total.received == 3
     assert all(sent_at <= stopped for sent_at, *_ in samples)
@@ -162,7 +173,7 @@ def test_japanese_ping_exe_lines_stream_in_order_as_they_print(fake_ping, monkey
         "    パケット数: 送信 = 3、受信 = 2、損失 = 1 (33% の損失)、",
     ]
     delays = [0.0, 0.0, 0.05, 0.3, 0.05, 0.05, 0.0, 0.0]
-    fake_ping(
+    exited = fake_ping(
         {
             "steps": [list(s) for s in zip(delays, lines)],
             "encoding": "cp932",
@@ -170,7 +181,7 @@ def test_japanese_ping_exe_lines_stream_in_order_as_they_print(fake_ping, monkey
         },
         windows=True,
     )
-    samples, _total, _ = stream(0.8)
+    samples, _total, _ = stream(5.0, until=exited.exists)
     assert [s[1] for s in samples[:3]] == [0.5, None, 3.0]
     assert samples[1][2] == "要求がタイムアウトしました。"
     assert all(0 <= arrived - sent_at < 0.6 for sent_at, _r, _e, arrived in samples)
