@@ -18,8 +18,7 @@ from .core import CheckResult, Context, Probe, Status, register
 # the "netdiag" logger. The library itself never calls basicConfig.
 logging.getLogger(__name__).addHandler(logging.NullHandler())
 
-# pyproject.toml is the only place the version is written. The exe build keeps
-# this metadata with PyInstaller's --copy-metadata.
+# pyproject.toml is the only place the version is written.
 try:
     __version__ = _metadata.version("network-check-tool")
 except _metadata.PackageNotFoundError:

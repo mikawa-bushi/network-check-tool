@@ -398,18 +398,6 @@ def harden_streams() -> None:
                 pass
 
 
-def setup(
-    lang: Optional[str] = None, verbose: bool = False, log_file: Optional[str] = None
-) -> None:
-    """Per-run setup shared by the ``netdiag`` group and the exe launcher."""
-    from .. import probes, runner  # noqa: F401  (register the built-in probes)
-    from ..plugins import load_plugins
-
-    set_language(lang)
-    _setup_logging(verbose=verbose, log_file=log_file)
-    load_plugins()
-
-
 def _next_steps() -> str:
     from ..report.common import pad, width
 
@@ -508,7 +496,12 @@ def cli(
     netdiag check -f devices.csv   台帳の全機器をまとめて診断
     netdiag scan                   同じネットワーク上の機器を一覧
     """
-    setup(lang, verbose, log_file)
+    from .. import probes, runner  # noqa: F401  (register the built-in probes)
+    from ..plugins import load_plugins
+
+    set_language(lang)
+    _setup_logging(verbose=verbose, log_file=log_file)
+    load_plugins()
     if ctx.invoked_subcommand is None:
         try:
             ctx.invoke(ctx.command.get_command(ctx, "check"))
