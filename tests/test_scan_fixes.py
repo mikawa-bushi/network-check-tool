@@ -225,3 +225,25 @@ def test_the_vendor_table_reads_makers_not_postcodes(tmp_path, monkeypatch):
     assert oui.lookup("0030.de00.0001") == "WAGO Kontakttechnik GmbH"
     assert oui.lookup("0:30:de:0:0:1") == "WAGO Kontakttechnik GmbH"
     assert oui.lookup("70:b3:d5:12:34:56") is None  # an MA-S block: maker unknown
+
+
+def test_an_all_zero_mac_has_no_vendor(sweep, tmp_path, monkeypatch, capsys):
+    from netdiag.netinfo.model import KIND_LOOPBACK
+
+    path = tmp_path / "oui.txt"
+    path.write_text("00-00-00   (hex)\t\tXEROX CORPORATION\n", encoding="utf-8")
+    monkeypatch.setenv("NETDIAG_OUI_FILE", str(path))
+    oui.reset()
+    lo = Interface(
+        name="lo",
+        kind=KIND_LOOPBACK,
+        up=True,
+        mac="00:00:00:00:00:00",
+        addresses=[Address("127.0.0.1", 8)],
+    )
+    sweep["hn"] = HostNetwork(interfaces=[lo])
+    _answer(sweep, "127.0.0.1")
+    _scan("127.0.0.1")
+    out = capsys.readouterr().out
+    assert "127.0.0.1" in out and "XEROX" not in out
+    assert oui.lookup("00:00:00:5e:00:01") == "XEROX CORPORATION"

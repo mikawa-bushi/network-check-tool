@@ -16,7 +16,7 @@ import threading
 from pathlib import Path
 from typing import Dict, List, Optional
 
-from .netinfo.model import normalize_mac
+from .netinfo.model import mac_is_null, normalize_mac
 
 CANDIDATES: List[str] = [
     "/usr/share/ieee-data/oui.txt",
@@ -110,7 +110,7 @@ _REGISTRY_BLOCK = "ieee registration authority"
 def lookup(mac: Optional[str]) -> Optional[str]:
     """Vendor name for a MAC (``aa:bb:cc:..``), or None if unknown/unavailable."""
     normal = normalize_mac(mac.replace(".", "") if mac else None)
-    if not normal:
+    if mac_is_null(normal):  # loopback's 00:00:00:00:00:00 is not Xerox's
         return None
     vendor = _load().get(normal.replace(":", "")[:6])
     if vendor and vendor.lower() == _REGISTRY_BLOCK:
