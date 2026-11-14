@@ -122,6 +122,40 @@ def test_headers_are_found_below_titles_and_in_any_width(text):
 
 
 @pytest.mark.parametrize(
+    "header, row",
+    [
+        ("名前,IPアドレス(PLC),ポート", "PLC1,192.0.2.39,502"),
+        ("名前,ＩＰアドレス（ＰＬＣ）,ポート", "PLC1,192.0.2.39,502"),
+        ("名前,機器IP,ポート", "PLC1,192.0.2.39,502"),
+        ("名前,PLC IP,ポート", "PLC1,192.0.2.39,502"),
+        ("Name,IP address (device),Port", "PLC1,192.0.2.39,502"),
+        ("名前,説明,機器IP,ポート", "PLC1,プレス機,192.0.2.39,502"),
+        ("名前,ゲートウェイIP,IPアドレス,ポート", "PLC1,192.0.2.1,192.0.2.39,502"),
+        ("名前,機器IP,ゲートウェイIP,ポート", "PLC1,192.0.2.39,192.0.2.1,502"),
+    ],
+)
+def test_a_host_column_named_for_its_device_is_the_host(header, row):
+    assert _rows(parse_csv_text(f"{header}\n{row}\n")) == [
+        ("PLC1", "192.0.2.39", [502])
+    ]
+
+
+@pytest.mark.parametrize(
+    "header",
+    [
+        "名前,PLC IP,HMI IP",
+        "名前,ゲートウェイIP",
+        "名前,IP一覧",
+        "名前,VIP",
+        "名前,Equip",
+    ],
+)
+def test_a_column_that_does_not_name_one_device_address_is_not_the_host(header):
+    with pytest.raises(InventoryError, match="no IP address found"):
+        parse_csv_text(f"{header}\nPLC1,192.0.2.39,192.0.2.40\n")
+
+
+@pytest.mark.parametrize(
     "column", ["スイッチポート", "HUBポート", "LANポート", "Switch Port", "UDP Port"]
 )
 def test_a_switch_port_column_is_not_read_as_tcp_ports(tmp_path, capsys, column):

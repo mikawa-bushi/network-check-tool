@@ -263,9 +263,12 @@ devices:
 Recognised columns/keys: name, host, ports, group, note, mac, rtt_warn_ms,
 loss_warn_pct (Japanese aliases such as 名前・IPアドレス・ポート・使用ポート・
 ライン・備考・MACアドレス・遅延上限・ロス上限 are accepted, in full-width
-letters too). A `[[host]]` / `hosts` list whose entries give only `name` loads
-too, and each name is used as the host. In YAML/TOML, a device's own keys win
-over `defaults`, whichever alias either uses.
+letters too). Without such a host column, a column named for the device's
+IP, such as 機器IP, PLC IP or IPアドレス(PLC), is the host when it is the
+only one; a gateway, subnet mask or DNS column never is. A `[[host]]` /
+`hosts` list whose entries give only `name` loads too, and each name is used
+as the host. In YAML/TOML, a device's own keys win over `defaults`, whichever
+alias either uses.
 
 How a CSV list is read:
 

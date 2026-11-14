@@ -158,6 +158,42 @@ _HEADER_LOOKUP = {
     _header_key(alias): key for key, aliases in _ALIASES.items() for alias in aliases
 }
 
+# A host column named for the device it holds: 機器IP, PLC IP, IPアドレス(PLC).
+_IP_WORD = r"ip(?:v4)?\s*(?:アドレス|address|addr)?"
+_DEVICE_IP = re.compile(
+    rf"^(?P<before>.+?)\s*(?<![a-z]){_IP_WORD}$|^{_IP_WORD}\s*\((?P<inside>[^)]+)\)$"
+)
+_OTHER_ADDRESSES = (
+    "gateway",
+    "ゲートウェイ",
+    "gw",
+    "subnet",
+    "サブネット",
+    "mask",
+    "マスク",
+    "dns",
+)
+
+
+def _names_a_device_ip(header: str) -> bool:
+    m = _DEVICE_IP.match(unicodedata.normalize("NFKC", header).strip().lower())
+    what = m and (m.group("before") or m.group("inside"))
+    return bool(what) and not any(word in what for word in _OTHER_ADDRESSES)
+
+
+def _header_keys(headers: Sequence[str]) -> List[Optional[str]]:
+    """The canonical key of each header. Without a header that is a host alias,
+    the one header naming a device's IP (機器IP, IPアドレス(PLC)) is the host;
+    two such headers (PLC IP, HMI IP) leave the list without one."""
+    keys = [_HEADER_LOOKUP.get(_header_key(h)) for h in headers]
+    if "host" not in keys:
+        named = [
+            i for i, h in enumerate(headers) if not keys[i] and _names_a_device_ip(h)
+        ]
+        if len(named) == 1:
+            keys[named[0]] = "host"
+    return keys
+
 
 class InventoryError(InputError, ValueError):
     """The device list could not be understood (message says where/why)."""
@@ -359,11 +395,9 @@ def _num(value: Any) -> Optional[float]:
 
 def _canonical(row: Dict[str, Any]) -> Dict[str, Any]:
     """Map aliased keys (``ポート``, ``IP Address`` ...) to canonical ones."""
+    items = [(k, v) for k, v in row.items() if k is not None]
     canon: Dict[str, Any] = {}
-    for k, v in row.items():
-        if k is None:
-            continue
-        key = _HEADER_LOOKUP.get(_header_key(str(k)))
+    for (_k, v), key in zip(items, _header_keys([str(k) for k, _v in items])):
         if key and key not in canon:
             canon[key] = v
     return canon
@@ -437,7 +471,7 @@ def _looks_like_host(value: str) -> bool:
 
 
 def _column_keys(cells: List[str]) -> List[Optional[str]]:
-    return [_HEADER_LOOKUP.get(_header_key(c)) for c in cells if c]
+    return _header_keys([c for c in cells if c])
 
 
 def _is_comment(cells: List[str]) -> bool:
