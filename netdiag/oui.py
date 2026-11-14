@@ -16,6 +16,8 @@ import threading
 from pathlib import Path
 from typing import Dict, List, Optional
 
+from .netinfo.model import normalize_mac
+
 CANDIDATES: List[str] = [
     "/usr/share/ieee-data/oui.txt",
     "/var/lib/ieee-data/oui.txt",
@@ -44,10 +46,16 @@ _table: Optional[Dict[str, str]] = None
 
 
 def parse_oui_text(text: str) -> Dict[str, str]:
-    """Parse IEEE ``oui.txt``, nmap ``nmap-mac-prefixes`` or Wireshark ``manuf``."""
+    """Parse IEEE ``oui.txt``, nmap ``nmap-mac-prefixes`` or Wireshark ``manuf``.
+
+    An indented line is part of an IEEE entry's postal address (its postcode
+    can look like a prefix), never an entry of its own.
+    """
     table: Dict[str, str] = {}
-    for line in text.splitlines():
-        line = line.strip()
+    for raw in text.splitlines():
+        if raw[:1].isspace():
+            continue
+        line = raw.strip()
         if not line or line.startswith("#"):
             continue
         m = _IEEE_RE.match(line)
@@ -94,14 +102,20 @@ def _load() -> Dict[str, str]:
     return _table
 
 
+# Blocks the IEEE sells in smaller parts (MA-M, MA-S): the table names the
+# registry, not the maker, so the honest answer is "unknown".
+_REGISTRY_BLOCK = "ieee registration authority"
+
+
 def lookup(mac: Optional[str]) -> Optional[str]:
     """Vendor name for a MAC (``aa:bb:cc:..``), or None if unknown/unavailable."""
-    if not mac:
+    normal = normalize_mac(mac.replace(".", "") if mac else None)
+    if not normal:
         return None
-    key = mac.replace(":", "").replace("-", "").lower()[:6]
-    if len(key) != 6:
+    vendor = _load().get(normal.replace(":", "")[:6])
+    if vendor and vendor.lower() == _REGISTRY_BLOCK:
         return None
-    return _load().get(key)
+    return vendor
 
 
 def reset() -> None:

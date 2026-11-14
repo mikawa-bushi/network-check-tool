@@ -31,7 +31,10 @@ from .i18n import Text, get_language, tr
 from .inventory import Device
 from .measure import ping_many
 from .measure.icmp import addresses_for
+from .netinfo import model as nm
 from .probes._common import default_ping_count, oscmd
+from .probes.device import DeviceEvidence
+from .probes.tcp import format_target, parse_tcp_targets
 
 DEVICE_PROBES = ["route", "reach", "ports"]
 DEVICE_WORKERS = 16
@@ -62,7 +65,7 @@ class DeviceReport:
 
     @property
     def status(self) -> Status:
-        return diagnosis_status(self.diagnosis) if self.diagnosis else Status.SKIP
+        return self.diagnosis.status if self.diagnosis else Status.SKIP
 
     def result(self, name: str) -> Optional[CheckResult]:
         if self.diagnosis is None:
@@ -109,10 +112,12 @@ class CheckReport:
     hostname: str = field(default_factory=platform.node)
     platform: str = field(default_factory=platform.platform)
     settings: Dict[str, Any] = field(default_factory=dict)
+    #: False for ``check --no-host``: ``host`` is then empty and its status SKIP.
+    host_checked: bool = True
 
     @property
     def host_status(self) -> Status:
-        return diagnosis_status(self.host)
+        return self.host.status if self.host_checked else Status.SKIP
 
     @property
     def status(self) -> Status:
@@ -120,7 +125,7 @@ class CheckReport:
 
     @property
     def exit_code(self) -> int:
-        """0 healthy, 1 a failure was found, 2 warnings only."""
+        """The verdict's exit code (see :class:`~netdiag.core.ExitCode`)."""
         return self.status.exit_code
 
     def to_dict(self) -> Dict[str, Any]:
@@ -138,22 +143,11 @@ class CheckReport:
             "platform": self.platform,
             "language": get_language(),
             "settings": self.settings,
-            "host": diagnosis_to_dict(self.host),
+            "host_status": self.host_status.value,
+            "host": diagnosis_to_dict(self.host) if self.host_checked else None,
             "device_counts": counts,
             "devices": [d.to_dict() for d in self.devices],
         }
-
-
-def diagnosis_status(diag: Optional[Diagnosis]) -> Status:
-    if diag is None:
-        return Status.SKIP
-    if diag.healthy:
-        return Status.OK
-    if any(h.is_fault for h in diag.hypotheses) or any(
-        r.status == Status.FAIL for r in diag.results
-    ):
-        return Status.FAIL
-    return Status.WARN
 
 
 # ------------------------------------------------------------- live NIC errors
@@ -268,10 +262,17 @@ def run_check(
     progress: Optional[ProgressFn] = None,
     on_probe: Optional[Callable[[str], None]] = None,
 ) -> CheckReport:
-    """Run the host sweep and (optionally) check every device."""
+    """Run the host sweep and (optionally) check every device.
+
+    Raises :class:`~netdiag.core.InputError` for a ``tcp_targets`` entry that
+    is not ``host:port``, before anything is measured.
+    """
     devices = list(devices or [])
     cfg = dict(config or {})
-    cfg.setdefault("count", default_ping_count())
+    if cfg.get("tcp_targets"):
+        cfg["tcp_targets"] = [
+            format_target(h, p) for h, p in parse_tcp_targets(cfg["tcp_targets"])
+        ]
     started = time.time()
 
     def say(msg: str) -> None:
@@ -287,11 +288,11 @@ def run_check(
     if not counters_before:
         counters_before = netinfo.link_stats()
 
+    # The reasoning costs a few strings; the report shows it on --reasoning.
+    engine = Engine(config=cfg, verbose=True)
     if include_host:
         say(tr("このPCのネットワークを確認中…", "Checking this PC's network…"))
-        host_diag = Engine(config=cfg).run(
-            only=only, skip=skip, jobs=jobs, on_probe=on_probe
-        )
+        host_diag = engine.run(only=only, skip=skip, jobs=jobs, on_probe=on_probe)
     else:
         host_diag = Diagnosis(results=[], hypotheses=[], healthy=True)
 
@@ -299,7 +300,40 @@ def run_check(
     if devices:
         reports = _check_devices(devices, cfg, host_diag, hn, say)
 
-    # Errors that grew during the whole measurement (host + devices).
+    # Errors that grew during the whole measurement (host + devices). They
+    # describe this PC and follow --only/--skip like every other check.
+    wanted = "link_errors" in (only or ["link_errors"]) and "link_errors" not in (
+        skip or []
+    )
+    if include_host and wanted:
+        host_diag = _with_link_errors(engine, host_diag, cfg, counters_before)
+
+    settings = {
+        k: cfg.get(k)
+        for k in ("interval", "ping_timeout", "tcp_attempts", "tcp_timeout", "internet")
+        if k in cfg
+    }
+    return CheckReport(
+        host=host_diag,
+        devices=reports,
+        started_at=started,
+        finished_at=time.time(),
+        settings={"count": cfg.get("count") or default_ping_count(), **settings},
+        host_checked=include_host,
+    )
+
+
+def _with_link_errors(
+    engine: Engine,
+    host_diag: Diagnosis,
+    cfg: Dict[str, Any],
+    counters_before: Dict[str, netinfo.LinkStats],
+) -> Diagnosis:
+    """The host diagnosis with the NIC error check measured over the whole run.
+
+    It replaces the placeholder an ``--only link_errors`` sweep produced,
+    which had no counters to compare.
+    """
     lk = Engine(
         config={
             **cfg,
@@ -308,29 +342,10 @@ def run_check(
         }
     ).run(only=["link_errors"])
     extra = [r for r in lk.results if r.status != Status.SKIP]
-    if extra:
-        host_diag = Engine(config=cfg).diagnose(
-            host_diag.results + extra, host_diag.reasoning
-        )
-
-    return CheckReport(
-        host=host_diag,
-        devices=reports,
-        started_at=started,
-        finished_at=time.time(),
-        settings={
-            k: cfg.get(k)
-            for k in (
-                "count",
-                "interval",
-                "ping_timeout",
-                "tcp_attempts",
-                "tcp_timeout",
-                "internet",
-            )
-            if k in cfg
-        },
-    )
+    if not extra:
+        return host_diag
+    kept = [r for r in host_diag.results if r.name != "link_errors"]
+    return engine.diagnose(kept + extra, host_diag.reasoning)
 
 
 def _check_devices(
@@ -359,16 +374,11 @@ def _check_devices(
     )
     addr = [resolved[d.host] for d in devices]
 
-    targets = []
-    for ip in addr:
-        if not ip:
-            continue
-        dec = hn.decide_route(ip)
-        if dec.special is None and (dec.on_link or dec.gateway):
-            targets.append(ip)
-        elif dec.special == "ipv6":
-            targets.append(ip)
-    targets = list(dict.fromkeys(targets))
+    # Ping every device whose route does not already fail, so its probes
+    # decide from this sweep and never measure again on their own.
+    targets = list(
+        dict.fromkeys(ip for ip in addr if ip and _pingable(hn.decide_route(ip)))
+    )
 
     neigh_before = {n.ip: n for n in netinfo.neighbors()}
     count = int(cfg.get("count") or default_ping_count())
@@ -387,18 +397,18 @@ def _check_devices(
         stats = ping_many(targets, count=count, interval=interval, timeout=timeout)
         window = time.monotonic() - t0
     neigh_after = {n.ip: n for n in netinfo.neighbors()} if targets else {}
-    # Silent on-link devices: ask for their ARP answer directly (on Windows,
-    # SendARP returns a definite "nobody answered"), in parallel.
+    # Silent devices on an ARP link: ask for their ARP answer directly (on
+    # Windows, SendARP returns a definite "nobody answered"), in parallel.
     silent = [
         ip
         for ip in targets
         if stats.get(ip) is not None
         and not stats[ip].any_reply
-        and hn.decide_route(ip).on_link
+        and hn.decide_route(ip).arp
     ]
     if silent:
         with ThreadPoolExecutor(max_workers=min(16, len(silent))) as pool:
-            for ip, n in zip(silent, pool.map(netinfo.neighbor, silent)):
+            for ip, n in zip(silent, pool.map(_settled_neighbor, silent)):
                 if n is not None:
                     neigh_after[ip] = n
 
@@ -409,15 +419,18 @@ def _check_devices(
         ip = addr[i]
         dcfg = dict(cfg)
         dcfg["target"] = d.to_dict()
-        if ip is not None:
-            dcfg["_address"] = ip
-            dcfg["_ping"] = stats.get(ip)
-            dcfg["_ping_window"] = window
-            dcfg["_neighbor_before"] = neigh_before.get(ip)
-            dcfg["_neighbor_after"] = neigh_after.get(ip) or _absent_or_none(
-                ip, hn, neigh_after
-            )
-        engine = Engine(config=dcfg)
+        dcfg["evidence"] = DeviceEvidence(
+            address=ip,
+            ping=stats.get(ip) if ip else None,
+            ping_window=window,
+            neighbor_before=neigh_before.get(ip) if ip else None,
+            neighbor_after=(
+                neigh_after.get(ip) or _absent_or_none(ip, hn, neigh_after)
+                if ip
+                else None
+            ),
+        )
+        engine = Engine(config=dcfg, verbose=True)
         # No ports listed -> no port check (and no misleading "ports skipped").
         probes = (
             DEVICE_PROBES if d.ports else [p for p in DEVICE_PROBES if p != "ports"]
@@ -431,15 +444,46 @@ def _check_devices(
         return list(pool.map(one, range(len(devices))))
 
 
+def _pingable(dec: nm.RouteDecision) -> bool:
+    """The route probe will not fail for this decision, so reach runs."""
+    if dec.special is None:
+        return dec.on_link or bool(dec.gateway)
+    return dec.special in ("ipv6", "loopback", "self")
+
+
+# Linux answers a silent neighbour with DELAY, then PROBE: up to 5 s before the
+# first unicast ARP and 3 x 1 s for the answers. Waiting that long for those
+# devices turns an "unknown" into a definite present or absent.
+ARP_SETTLE_S = 8.0
+
+
+def _settled_neighbor(ip: str) -> Optional[nm.Neighbor]:
+    """The ARP entry for *ip* once the OS has finished verifying it."""
+    deadline = time.monotonic() + ARP_SETTLE_S
+    n = netinfo.neighbor(ip)
+    while (
+        n is not None
+        and n.state in (nm.NEIGH_DELAY, nm.NEIGH_PROBE)
+        and time.monotonic() < deadline
+    ):
+        time.sleep(0.5)
+        n = netinfo.neighbor(ip)
+    return n
+
+
 def reconcile_device(engine: Engine, diag: Diagnosis) -> Diagnosis:
     """Let later evidence settle an earlier, inconclusive verdict.
 
-    A device that ignores ping but whose service ports accept connections is
-    working: the application traffic is what matters on the line. ICMP silence
-    is then reported as a note (OK), not a warning that sends someone hunting.
+    * A device that ignores ping but whose service ports accept connections is
+      working: the application traffic is what matters on the line. ICMP
+      silence is then reported as a note (OK), not a warning that sends
+      someone hunting.
+    * A device that only the default gateway leads to, and that answered
+      neither ping nor TCP, is most likely in another subnet on this line:
+      the route is then the cause, not the device's power.
     """
     by = diag.results_by_name()
-    reach, ports = by.get("reach"), by.get("ports")
+    route, reach, ports = by.get("route"), by.get("reach"), by.get("ports")
     if (
         reach is not None
         and ports is not None
@@ -453,18 +497,48 @@ def reconcile_device(engine: Engine, diag: Diagnosis) -> Diagnosis:
             "does not answer ping, but its service ports work",
         )
         return engine.diagnose(diag.results, diag.reasoning)
+    if (
+        route is not None
+        and route.code == "route.via_default"
+        and _no_sign_of_life(reach, ports)
+    ):
+        local = route.detail.get("local_networks")
+        gateway = route.detail.get("gateway")
+        route.status = Status.FAIL
+        route.code = "route.default_only"
+        route.summary = tr(
+            f"このPCのネットワーク（{local}）に含まれず、デフォルトゲートウェイ {gateway} "
+            "経由でも応答がありません — サブネット不一致の疑い",
+            f"not in this PC's subnets ({local}); only the default gateway "
+            f"{gateway} leads there, and the device did not answer — subnet mismatch?",
+        )
+        return engine.diagnose(diag.results, diag.reasoning)
     return diag
 
 
+def _no_sign_of_life(
+    reach: Optional[CheckResult], ports: Optional[CheckResult]
+) -> bool:
+    if reach is None:
+        return False
+    if reach.code == "reach.no_reply":
+        return True
+    return (
+        reach.code == "reach.no_icmp"
+        and ports is not None
+        and ports.detail.get("alive") is False
+    )
+
+
 def _absent_or_none(ip: str, hn: netinfo.HostNetwork, table: Dict[str, Any]):
-    """No ARP entry after pinging an on-link address means ARP got no answer.
+    """No ARP entry after pinging an address on an ARP link means no answer.
 
     (Windows' ``arp -a`` and macOS list only resolved entries; Linux keeps a
-    FAILED/INCOMPLETE entry, which the table lookup already returns.)
+    FAILED/INCOMPLETE entry, which the table lookup already returns.) A tunnel
+    or point-to-point link has no ARP, so a missing entry there says nothing.
     """
     if not table:
         return None
-    dec = hn.decide_route(ip)
-    if dec.on_link and dec.special is None:
+    if hn.decide_route(ip).arp:
         return netinfo.Neighbor(ip=ip, state="incomplete")
     return None
