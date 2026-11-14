@@ -410,7 +410,9 @@ def device_from_mapping(
         raise InventoryError(f"{where}{e}") from e
 
 
-def _decode(data: bytes) -> str:
+def decode_text(data: bytes) -> str:
+    """A file as Excel and editors on Japanese Windows save it: UTF-16 with a
+    BOM, UTF-8 (with or without a BOM), else Shift_JIS (cp932)."""
     if data.startswith((b"\xff\xfe", b"\xfe\xff")):
         return data.decode("utf-16")
     for enc in ("utf-8-sig", "cp932"):
@@ -701,7 +703,7 @@ def load_devices(path: str | Path) -> List[Device]:
                 "(File > Save As > CSV) and pass the .csv file",
             )
         )
-    text = _decode(raw)
+    text = decode_text(raw)
     suffix = p.suffix.lower()
     try:
         if suffix in (".yaml", ".yml"):

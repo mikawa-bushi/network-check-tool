@@ -294,10 +294,10 @@ def _load_yaml(text: str, source: str) -> Any:
 
 
 def _load_raw(path: Path, source: str) -> Any:
-    from ..inventory import _decode
+    from ..inventory import decode_text
 
     try:
-        text = _decode(path.read_bytes())
+        text = decode_text(path.read_bytes())
     except OSError as e:
         raise _bad(
             source,

@@ -177,6 +177,17 @@ def test_host_only_scenario_exits_like_check(tmp_path, capsys, probe, exit_code)
     assert _run(capsys, sc)[0] == exit_code
 
 
+def test_reasoning_shows_every_pass_of_the_engine(tmp_path, capsys):
+    checks = ["echo", "faily", {"probe": "echo", "target": "192.0.2.1"}]
+    sc = _write(tmp_path, "s.json", json.dumps({"checks": checks}))
+    code, out, _ = _run(capsys, sc, "--reasoning")
+    reasoning = out.split("Reasoning:", 1)[1]
+    assert code == 1
+    assert "echo (L3): echo - ok" in reasoning
+    assert "echo (L3): echo 192.0.2.1 ok" in reasoning
+    assert reasoning.count("root cause candidate: faily") == 1
+
+
 def test_csv_output_is_csv_without_devices(tmp_path, capsys):
     sc = _write(tmp_path, "s.json", json.dumps({"checks": ["echo"]}))
     out_csv = tmp_path / "r.csv"
