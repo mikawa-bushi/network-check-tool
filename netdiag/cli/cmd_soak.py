@@ -15,7 +15,7 @@ import click
 
 from ..core import ExitCode, InputError
 from ..i18n import tr
-from ._app import H, cli, color_wanted, format_from_path, write_output
+from ._app import H, cli, color_wanted, format_from_path, save_report, write_output
 from .cmd_check import _collect_devices
 
 
@@ -377,13 +377,13 @@ def _deliver(text: str, output: Optional[str], fmt: str) -> Optional[ExitCode]:
         write_output(text, None, fmt)
         return None
     try:
-        write_output(text, output, fmt)
+        save_report(text, output, fmt)
         return None
     except OSError as e:
         reason = e.strerror or str(e)
     spare = _fallback_path(output)
     try:
-        write_output(text, str(spare), fmt)
+        save_report(text, str(spare), fmt)
     except OSError:
         click.echo(
             tr(

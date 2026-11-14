@@ -249,7 +249,7 @@ def write_output(text: str, output: Optional[str], fmt: str) -> None:
         _print_report(text, fmt)
         return
     try:
-        Path(output).write_bytes(_report_bytes(text, fmt))
+        save_report(text, output, fmt)
     except OSError as e:
         _print_report(text, fmt)
         reason = e.strerror or str(e)
@@ -261,6 +261,11 @@ def write_output(text: str, output: Optional[str], fmt: str) -> None:
                 "It went to standard output instead.",
             )
         ) from e
+
+
+def save_report(text: str, output: str, fmt: str) -> None:
+    """Save *text* to the file *output* as write_output would; raise OSError on failure."""
+    Path(output).write_bytes(_report_bytes(text, fmt))
     click.echo(
         tr(f"レポートを保存しました: {output}", f"report written to {output}"),
         err=True,
