@@ -98,6 +98,14 @@ def test_unmeasured_stretch_is_reported_and_drawn_grey():
     assert "Result: time not measured" in render_soak_text(rep)
 
 
+def test_html_draws_a_not_measured_finding_in_its_own_colour():
+    rep = _soak([("PLC1", "192.0.2.1", [])], 600.0, gaps=[(100.0, 200.0)])
+    html = render_soak_html(rep)
+    assert "<div class='find unknown'>" in html
+    rule = re.search(r"\.find\.unknown\s*\{([^}]*)\}", html)
+    assert rule and "var(--unknown)" in rule.group(1)
+
+
 def test_a_hole_in_one_device_names_that_device():
     rep = _soak(
         [("PLC1", "192.0.2.1", []), ("PLC2", "192.0.2.2", [])],
@@ -580,6 +588,17 @@ def test_output_dash_is_stdout(monkeypatch, quiet_pc, tmp_path, capsys):
     assert _main(monkeypatch, args, _stream()) == 0
     assert json.loads(capsys.readouterr().out)["kind"] == "soak"
     assert list(tmp_path.iterdir()) == []
+
+
+def test_a_device_down_from_the_start_gets_a_live_dropped_line(
+    monkeypatch, quiet_pc, tmp_path, capsys
+):
+    stream = _stream(lost=lambda t, k: k < 20)
+    args = ["PLC=192.0.2.1", "--duration", "2", "-o", str(tmp_path / "soak.json")]
+    assert _main(monkeypatch, args, stream) == 1
+    err = capsys.readouterr().err
+    assert "PLC (192.0.2.1) dropped" in err and "PLC back" in err
+    assert err.index("dropped") < err.index("PLC back")
 
 
 def test_live_lines_have_no_colour_codes_a_console_cannot_draw(

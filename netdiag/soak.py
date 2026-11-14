@@ -268,6 +268,11 @@ class DeviceTrack:
                 )
                 self.outages.append(self.open)
                 events.append(("outage_start", self.open))
+            elif self.streak == min_lost:
+                # Down from the start: say so live. It becomes an outage only
+                # once the device answers (see below).
+                start = Outage(self.name, self.device.host, self.streak_start)
+                events.append(("outage_start", start))
             return events
         if self.first_reply is None:
             self.first_reply = ts

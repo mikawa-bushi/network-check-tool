@@ -392,7 +392,8 @@ _SOAK_CSS = """
   vertical-align: middle; }
 .find { border-left: 4px solid var(--fail); background: var(--card); padding: .6rem 1rem;
   margin: .8rem 0; border-radius: 0 6px 6px 0; } .find.warn { border-color: var(--warn); }
-.find.ok { border-color: var(--ok); } .find h3 { font-size: .98rem; margin: 0 0 .3rem; }
+.find.ok { border-color: var(--ok); } .find.unknown { border-color: var(--unknown); }
+.find h3 { font-size: .98rem; margin: 0 0 .3rem; }
 @media print { .find { break-inside: avoid; } }
 """
 
