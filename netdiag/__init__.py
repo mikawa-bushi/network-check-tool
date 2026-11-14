@@ -9,6 +9,7 @@ macOS, on the standard library alone (``click`` is the only hard dependency).
 """
 
 import logging
+from importlib import metadata as _metadata
 
 from .core import CheckResult, Context, Probe, Status, register
 
@@ -17,6 +18,11 @@ from .core import CheckResult, Context, Probe, Status, register
 # the "netdiag" logger. The library itself never calls basicConfig.
 logging.getLogger(__name__).addHandler(logging.NullHandler())
 
-__version__ = "0.4.0"
+# pyproject.toml is the only place the version is written. The exe build keeps
+# this metadata with PyInstaller's --copy-metadata.
+try:
+    __version__ = _metadata.version("network-check-tool")
+except _metadata.PackageNotFoundError:
+    __version__ = "0+unknown"
 
 __all__ = ["CheckResult", "Status", "Probe", "Context", "register", "__version__"]

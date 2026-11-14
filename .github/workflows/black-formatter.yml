@@ -49,53 +49,6 @@ jobs:
 
     - name: Run Ruff import-order check
       # Enforce in CI the same import ordering the pre-commit gate applies, so a
-      # contributor who skips the local hooks is still caught. Pinned to the
-      # pre-commit ruff version; the scope (isort "I") comes from pyproject.
-      run: |
-        pip install ruff==0.15.17
-        ruff check --output-format=github .
-
-  black-format:
-    runs-on: ubuntu-latest
-    name: Auto-format with Black
-    needs: black-check
-    if: failure() && github.event_name == 'push'
-    permissions:
-      contents: write  # pushes the formatting commit
-
-    steps:
-    - name: Checkout code
-      uses: actions/checkout@v4
-      with:
-        token: ${{ secrets.GITHUB_TOKEN }}
-
-    - name: Set up Python
-      uses: actions/setup-python@v5
-      with:
-        python-version: '3.14'
-
-    - name: Install Poetry
-      uses: snok/install-poetry@a783c322200f0519c7926aa6faa857c4e23e9263  # v1.4.2
-      with:
-        version: latest
-        virtualenvs-create: true
-        virtualenvs-in-project: true
-
-    - name: Install dependencies
-      run: poetry install --only=dev
-
-    - name: Run Black formatter
-      run: poetry run black netdiag/ tests/
-
-    - name: Commit changes
-      run: |
-        git config --local user.email "action@github.com"
-        git config --local user.name "GitHub Action"
-        git add -A
-        git diff --staged --quiet || git commit -m "Auto-format code with Black 🖤"
-
-    - name: Push changes
-      uses: ad-m/github-push-action@881a6320fdb16eb5318c5054f31c218aec2b324c  # v1.3.0
-      with:
-        github_token: ${{ secrets.GITHUB_TOKEN }}
-        branch: ${{ github.ref }}
+      # contributor who skips the local hooks is still caught. The version comes
+      # from the dev group and the scope (isort "I") from pyproject.
+      run: poetry run ruff check --output-format=github .

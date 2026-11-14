@@ -1,13 +1,12 @@
 name: Windows exe
 
-# Builds the single-file netdiag.exe (no Python needed on the target PC),
-# smoke-tests the exe itself, and attaches the zip to the release on a v* tag.
+# Builds the single-file netdiag.exe (no Python needed on the target PC) and
+# smoke-tests the exe itself. On a v* tag, publish.yml calls this after the
+# tests pass and attaches the zip to the release.
 on:
   push:
     branches:
       - '**'
-    tags:
-      - 'v*'
     paths:
       - 'netdiag/**'
       - 'packaging/windows/**'
@@ -16,13 +15,20 @@ on:
       - 'scripts/expect_verdict.sh'
       - '.github/workflows/windows-exe.yml'
   workflow_dispatch:
+  workflow_call:
+    outputs:
+      zip:
+        description: Name of the uploaded exe zip artifact, without .zip
+        value: ${{ jobs.build.outputs.zip }}
 
 permissions:
-  contents: write  # only used to upload the zip to a tag's release
+  contents: read
 
 jobs:
   build:
     runs-on: windows-latest
+    outputs:
+      zip: ${{ steps.pkg.outputs.name }}
     defaults:
       run:
         shell: bash
@@ -53,8 +59,10 @@ jobs:
       env:
         NETDIAG_NO_OPEN: '1'
       run: |
-        ./dist/netdiag.exe --version
+        version=$(python -c "import tomllib; print(tomllib.load(open('pyproject.toml', 'rb'))['tool']['poetry']['version'])")
+        test "$(./dist/netdiag.exe --version)" = "netdiag, version $version"
         bash scripts/expect_verdict.sh ./dist/netdiag.exe --lang en check --format json -o check.json
+        python -c "import json; d=json.load(open('check.json', encoding='utf-8')); print(d['status'], [r['code'] for r in d['host']['results']]); assert d['host']['results']"
         ./dist/netdiag.exe --lang en ping 127.0.0.1 -c 5 --json > ping.json
         python -c "import json; d=json.load(open('ping.json')); print(d['method'], d['received'], '/', d['sent']); assert d['received'] == d['sent'] == 5"
         # Drag-and-drop mode: a device list as the only argument, Enter to close.
@@ -62,7 +70,14 @@ jobs:
         python -c "open('dropped/line.csv', 'w', encoding='cp932', newline='').write('名前,IPアドレス\r\nLOOP,127.0.0.1\r\n')"
         echo | bash scripts/expect_verdict.sh ./dist/netdiag.exe "$(cygpath -w "$PWD/dropped/line.csv")"
         ls dropped
-        test -n "$(ls dropped/*.html)"
+        python - "$version" <<'EOF'
+        import glob, re, sys
+        [path] = glob.glob("dropped/*.html")
+        page = open(path, encoding="utf-8").read()
+        row = re.search(r"<tr class='(\w+)'><td class='st'>[^<]*</td><td>LOOP<", page)
+        assert row and row.group(1) == "ok", f"the dropped device LOOP is not OK in {path}"
+        assert f"netdiag {sys.argv[1]}</div>" in page, f"{path} does not name netdiag {sys.argv[1]}"
+        EOF
 
     - name: Package
       id: pkg
@@ -87,12 +102,3 @@ jobs:
       with:
         name: ${{ steps.pkg.outputs.name }}
         path: pkg/${{ steps.pkg.outputs.name }}.zip
-
-    - name: Attach to release (v* tags)
-      if: startsWith(github.ref, 'refs/tags/v')
-      env:
-        GH_TOKEN: ${{ github.token }}
-      run: |
-        zip="pkg/${{ steps.pkg.outputs.name }}.zip"
-        gh release upload "$GITHUB_REF_NAME" "$zip" --clobber \
-          || gh release create "$GITHUB_REF_NAME" "$zip" --generate-notes
