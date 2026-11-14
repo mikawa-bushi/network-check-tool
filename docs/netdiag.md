@@ -246,10 +246,14 @@ How a CSV list is read:
   that is not a valid IPv4 address is an error.
 - MAC addresses may use colons, hyphens, Cisco dots (`0026.92aa.bbcc`) or no
   separator; the report shows `00:26:92:aa:bb:cc`.
+- TCP ports come only from a ports column (ポート, ポート番号, 使用ポート,
+  TCPポート, port, ports, Port No. ...). Another column with "port" in its
+  header, such as スイッチポート, HUBポート or "switch port", is not read, and
+  netdiag says so in one line on stderr.
 - Anything netdiag cannot read is an error that names the file and line, and
-  `check` exits 4: an unknown port or protocol name, a MAC it cannot read, a
-  row without an address, or a column that looks like ports under a header it
-  does not know. An Excel workbook (`.xlsx`) must be saved as CSV first.
+  `check` exits 4: an unknown port or protocol name, a MAC it cannot read, or a
+  row without an address. An Excel workbook (`.xlsx`) must be saved as CSV
+  first.
 
 ## Always-on watching (`netdiag watch`)
 

@@ -28,6 +28,7 @@ import io
 import ipaddress
 import json
 import re
+import sys
 import unicodedata
 from dataclasses import asdict, dataclass, field
 from pathlib import Path
@@ -99,11 +100,14 @@ _ALIASES: Dict[str, Sequence[str]] = {
         "port no",
         "port number",
         "tcp port",
+        "tcp ports",
+        "port (tcp)",
         "ポート",
         "ポート番号",
         "ポートno",
         "使用ポート",
         "tcpポート",
+        "ポート(tcp)",
         "通信ポート",
         "service",
         "services",
@@ -483,20 +487,25 @@ def _where_line(n: int) -> str:
     return tr(f"{n}行目: ", f"line {n}: ")
 
 
-def _check_port_column(header: List[str]) -> None:
-    keys = [_HEADER_LOOKUP.get(_header_key(h)) for h in header]
-    if "ports" in keys:
-        return
+# The word "port" in a header such as スイッチポート or "switch port".
+# サポート (support) and レポート (report) are other words.
+_PORT_WORD = re.compile(r"(?<![サレ])ポート|(?<![a-z])ports?(?![a-z])")
+
+
+def _note_unread_port_columns(header: List[str]) -> None:
+    """Say on stderr which port-like columns are not read as TCP ports."""
     for h in header:
-        k = _header_key(h)
-        if "ポート" in k or re.fullmatch(r"(tcp|udp)?ports?(no|num|number|番号)?", k):
-            raise InventoryError(
+        if _HEADER_LOOKUP.get(_header_key(h)) is None and _PORT_WORD.search(
+            unicodedata.normalize("NFKC", h).lower()
+        ):
+            print(
                 tr(
-                    f"列「{h}」はポートの列に見えますが、netdiag はこの見出しを読めません。"
-                    "見出しを「ポート」にしてください",
-                    f"column '{h}' looks like ports, but netdiag does not know "
-                    "this header; rename it to 'ports'",
-                )
+                    f"注意: 列「{h}」はTCPポートとして読みません"
+                    "（TCPポートは見出しが「ポート」の列から読みます）",
+                    f"Note: column '{h}' is not read as TCP ports "
+                    "(netdiag reads them from a column headed 'ports')",
+                ),
+                file=sys.stderr,
             )
 
 
@@ -546,7 +555,7 @@ def parse_csv_text(text: str) -> List[Device]:
         devices = [_headerless_device(n, cells) for n, cells in records]
     else:
         header = records[h][1]
-        _check_port_column(header)
+        _note_unread_port_columns(header)
         names_only = "host" not in _canonical(dict.fromkeys(header, ""))
         for n, cells in records[h + 1 :]:
             devices.append(

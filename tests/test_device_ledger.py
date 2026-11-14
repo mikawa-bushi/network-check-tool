@@ -98,6 +98,8 @@ def test_headerless_rows_take_ports_only_after_the_address():
         "名前,ＩＰアドレス,ポート\nPLC1,192.0.2.39,502\n",
         "名前,IPv4アドレス,使用ポート\nPLC1,192.0.2.39,502\n",
         "Name,IP,Port No.\nPLC1,192.0.2.39,502\n",
+        "Name,IP,TCP Ports\nPLC1,192.0.2.39,502\n",
+        "名前,IPアドレス,ポート(TCP)\nPLC1,192.0.2.39,502\n",
         "名前,IPアドレス,ポート\nPLC1,192.0.2.39,５０２\n",
     ],
 )
@@ -105,9 +107,36 @@ def test_headers_are_found_below_titles_and_in_any_width(text):
     assert _rows(parse_csv_text(text)) == [("PLC1", "192.0.2.39", [502])]
 
 
-def test_an_unknown_port_column_is_refused_not_ignored():
-    with pytest.raises(InventoryError, match="column 'UDP Port' looks like ports"):
-        parse_csv_text("name,host,UDP Port\nPLC1,192.0.2.39,502\n")
+@pytest.mark.parametrize(
+    "column", ["スイッチポート", "HUBポート", "LANポート", "Switch Port", "UDP Port"]
+)
+def test_a_switch_port_column_is_not_read_as_tcp_ports(tmp_path, capsys, column):
+    path = _write(
+        tmp_path,
+        "l.csv",
+        f"名前,IPアドレス,接続先スイッチ,{column},備考\n"
+        "PLC1,192.0.2.39,SW-01,Gi1/0/12,盤1\n",
+    )
+    dev = load_devices(path)[0]
+    assert (dev.host, dev.ports, dev.note) == ("192.0.2.39", [], "盤1")
+    err = capsys.readouterr().err
+    assert err.count("\n") == 1
+    assert f"column '{column}' is not read as TCP ports" in err
+
+
+def test_the_switch_port_notice_is_in_the_users_language(ja, capsys):
+    devs = parse_csv_text(
+        "名前,IPアドレス,ポート,スイッチポート\nPLC1,192.0.2.39,502,12\n"
+    )
+    assert _rows(devs) == [("PLC1", "192.0.2.39", [502])]
+    assert "列「スイッチポート」はTCPポートとして読みません" in capsys.readouterr().err
+
+
+def test_columns_that_only_contain_the_letters_port_get_no_notice(capsys):
+    parse_csv_text(
+        "名前,IPアドレス,ポート,サポート窓口,Report\nPLC1,192.0.2.39,502,,\n"
+    )
+    assert capsys.readouterr().err == ""
 
 
 @pytest.mark.parametrize("cell", ["502²", "①", "502.5", "0", "70000"])
