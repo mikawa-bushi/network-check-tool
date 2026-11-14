@@ -32,8 +32,10 @@ with open(counter, "w") as f:
     f.write(str(n + 1))
 run = runs[min(n, len(runs) - 1)]
 out = sys.stdout.buffer
+start, due = time.monotonic(), 0.0
 for delay, text in run["steps"]:
-    time.sleep(delay)
+    due += delay  # on ping's own clock: one late line does not delay the rest
+    time.sleep(max(0.0, start + due - time.monotonic()))
     out.write((text + run.get("newline", "\n")).encode(run.get("encoding", "utf-8")))
     out.flush()
 open(counter + ".exited", "w").close()
