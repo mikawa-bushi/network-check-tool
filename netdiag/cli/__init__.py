@@ -17,12 +17,10 @@ from ..i18n import is_ja, tr
 from . import (  # noqa: F401  (imported to register the subcommands)
     cmd_check,
     cmd_collect,
-    cmd_daemon,
     cmd_learn,
     cmd_peer,
     cmd_scan,
     cmd_scenario,
-    cmd_service,
     cmd_snapshot,
     cmd_soak,
 )
@@ -38,7 +36,6 @@ from .cmd_check import check, ping
 from .cmd_collect import collect
 from .cmd_scan import scan
 from .cmd_scenario import scenario
-from .cmd_service import _exec_start, _unit_text
 from .cmd_soak import soak
 
 
@@ -101,6 +98,4 @@ __all__ = [
     "_build_config",
     "_setup_logging",
     "_split_csv",
-    "_unit_text",
-    "_exec_start",
 ]
