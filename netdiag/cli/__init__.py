@@ -48,6 +48,15 @@ def main(args: Optional[List[str]] = None, prog_name: Optional[str] = None) -> N
     """
     harden_streams()  # before click prints anything, --help included
     try:
+        if sys.platform == "win32":
+            raise InputError(
+                tr(
+                    "netdiag 0.6.0 以降は Windows では動きません。Windows では 0.5.0 "
+                    'を使ってください: pip install "network-check-tool==0.5.0"',
+                    "netdiag 0.6.0 and later do not run on Windows. On Windows, use "
+                    '0.5.0: pip install "network-check-tool==0.5.0"',
+                )
+            )
         code = cli.main(args=args, prog_name=prog_name, standalone_mode=False)
     except click.Abort:  # click's form of Ctrl-C
         click.echo(tr("中断しました。", "Interrupted."), err=True)
