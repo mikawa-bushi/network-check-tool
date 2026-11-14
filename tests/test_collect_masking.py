@@ -1,8 +1,4 @@
-"""``netdiag collect`` masks every MAC, SSID and internal domain it promises to.
-
-The Windows samples are reconstructed by hand (Japanese Windows 11, cp932),
-not captured from a real PC.
-"""
+"""``netdiag collect`` masks every MAC, SSID and internal domain it promises to."""
 
 import ipaddress
 import json
@@ -19,90 +15,33 @@ from netdiag.netinfo.model import KIND_WIFI, Address, HostNetwork, Interface, Ro
 
 SSID = "FactoryWiFi-Line1"
 
-ROUTE_PRINT_JA = (
-    "===========================================================================\r\n"
-    "インターフェイス一覧\r\n"
-    " 12...00 15 5d 01 02 03 ......Hyper-V Virtual Ethernet Adapter\r\n"
-    "  5...3c a9 f4 12 34 56 ......Intel(R) Wi-Fi 6 AX201 160MHz\r\n"
-    "  1...........................Software Loopback Interface 1\r\n"
-    "===========================================================================\r\n"
-).encode("cp932")
-
-IPCONFIG_JA = (
-    "\r\nWindows IP 構成\r\n\r\n"
-    "   ホスト名. . . . . . . . . . . . . . . .: LINE1-PC\r\n"
-    "   プライマリ DNS サフィックス . . . . . . .: factory.local\r\n"
-    "   DNS サフィックス検索一覧. . . . . . . .: factory.local\r\n"
-    "                                            contoso.co.jp\r\n\r\n"
-    "イーサネット アダプター イーサネット:\r\n\r\n"
-    "   接続固有の DNS サフィックス . . . . .: contoso.com\r\n"
-    "   物理アドレス. . . . . . . . . . . . . .: 00-15-5D-01-02-03\r\n"
-    "   DHCPv6 クライアント DUID. . . . . . . .: "
-    "00-01-00-01-2A-BC-DE-F0-00-15-5D-01-02-03\r\n"
-    "   DNS サーバー. . . . . . . . . . . . . .: 192.0.2.1\r\n"
-).encode("cp932")
-
-NETSH_WLAN_JA = (
-    "\r\n    名前                   : Wi-Fi\r\n"
-    "    物理アドレス           : 3c:a9:f4:12:34:56\r\n"
-    "    状態                   : 接続されました\r\n"
-    f"    SSID                   : {SSID}\r\n"
-    "    BSSID                  : 00:1a:2b:3c:4d:5e\r\n"
-    "    接続モード             : プロファイル\r\n"
-    "    シグナル               : 92%\r\n"
-    f"    プロファイル           : {SSID}\r\n"
-).encode("cp932")
-
 IW_DEV = (
     f"phy#0\n\tInterface wlp2s0\n\t\taddr 3c:a9:f4:12:34:56\n\t\tssid {SSID}\n"
 ).encode()
 
-RESOLV_CONF = b"# managed by man:systemd-resolved(8)\nnameserver 127.0.0.53\nsearch factory.local\n"
+RESOLV_CONF = b"# managed by man:systemd-resolved(8)\nnameserver 127.0.0.53\nsearch factory.local contoso.co.jp\n"
 
 SCUTIL_DNS = (
     b"resolver #1\n  search domain[0] : factory.local\n  nameserver[0] : 192.0.2.1\n"
 )
 
 
-def _all_forms(mac):
-    hexes = re.findall(r"[0-9a-f]{2}", mac.lower())
-    return {
-        sep.join(h.upper() if upper else h for h in hexes)
-        for sep in ("-", ":", " ")
-        for upper in (True, False)
-    }
+IW_LINK = (
+    f"Connected to 00:1a:2b:3c:4d:5e (on wlp2s0)\n\tSSID: {SSID}\n\tfreq: 5180\n"
+).encode()
 
 
-def test_windows_mac_forms_are_masked_consistently():
+def test_ssids_in_iw_lines_are_masked():
     m = Masker()
-    route = m.mask(ROUTE_PRINT_JA).decode("cp932")
-    ipcfg = m.mask(IPCONFIG_JA).decode("cp932")
-    for form in _all_forms("00155d010203") | _all_forms("3ca9f4123456"):
-        assert form not in route + ipcfg, form
-    nic = re.search(r"物理アドレス[ .]*: (\S+)", ipcfg).group(1)
-    assert nic.startswith("00-15-5D-")
-    in_route = re.search(r"12\.\.\.(\S\S \S\S \S\S \S\S \S\S \S\S)", route).group(1)
-    assert in_route.replace(" ", "-").upper() == nic
-    duid = re.search(r"DUID[ .]*: (\S+)", ipcfg).group(1)
-    assert duid.startswith("00-01-") and duid.endswith(nic)
-    assert "2A-BC-DE-F0" not in duid
-
-
-def test_ssids_in_profile_and_iw_lines_are_masked():
-    m = Masker()
-    netsh = m.mask(NETSH_WLAN_JA).decode("cp932")
-    iw = m.mask(IW_DEV).decode()
-    assert SSID not in netsh + iw
-    assert "接続モード             : プロファイル" in netsh
-    assert "BSSID" in netsh
+    iw = m.mask(IW_DEV).decode() + m.mask(IW_LINK).decode()
+    assert SSID not in iw
+    assert "\tSSID: SSID-1\n" in iw and "\t\tssid SSID-1\n" in iw
 
 
 def test_two_label_internal_domains_are_masked_and_codes_are_not():
     m = Masker()
-    out = b"\n".join(m.mask(x) for x in (IPCONFIG_JA, RESOLV_CONF, SCUTIL_DNS)).decode(
-        "cp932"
-    )
-    for dom in ("factory.local", "contoso.com", "contoso.co.jp"):
+    out = b"\n".join(m.mask(x) for x in (RESOLV_CONF, SCUTIL_DNS)).decode()
+    for dom in ("factory.local", "contoso.co.jp"):
         assert dom not in out, dom
     assert "systemd-resolved" in out
     codes = m.mask(b'{"code": "wifi.ok", "next": "gateway.ok", "web": "example.com"}')

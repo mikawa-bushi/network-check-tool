@@ -14,7 +14,6 @@ from typing import Dict, List
 from ..core import CheckResult, Context, Probe, register
 from ..i18n import Text, tr
 from ..netinfo import KIND_ETHERNET
-from ._common import oscmd
 from .interface import speed_text
 
 # Cumulative error ratio (since boot) worth mentioning. Counters also include
@@ -40,7 +39,6 @@ class LinkProbe(Probe):
     )
     manual_commands = [
         "ethtool <iface> ; ip -s link show <iface>",
-        "Get-NetAdapter | ft Name,LinkSpeed,FullDuplex ; Get-NetAdapterStatistics",
     ]
 
     def check(self, ctx: Context) -> CheckResult:
@@ -136,6 +134,6 @@ class LinkProbe(Probe):
                     "スイッチのポートを変えて再測定し、ポート故障を切り分ける",
                     "Move to another switch port to rule out a bad port",
                 ),
-                oscmd("ethtool <iface>; ip -s link", "Get-NetAdapterStatistics"),
+                "ethtool <iface>; ip -s link",
             ],
         )

@@ -1,7 +1,8 @@
 """Every text file netdiag reads or writes names its encoding.
 
-Without one, Python uses the locale's: cp1252 on an English Windows, which can't
-hold the Japanese in logs, reports and snapshots. CI on Linux never sees that.
+Without one, Python uses the locale's: ASCII under LANG=C on Python 3.11 and
+EUC-JP under LANG=ja_JP.eucJP, which garble the Japanese in logs, reports and
+snapshots. CI in a UTF-8 locale never sees that.
 """
 
 import ast
@@ -9,7 +10,7 @@ from pathlib import Path
 
 _ROOT = Path(__file__).resolve().parent.parent
 _TEXT_IO = {"open", "read_text", "write_text", "FileHandler"}
-_NOT_FILES = {"os", "webbrowser", "api", "self.api"}  # api: the Windows ICMP handle
+_NOT_FILES = {"os"}
 
 
 def _unencoded_text_io(call: ast.Call) -> bool:

@@ -11,7 +11,6 @@ import pytest
 from netdiag.core.util import CommandResult
 from netdiag.measure import icmp as icmpmod
 from netdiag.measure import tcp as tcpmod
-from netdiag.measure import winicmp
 from netdiag.measure.dns import DnsReplyError, query
 from netdiag.measure.stats import summarize
 from netdiag.measure.tcp import tcp_check, tcp_connect_once
@@ -179,46 +178,12 @@ def test_socket_pinger_resumes_its_pace_after_a_stall():
     assert _densest(sent, 0.03) <= _MOST_IN_30_MS  # was 20 at once after the stall
 
 
-class _EchoApi:
-    """Windows ICMP API stand-in: every echo answers at once."""
-
-    def __init__(self):
-        self.calls = []
-
-    def open(self):
-        return 1
-
-    def close(self, handle):
-        pass
-
-    def echo(self, handle, ip, payload, timeout_ms):
-        self.calls.append(time.perf_counter())
-        return winicmp.IP_SUCCESS, 1, 0
-
-
-def test_windows_pinger_resumes_its_pace_after_a_stall():
-    api = _EchoApi()
-    _sent, on_sample, stop = _stall_once(0.5, samples=13)
-    winicmp.WinIcmpPinger(
-        {"plc": "192.0.2.10"},
-        interval=0.05,
-        timeout=0.2,
-        size=32,
-        max_pps=0,  # no rate ceiling to spread a backlog out
-        on_sample=on_sample,
-        stop=stop,
-        api=api,
-    ).run()
-    assert len(api.calls) >= 13
-    assert _densest(api.calls, 0.03) <= _MOST_IN_30_MS  # was 10 echoes back to back
-
-
 # ------------------------------------------------------------- Ctrl-C in a sweep
 
 
 def _ctrl_c_after(seconds):
-    # interrupt_main raises KeyboardInterrupt in the main thread but, like
-    # Ctrl-C on Windows, cannot break an untimed wait it is blocked in.
+    # interrupt_main raises KeyboardInterrupt in the main thread but cannot
+    # break an untimed wait it is blocked in.
     threading.Timer(seconds, _thread.interrupt_main).start()
 
 
@@ -228,14 +193,6 @@ def _interrupted_sweep(**kw):
     with pytest.raises(KeyboardInterrupt):
         icmpmod.ping_many(["192.0.2.10", "192.0.2.11"], count=100, interval=0.2, **kw)
     return time.monotonic() - start
-
-
-def test_ctrl_c_stops_a_windows_api_sweep_at_once(monkeypatch):
-    monkeypatch.delenv("NETDIAG_PING_METHOD", raising=False)
-    monkeypatch.setattr(icmpmod, "icmp_socket_available", lambda: False)
-    monkeypatch.setattr(icmpmod, "win_icmp_available", lambda: True)
-    monkeypatch.setattr(winicmp, "get_api", _EchoApi)
-    assert _interrupted_sweep(timeout=0.2) < 2.0  # the sweep alone takes 20 s
 
 
 def test_ctrl_c_stops_a_system_ping_sweep_at_once(monkeypatch):
@@ -288,7 +245,6 @@ def test_silent_device_on_an_old_ping_is_no_reply_not_cannot_measure(
     monkeypatch, flavour, rejects
 ):
     calls, fake_run = _silent_device_ping(rejects)
-    monkeypatch.setattr(icmpmod, "is_windows", lambda: False)
     monkeypatch.setattr(icmpmod, "is_macos", lambda: False)
     monkeypatch.setattr(icmpmod, "have", lambda cmd: cmd == "ping")
     monkeypatch.setattr(icmpmod, "run", fake_run)

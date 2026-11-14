@@ -106,7 +106,7 @@ def test_render_terminal_english(isolated_registry):
 
 
 def test_render_terminal_ascii_symbols_for_legacy_consoles(isolated_registry):
-    # A cp932 console cannot encode ✔/✘ — the renderer must fall back.
+    # A non-UTF-8 terminal cannot encode ✔/✘ — the renderer must fall back.
     out = render_terminal(_failing_diag(isolated_registry), color=False, unicode=False)
     assert "✘" not in out and "NG" in out
 

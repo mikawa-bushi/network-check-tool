@@ -2,7 +2,7 @@
 
 Resource exhaustion, socket/conntrack exhaustion, and a wrong clock all present
 as 'network problems'. Checking the host itself catches the cases where the
-network is innocent. Pure stdlib — reads /proc (Linux) or the Win32 API.
+network is innocent. Pure stdlib — reads /proc (Linux).
 """
 
 from __future__ import annotations
@@ -12,7 +12,7 @@ from pathlib import Path
 from typing import Dict, List, Optional
 
 from ..core import CheckResult, Context, Probe, register
-from ..core.util import have, is_linux, is_windows, run
+from ..core.util import have, is_linux, run
 from ..i18n import Text, tr
 
 
@@ -24,8 +24,6 @@ def _loadavg() -> Optional[float]:
 
 
 def _mem_available_pct() -> Optional[float]:
-    if is_windows():
-        return _windows_mem_available_pct()
     p = Path("/proc/meminfo")
     if not p.exists():
         return None
@@ -39,35 +37,6 @@ def _mem_available_pct() -> Optional[float]:
         if total:
             return avail / total * 100.0
     except (OSError, ValueError):
-        pass
-    return None
-
-
-def _windows_mem_available_pct() -> Optional[float]:
-    try:
-        import ctypes
-
-        class MEMORYSTATUSEX(ctypes.Structure):
-            _fields_ = [
-                ("dwLength", ctypes.c_ulong),
-                ("dwMemoryLoad", ctypes.c_ulong),
-                ("ullTotalPhys", ctypes.c_ulonglong),
-                ("ullAvailPhys", ctypes.c_ulonglong),
-                ("ullTotalPageFile", ctypes.c_ulonglong),
-                ("ullAvailPageFile", ctypes.c_ulonglong),
-                ("ullTotalVirtual", ctypes.c_ulonglong),
-                ("ullAvailVirtual", ctypes.c_ulonglong),
-                ("sullAvailExtendedVirtual", ctypes.c_ulonglong),
-            ]
-
-        st = MEMORYSTATUSEX()
-        st.dwLength = ctypes.sizeof(MEMORYSTATUSEX)
-        if (
-            ctypes.windll.kernel32.GlobalMemoryStatusEx(ctypes.byref(st))
-            and st.ullTotalPhys
-        ):
-            return st.ullAvailPhys / st.ullTotalPhys * 100.0
-    except (AttributeError, OSError):
         pass
     return None
 
@@ -104,7 +73,6 @@ class SystemProbe(Probe):
     manual_commands = [
         "uptime ; free -h",
         "cat /proc/sys/net/netfilter/nf_conntrack_count /proc/sys/net/netfilter/nf_conntrack_max",
-        "taskmgr (Windows)",
     ]
     means = Text(
         "ネットワークではなくPC側のリソース不足が通信を劣化させています。",
@@ -112,8 +80,8 @@ class SystemProbe(Probe):
     )
     runbook = [
         Text(
-            "メモリとCPU負荷を確認する（free -h / uptime / タスクマネージャー）",
-            "Check memory and load (`free -h`, `uptime`, Task Manager).",
+            "メモリとCPU負荷を確認する（free -h / uptime）",
+            "Check memory and load (`free -h`, `uptime`).",
         ),
         Text(
             "conntrack が満杯なら net.netfilter.nf_conntrack_max を増やすか、接続が漏れている原因を探す",
@@ -122,12 +90,12 @@ class SystemProbe(Probe):
     ]
 
     def check(self, ctx: Context) -> CheckResult:
-        if not (is_linux() or is_windows()):
+        if not is_linux():
             return CheckResult.skip(
                 self.name,
                 tr(
                     "このOSではリソース確認に未対応",
-                    "host metrics only implemented on Linux/Windows",
+                    "host metrics only implemented on Linux",
                 ),
                 code="system.unsupported",
             )
@@ -214,15 +182,15 @@ class ClockProbe(Probe):
         "時計がずれるとTLS証明書の検証や認証が失敗し、ネットワーク障害のように見えます。ログの時刻照合も狂います。",
         "A skewed clock breaks TLS validation and Kerberos/auth, mimicking network faults.",
     )
-    manual_commands = ["timedatectl status", "w32tm /query /status"]
+    manual_commands = ["timedatectl status"]
     means = Text(
         "PCの時計が同期していません。TLSや認証が失敗し、機器ログとの時刻照合もずれます。",
         "The system clock is not synchronised, which can break TLS and auth.",
     )
     runbook = [
         Text(
-            "NTPを有効化: sudo timedatectl set-ntp true / w32tm /resync",
-            "Enable NTP: `sudo timedatectl set-ntp true` / `w32tm /resync`.",
+            "NTPを有効化: sudo timedatectl set-ntp true",
+            "Enable NTP: `sudo timedatectl set-ntp true`.",
         ),
     ]
 

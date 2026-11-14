@@ -105,15 +105,13 @@ def test_check_duration_sets_count(monkeypatch):
     assert seen["config"]["count"] == 120
 
 
-def test_duration_uses_windows_ping_cadence(monkeypatch):
+def test_duration_uses_the_system_ping_cadence(monkeypatch):
     import netdiag.measure as measure
-    import netdiag.measure.icmp as icmpmod
 
     seen = _patch_run(monkeypatch)
-    monkeypatch.setattr(icmpmod, "is_windows", lambda: True)
     monkeypatch.setattr(measure, "precise_ping_available", lambda: False)
-    CliRunner().invoke(cli, ["check", "--duration", "60"])
-    assert seen["config"]["count"] == 60  # ~1 ping/s with ping.exe, not 300
+    CliRunner().invoke(cli, ["check", "--duration", "60", "--interval", "0.1"])
+    assert seen["config"]["count"] == 300  # unprivileged ping keeps 0.2 s, not 600
 
 
 def test_check_exit_code_and_bad_device_list(monkeypatch, tmp_path):

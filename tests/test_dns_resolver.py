@@ -5,7 +5,7 @@
 * Each configured resolver is queried individually, so a dead secondary DNS
   server shows up as a warning even though names still resolve.
 * The stdlib DNS client builds/parses real wire-format packets (no
-  ``nslookup``, whose output is localised on Windows).
+  ``nslookup``).
 """
 
 import socket

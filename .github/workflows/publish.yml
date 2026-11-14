@@ -1,8 +1,7 @@
 name: Publish to PyPI
 
 # A v* tag releases netdiag: the full test suite runs first, then the tag must
-# name the package version. Only then do the sdist and wheel go to PyPI and the
-# Windows exe zip to the tag's GitHub release.
+# name the package version. Only then do the sdist and wheel go to PyPI.
 on:
   push:
     tags:
@@ -43,10 +42,6 @@ jobs:
         name: dist
         path: dist/
 
-  exe:
-    needs: build
-    uses: ./.github/workflows/windows-exe.yml
-
   publish:
     needs: build
     runs-on: ubuntu-latest
@@ -65,24 +60,3 @@ jobs:
 
     - name: Publish
       uses: pypa/gh-action-pypi-publish@7245906fb61fa33a13554f9d5fb856fe61758086  # v1.14.3
-
-  release-exe:
-    needs: exe
-    runs-on: ubuntu-latest
-    permissions:
-      contents: write  # uploads the zip to the tag's release
-    env:
-      GH_TOKEN: ${{ github.token }}
-      GH_REPO: ${{ github.repository }}
-      ZIP: ${{ needs.exe.outputs.zip }}
-
-    steps:
-    - name: Download the exe zip
-      uses: actions/download-artifact@v4
-      with:
-        name: ${{ needs.exe.outputs.zip }}
-
-    - name: Attach to the release
-      run: |
-        gh release upload "$GITHUB_REF_NAME" "$ZIP.zip" --clobber \
-          || gh release create "$GITHUB_REF_NAME" "$ZIP.zip" --verify-tag --generate-notes

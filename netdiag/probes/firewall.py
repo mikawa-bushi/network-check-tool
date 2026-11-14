@@ -13,18 +13,8 @@ from ipaddress import IPv4Network, IPv6Network
 from typing import Dict, List, Optional
 
 from ..core import CheckResult, Context, Probe, register
-from ..core.util import have, is_linux, is_root, is_windows, run
+from ..core.util import have, is_linux, is_root, run
 from ..i18n import Text, tr
-
-_WIN_FW_SCRIPT = (
-    "$ErrorActionPreference='SilentlyContinue';"
-    "[Console]::OutputEncoding=New-Object System.Text.UTF8Encoding($false);"
-    "@(Get-NetFirewallProfile | Select-Object Name,"
-    "@{n='Enabled';e={\"$($_.Enabled)\"}},"
-    "@{n='DefaultInboundAction';e={\"$($_.DefaultInboundAction)\"}},"
-    "@{n='DefaultOutboundAction';e={\"$($_.DefaultOutboundAction)\"}})"
-    " | ConvertTo-Json -Compress"
-)
 
 
 @dataclass
@@ -158,20 +148,6 @@ def reachable(chains: Dict[str, Chain], hook: str) -> List[str]:
     return seen
 
 
-def parse_windows_profiles(data) -> List[dict]:
-    from ..netinfo.windows import _as_list
-
-    return [
-        {
-            "name": str(p.get("Name")),
-            "enabled": str(p.get("Enabled")).lower() in ("true", "1"),
-            "inbound": str(p.get("DefaultInboundAction") or ""),
-            "outbound": str(p.get("DefaultOutboundAction") or ""),
-        }
-        for p in _as_list(data)
-    ]
-
-
 @register
 class FirewallProbe(Probe):
     name = "firewall"
@@ -188,17 +164,15 @@ class FirewallProbe(Probe):
         "Distinguishes 'remote service blocked us' from 'our own firewall drops it'. "
         "A local default-DROP with no matching allow explains a filtered port.",
     )
-    manual_commands = ["nft list ruleset", "iptables -S", "Get-NetFirewallProfile"]
+    manual_commands = ["nft list ruleset", "iptables -S"]
 
     def check(self, ctx: Context) -> CheckResult:
-        if is_windows():
-            return self._check_windows(ctx)
         if not is_linux():
             return CheckResult.skip(
                 self.name,
                 tr(
-                    "ファイアウォール確認はLinux/Windowsのみ対応",
-                    "firewall inspection only on Linux/Windows",
+                    "ファイアウォール確認はLinuxのみ対応",
+                    "firewall inspection only on Linux",
                 ),
                 code="firewall.unsupported",
             )
@@ -294,49 +268,6 @@ class FirewallProbe(Probe):
             ),
         )
 
-    def _check_windows(self, ctx: Context) -> CheckResult:
-        from ..netinfo.windows import run_powershell
-
-        raw = ctx.network().extras.get("firewall")
-        profiles = parse_windows_profiles(
-            raw if raw is not None else run_powershell(_WIN_FW_SCRIPT)
-        )
-        if not profiles:
-            return CheckResult.skip(
-                self.name,
-                tr(
-                    "Windowsファイアウォールの状態を取得できません",
-                    "could not read Windows Firewall profiles",
-                ),
-                code="firewall.unavailable",
-            )
-        detail = {"backend": "windows", "profiles": profiles}
-        blocked_out = [
-            p["name"]
-            for p in profiles
-            if p["enabled"] and p["outbound"].lower() == "block"
-        ]
-        enabled = [p["name"] for p in profiles if p["enabled"]]
-        if blocked_out:
-            return CheckResult.warn(
-                self.name,
-                tr(
-                    f"Windowsファイアウォールが送信を既定で遮断（{', '.join(blocked_out)}）",
-                    f"Windows Firewall blocks outbound by default ({', '.join(blocked_out)})",
-                ),
-                detail=detail,
-                code="firewall.outbound_block",
-            )
-        return CheckResult.ok(
-            self.name,
-            tr(
-                f"Windowsファイアウォール 有効: {', '.join(enabled) or 'なし'}（送信は許可）",
-                f"Windows Firewall enabled: {', '.join(enabled) or 'none'} (outbound allowed)",
-            ),
-            detail=detail,
-            code="firewall.ok",
-        )
-
     def advice(self, result, results=None):
         if result is not None and result.code == "firewall.replies_blocked":
             means = tr(
@@ -352,8 +283,8 @@ class FirewallProbe(Probe):
             means,
             [
                 tr(
-                    "ルールを確認: sudo nft list ruleset / sudo iptables -S / wf.msc (Windows)",
-                    "Review the ruleset: sudo nft list ruleset / sudo iptables -S / wf.msc (Windows)",
+                    "ルールを確認: sudo nft list ruleset / sudo iptables -S",
+                    "Review the ruleset: sudo nft list ruleset / sudo iptables -S",
                 ),
                 tr(
                     "一時的に該当ポートを許可して、ファイアウォールが原因か確かめる",

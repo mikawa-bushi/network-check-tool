@@ -11,10 +11,7 @@ import pytest
 
 ROOT = Path(__file__).resolve().parents[1]
 
-needs_bash = pytest.mark.skipif(
-    sys.platform == "win32" or shutil.which("bash") is None,
-    reason="on Windows a bare `bash` may start WSL instead of Git Bash",
-)
+needs_bash = pytest.mark.skipif(shutil.which("bash") is None, reason="no bash")
 
 
 def _expect_verdict(code: str) -> subprocess.CompletedProcess:
@@ -354,7 +351,6 @@ def _case_id(make_push) -> str:
     return make_push.__name__.lstrip("_")
 
 
-@pytest.mark.skipif(sys.platform == "win32", reason="the hook entry is POSIX")
 @pytest.mark.parametrize(
     "make_push",
     [
@@ -380,7 +376,6 @@ def test_real_push_is_refused_while_any_local_ref_has_a_bad_commit(
     assert hooked_repo.git("ls-remote", "origin") == remote_before
 
 
-@pytest.mark.skipif(sys.platform == "win32", reason="the hook entry is POSIX")
 @pytest.mark.parametrize("make_push", [_clean_multi_ref, _clean_push_all], ids=_case_id)
 def test_real_clean_push_sends_every_branch(hooked_repo, make_push):
     push = hooked_repo.push(*make_push(hooked_repo))

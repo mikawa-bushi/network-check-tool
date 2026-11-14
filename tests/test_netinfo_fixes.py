@@ -1,4 +1,4 @@
-"""Windows and macOS samples here are reconstructed, not captured on real machines."""
+"""macOS samples here are reconstructed, not captured on real machines."""
 
 import ipaddress
 import json
@@ -8,11 +8,17 @@ import struct
 import pytest
 
 from netdiag import netinfo, scan
-from netdiag.core.util import CommandResult, decode_output
+from netdiag.core.util import CommandResult
 from netdiag.diagnosis.engine import Engine
 from netdiag.measure import PingStats
-from netdiag.netinfo import linux, macos, windows
-from netdiag.netinfo.model import KIND_ETHERNET, NEIGH_STALE, HostNetwork, Neighbor
+from netdiag.netinfo import linux, macos
+from netdiag.netinfo.model import (
+    KIND_ETHERNET,
+    NEIGH_FAILED,
+    NEIGH_REACHABLE,
+    HostNetwork,
+    Neighbor,
+)
 from netdiag.probes import gateway as gateway_probe
 from netdiag.probes.device import DeviceEvidence
 
@@ -44,53 +50,6 @@ def _linux(addr, routes, base):
         routes=linux.parse_route_json(routes),
         source="linux:ip-json",
     )
-
-
-def _adapter(name, index, desc, status="Up", media="802.3", mac=None, **extra):
-    return {
-        "Name": name,
-        "InterfaceDescription": desc,
-        "ifIndex": index,
-        "Status": status,
-        "MacAddress": mac if mac is not None else f"00-00-5E-00-53-{index:02X}",
-        "LinkSpeed": "1 Gbps" if status == "Up" else "0 bps",
-        "ReceiveLinkSpeed": 1000000000 if status == "Up" else 0,
-        "FullDuplex": True,
-        "MtuSize": 1500,
-        "Virtual": False,
-        "HardwareInterface": True,
-        "MediaType": media,
-        "PhysicalMediaType": media,
-        **extra,
-    }
-
-
-def _address(ip, plen, index, alias, state="Preferred", origin="Manual"):
-    return {
-        "IPAddress": ip,
-        "PrefixLength": plen,
-        "InterfaceIndex": index,
-        "InterfaceAlias": alias,
-        "AddressState": state,
-        "PrefixOrigin": origin,
-    }
-
-
-def _route(dst, hop, index, alias, route_metric, if_metric):
-    return {
-        "DestinationPrefix": dst,
-        "NextHop": hop,
-        "InterfaceIndex": index,
-        "InterfaceAlias": alias,
-        "RouteMetric": route_metric,
-        "InterfaceMetric": if_metric,
-    }
-
-
-def _windows(**sections):
-    data = {"adapters": [], "addresses": [], "routes": [], "dns": [], "stats": []}
-    data.update(sections)
-    return windows.parse_collect_json(json.loads(json.dumps(data, ensure_ascii=False)))
 
 
 @pytest.fixture
@@ -204,29 +163,38 @@ def test_text_route_without_metric_reads_as_metric_0():
     assert hn.preferred_default_route().gateway == "192.0.2.1"
 
 
-def _two_gateway_laptop():
-    # Get-NetRoute lists equal prefixes by interface, not by metric: the Wi-Fi
-    # default (35) comes first, the equipment NIC's typed gateway (25) second.
-    return _windows(
-        adapters=[
-            _adapter("イーサネット", 12, "Intel(R) Ethernet Connection I219-LM"),
-            _adapter("Wi-Fi", 18, "Intel(R) Wi-Fi 6E AX211", media="Native 802.11"),
+def _two_gateway_laptop(base):
+    # The Wi-Fi default (600) comes first, the equipment NIC's typed gateway
+    # (100) second: the route list is not sorted by metric.
+    return _linux(
+        [
+            _eth_json("eth0", "192.0.2.100", 24, index=2),
+            _eth_json("wlan0", "198.51.100.40", 24, index=3),
         ],
-        addresses=[
-            _address("192.0.2.100", 24, 12, "イーサネット"),
-            _address("198.51.100.40", 24, 18, "Wi-Fi", origin="Dhcp"),
+        [
+            {
+                "dst": "default",
+                "gateway": "198.51.100.1",
+                "dev": "wlan0",
+                "metric": 600,
+                "flags": [],
+            },
+            {
+                "dst": "default",
+                "gateway": "192.0.2.1",
+                "dev": "eth0",
+                "metric": 100,
+                "flags": [],
+            },
+            {"dst": "192.0.2.0/24", "dev": "eth0", "scope": "link", "flags": []},
+            {"dst": "198.51.100.0/24", "dev": "wlan0", "scope": "link", "flags": []},
         ],
-        routes=[
-            _route("0.0.0.0/0", "198.51.100.1", 18, "Wi-Fi", 0, 35),
-            _route("0.0.0.0/0", "192.0.2.1", 12, "イーサネット", 0, 25),
-            _route("192.0.2.0/24", "0.0.0.0", 12, "イーサネット", 256, 25),
-            _route("198.51.100.0/24", "0.0.0.0", 18, "Wi-Fi", 256, 35),
-        ],
+        base,
     )
 
 
-def test_route_and_gateway_checks_name_the_same_gateway(answered_pings):
-    hn = _two_gateway_laptop()
+def test_route_and_gateway_checks_name_the_same_gateway(tmp_path, answered_pings):
+    hn = _two_gateway_laptop(tmp_path)
     res = _run(
         hn,
         ["gateway", "route"],
@@ -300,69 +268,6 @@ def test_macos_utun_is_not_an_arp_link():
     assert tunnel.on_link and not tunnel.arp
 
 
-def test_windows_wireguard_and_dialup_vpn_are_not_arp_links():
-    hn = _windows(
-        adapters=[
-            _adapter("イーサネット", 12, "Intel(R) Ethernet Connection I219-LM"),
-            _adapter(
-                "wg-plant",
-                31,
-                "WireGuard Tunnel",
-                media="IP",
-                mac="",
-                HardwareInterface=False,
-            ),
-        ],
-        addresses=[
-            _address("192.0.2.100", 24, 12, "イーサネット"),
-            _address("198.51.100.2", 32, 31, "wg-plant"),
-            _address("198.51.100.66", 32, 40, "工場VPN"),
-        ],
-        routes=[
-            _route("192.0.2.0/24", "0.0.0.0", 12, "イーサネット", 256, 25),
-            _route("203.0.113.0/24", "0.0.0.0", 31, "wg-plant", 0, 5),
-            _route("198.51.100.128/25", "0.0.0.0", 40, "工場VPN", 0, 26),
-        ],
-    )
-    assert hn.decide_route("192.0.2.39").arp
-    wg = hn.decide_route("203.0.113.10")
-    assert wg.on_link and wg.interface.name == "wg-plant" and not wg.arp
-    vpn = hn.decide_route("198.51.100.200")
-    assert vpn.on_link and vpn.interface.name == "工場VPN" and not vpn.arp
-
-
-ROUTE_PRINT_TUNNEL_JA = """\
-===========================================================================
-インターフェイス一覧
- 12...00 00 5e 00 53 0c ......Intel(R) Ethernet Connection I219-LM
- 31...........................WireGuard Tunnel
-  1...........................Software Loopback Interface 1
-===========================================================================
-
-IPv4 ルート テーブル
-===========================================================================
-アクティブ ルート:
-ネットワーク宛先        ネットマスク          ゲートウェイ       インターフェイス  メトリック
-          0.0.0.0          0.0.0.0        192.0.2.1      192.0.2.100     25
-        192.0.2.0    255.255.255.0            リンク上       192.0.2.100    281
-      192.0.2.100  255.255.255.255            リンク上       192.0.2.100    281
-      203.0.113.0    255.255.255.0            リンク上      198.51.100.2      5
-     198.51.100.2  255.255.255.255            リンク上      198.51.100.2    261
-        127.0.0.0        255.0.0.0            リンク上         127.0.0.1    331
-===========================================================================
-固定ルート:
-  なし
-"""
-
-
-def test_windows_route_print_marks_a_host_route_only_link_as_tunnel():
-    raw = ROUTE_PRINT_TUNNEL_JA.replace("\n", "\r\n").encode("cp932")
-    hn = windows.parse_route_print(decode_output(raw))
-    assert hn.decide_route("192.0.2.39").arp
-    wg = hn.decide_route("203.0.113.10")
-    assert wg.on_link and not wg.arp
-
-
 def _two_nic_addr():
     return [
         _eth_json("eth0", "192.0.2.20", 24, index=2),
@@ -427,12 +332,6 @@ def test_default_route_without_gateway_is_a_link_default(tmp_path):
     )
     assert hn.default_routes() == []
     assert hn.link_default_route().interface == "ppp0"
-    mobile = _windows(
-        adapters=[_adapter("携帯電話", 21, "Mobile Broadband", media="Wireless WAN")],
-        addresses=[_address("198.51.100.7", 30, 21, "携帯電話")],
-        routes=[_route("0.0.0.0/0", "0.0.0.0", 21, "携帯電話", 0, 40)],
-    )
-    assert mobile.link_default_route().interface == "携帯電話"
     assert HostNetwork().link_default_route() is None
 
 
@@ -564,16 +463,7 @@ def test_unreadable_routing_table_is_reported_not_empty(no_iproute2, monkeypatch
     assert any("network interfaces" in e for e in hn.errors)
 
 
-def test_failed_route_commands_on_windows_and_macos_are_reported(monkeypatch):
-    hn = windows.parse_collect_json(
-        {
-            "adapters": [_adapter("イーサネット", 12, "Intel(R) Ethernet")],
-            "routes": None,
-        }
-    )
-    assert hn.routes == [] and any("routing table" in e for e in hn.errors)
-    assert _two_gateway_laptop().errors == []
-
+def test_failed_route_commands_on_macos_are_reported(monkeypatch):
     def fake_run(args, timeout=10.0):
         ok = args[0] != "netstat" or "-rn" not in args
         return CommandResult(
@@ -706,171 +596,41 @@ def test_a_suppressed_main_default_is_no_gateway_to_ping(answered_pings):
     assert gw.code == "gateway.via_link" and answered_pings == []
 
 
-def _laptop_with_idle_adapters(eth_state="Preferred"):
-    return _windows(
-        adapters=[
-            _adapter("イーサネット", 12, "Intel(R) Ethernet Connection I219-LM"),
-            _adapter(
-                "Bluetooth ネットワーク接続",
-                9,
-                "Bluetooth Device (Personal Area Network)",
-                status="Disconnected",
-            ),
-            _adapter(
-                "イーサネット 2",
-                22,
-                "Realtek USB GbE Family Controller",
-                status="Disconnected",
-            ),
-        ],
-        addresses=[
-            _address("192.0.2.100", 24, 12, "イーサネット", state=eth_state),
-            _address(
-                "169.254.183.20",
-                16,
-                9,
-                "Bluetooth ネットワーク接続",
-                state="Tentative",
-                origin="WellKnown",
-            ),
-            _address(
-                "169.254.77.5", 16, 22, "イーサネット 2", "Tentative", "WellKnown"
-            ),
-        ],
-        routes=[
-            _route("0.0.0.0/0", "192.0.2.1", 12, "イーサネット", 0, 25),
-            _route("192.0.2.0/24", "0.0.0.0", 12, "イーサネット", 256, 25),
-        ],
-    )
-
-
-def test_disconnected_adapters_are_not_reported_tentative():
-    res = _run(_laptop_with_idle_adapters(), ["interface", "ipconfig"])
-    assert res["ipconfig"].code == "ipconfig.ok", res["ipconfig"].summary
-    busy = _run(_laptop_with_idle_adapters("Tentative"), ["interface", "ipconfig"])
-    assert busy["ipconfig"].summary == "192.0.2.100 on イーサネット is still tentative"
-
-
-def test_unplugged_nic_gateway_and_dns_are_not_used(monkeypatch):
-    hn = _windows(
-        adapters=[
-            _adapter("イーサネット", 12, "Intel(R) Ethernet", status="Disconnected"),
-            _adapter("Wi-Fi", 18, "Intel(R) Wi-Fi 6E AX211", media="Native 802.11"),
-        ],
-        addresses=[
-            _address("192.0.2.100", 24, 12, "イーサネット"),
-            _address("198.51.100.40", 24, 18, "Wi-Fi", origin="Dhcp"),
-        ],
-        routes=[
-            _route("0.0.0.0/0", "198.51.100.1", 18, "Wi-Fi", 0, 35),
-            _route("0.0.0.0/0", "192.0.2.1", 12, "イーサネット", 0, 5),
-            _route("198.51.100.0/24", "0.0.0.0", 18, "Wi-Fi", 256, 35),
-        ],
-        dns=[
-            {"InterfaceIndex": 12, "ServerAddresses": ["192.0.2.53"]},
-            {"InterfaceIndex": 18, "ServerAddresses": ["198.51.100.53"]},
-        ],
-    )
-
-    def wifi_router_only(target, **kw):
-        up = target == "198.51.100.1"
-        return PingStats(
-            target=target,
-            address=target,
-            sent=4,
-            received=4 if up else 0,
-            rtts_ms=[1.0] * 4 if up else [],
+def _line_pc(base):
+    return HostNetwork(
+        interfaces=linux.parse_addr_json(
+            [_eth_json("eth0", "192.0.2.100", 24)], base=base
         )
-
-    monkeypatch.setattr(gateway_probe, "ping", wifi_router_only)
-    res = _run(hn, ["interface", "gateway", "ipconfig"], internet=True)
-    assert res["gateway"].code == "gateway.ok"
-    assert res["gateway"].detail["gateway"] == "198.51.100.1"
-    assert res["ipconfig"].code == "ipconfig.ok"
-    assert hn.resolvers == ["198.51.100.53"]
-    route = hn.decide_route("192.0.2.39")
-    assert route.interface.name == "イーサネット" and not route.interface.up
-    assert "Get-NetRoute -AddressFamily IPv4 -PolicyStore ActiveStore" in (
-        windows.COLLECT_SCRIPT
     )
 
 
-def test_error_ratio_counts_multicast_frames():
-    stats = {
-        "Name": "イーサネット",
-        "ReceivedUnicastPackets": 120000,
-        "ReceivedMulticastPackets": 40000000,
-        "ReceivedBroadcastPackets": 300000,
-        "SentUnicastPackets": 80000,
-        "SentMulticastPackets": 20000000,
-        "SentBroadcastPackets": 1000,
-        "ReceivedPacketErrors": 25,
-        "OutboundPacketErrors": 0,
-        "ReceivedDiscardedPackets": 0,
-        "OutboundDiscardedPackets": 0,
-    }
-    hn = _windows(
-        adapters=[_adapter("イーサネット", 12, "Intel(R) Ethernet")],
-        addresses=[_address("192.0.2.100", 24, 12, "イーサネット")],
-        routes=[_route("192.0.2.0/24", "0.0.0.0", 12, "イーサネット", 256, 25)],
-        stats=[stats],
-    )
-    eth = hn.interface("イーサネット").stats
-    assert (eth.rx_packets, eth.tx_packets) == (40420000, 20081000)
-    assert _run(hn, ["link"])["link"].code == "link.ok"
-    for column in ("ReceivedMulticastPackets", "SentBroadcastPackets"):
-        assert column in windows.COLLECT_SCRIPT
-
-
-ARP_INVALID_JA = (
-    "\r\nインターフェイス: 192.0.2.100 --- 0xc\r\n"
-    "  インターネット アドレス 物理アドレス           種類\r\n"
-    "  192.0.2.1             00-00-5e-00-53-01     動的\r\n"
-    "  192.0.2.39            00-00-00-00-00-00     無効\r\n"
-    "  192.0.2.255           ff-ff-ff-ff-ff-ff     静的\r\n"
-).encode("cp932")
-
-
-ARP_RESOLVED_JA = ARP_INVALID_JA.replace(
-    "00-00-00-00-00-00     無効".encode("cp932"),
-    "00-00-5e-00-53-27     動的".encode("cp932"),
+GATEWAY = Neighbor(ip="192.0.2.1", mac="00:00:5e:00:53:01", state=NEIGH_REACHABLE)
+FAILED = Neighbor(ip="192.0.2.39", state=NEIGH_FAILED)
+RESOLVED = Neighbor(
+    ip="192.0.2.39", mac="00:00:5e:00:53:27", state=NEIGH_REACHABLE, confirmed_age=0.5
 )
 
 
-def _line_pc():
-    return HostNetwork(
-        interfaces=windows.parse_route_print(
-            "          192.0.2.0    255.255.255.0       On-link     192.0.2.100    281\n"
-        ).interfaces
-    )
-
-
-def test_device_that_answers_arp_after_an_invalid_row_is_present():
-    before = {n.ip: n for n in windows.parse_arp_a(decode_output(ARP_INVALID_JA))}
-    assert before["192.0.2.1"].mac == "00:00:5e:00:53:01"
-    after = Neighbor(ip="192.0.2.39", mac="00:00:5e:00:53:27", state=NEIGH_STALE)
+def test_device_that_answers_arp_after_a_failed_entry_is_present(tmp_path):
     res = _run(
-        _line_pc(),
+        _line_pc(tmp_path),
         ["route", "reach"],
         target={"name": "PLC1", "host": "192.0.2.39"},
         evidence=DeviceEvidence(
             address="192.0.2.39",
             ping=PingStats(target="192.0.2.39", sent=10, received=0),
             ping_window=3.0,
-            neighbor_before=before.get("192.0.2.39"),
-            neighbor_after=after,
+            neighbor_before=FAILED,
+            neighbor_after=RESOLVED,
         ),
     )
     assert res["reach"].code == "reach.icmp_blocked"
 
 
-def test_scan_finds_a_device_whose_row_was_invalid_before_the_sweep(monkeypatch):
-    tables = iter(
-        windows.parse_arp_a(decode_output(raw))
-        for raw in (ARP_INVALID_JA, ARP_RESOLVED_JA)
-    )
+def test_scan_finds_a_device_whose_entry_failed_before_the_sweep(monkeypatch, tmp_path):
+    tables = iter([[GATEWAY, FAILED], [GATEWAY, RESOLVED]])
     monkeypatch.setattr(netinfo, "neighbors", lambda: next(tables))
-    monkeypatch.setattr(netinfo, "snapshot", lambda *a, **k: _line_pc())
+    monkeypatch.setattr(netinfo, "snapshot", lambda *a, **k: _line_pc(tmp_path))
     monkeypatch.setattr(
         scan,
         "ping_many",
@@ -880,25 +640,6 @@ def test_scan_finds_a_device_whose_row_was_invalid_before_the_sweep(monkeypatch)
     )
     res = scan.scan([ipaddress.ip_network("192.0.2.32/28")], count=2)
     assert [(h.ip, h.arp_only) for h in res.hits] == [("192.0.2.39", True)]
-
-
-def test_disabled_duplicate_address_is_not_used_to_reach_devices():
-    hn = _windows(
-        adapters=[
-            _adapter("イーサネット", 12, "Intel(R) Ethernet Connection I219-LM"),
-            _adapter("Wi-Fi", 18, "Intel(R) Wi-Fi 6E AX211", media="Native 802.11"),
-        ],
-        addresses=[
-            _address("192.0.2.100", 24, 12, "イーサネット", state="Duplicate"),
-            _address("198.51.100.40", 24, 18, "Wi-Fi", origin="Dhcp"),
-        ],
-        routes=[_route("0.0.0.0/0", "198.51.100.1", 18, "Wi-Fi", 0, 35)],
-    )
-    res = _run(hn, ["ipconfig", "route"], target={"name": "PLC1", "host": "192.0.2.39"})
-    assert res["ipconfig"].code == "ipconfig.duplicate_ip"
-    assert res["route"].code != "route.on_link"
-    assert res["route"].detail["local_address"] != "192.0.2.100/24"
-    assert hn.decide_route("192.0.2.100").special == "self"
 
 
 def test_resolv_conf_with_a_shift_jis_comment_still_lists_its_servers(

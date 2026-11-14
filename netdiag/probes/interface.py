@@ -61,7 +61,6 @@ class InterfaceProbe(Probe):
         "send any packet; every higher-layer failure below this is a symptom.",
     )
     manual_commands = [
-        Text("ipconfig /all (Windows)", "ipconfig /all (Windows)"),
         Text("ip -br addr (Linux)", "ip -br addr (Linux)"),
     ]
 
@@ -203,17 +202,10 @@ class InterfaceProbe(Probe):
                         "機器と同じネットワークの固定IPを設定する（例: 機器が 192.168.3.39/24 なら PC は 192.168.3.100/24 など未使用の番号）",
                         "Assign a static IP in the equipment's subnet (e.g. device 192.168.3.39/24 -> PC 192.168.3.100/24, an unused number)",
                     ),
-                    tr(
-                        "Windows: 設定 → ネットワークとインターネット → アダプターのオプション → IPv4 のプロパティ",
-                        "Windows: Settings → Network → Adapter options → IPv4 properties",
-                    ),
-                    oscmd(
+                    (
                         "nmcli con mod "
                         + tr("<接続名>", "<connection>")
-                        + " ipv4.method manual ipv4.addresses 192.168.3.100/24",
-                        'netsh interface ip set address "'
-                        + tr("イーサネット", "Ethernet")
-                        + '" static 192.168.3.100 255.255.255.0',
+                        + " ipv4.method manual ipv4.addresses 192.168.3.100/24"
                     ),
                 ],
             )
@@ -246,10 +238,9 @@ class InterfaceProbe(Probe):
                 ),
                 tr(
                     "アダプタが無効になっていないか確認: "
-                    + oscmd("ip link", "ncpa.cpl", "ifconfig"),
-                    "Make sure the adapter is enabled: "
-                    + oscmd("ip link", "ncpa.cpl", "ifconfig"),
+                    + oscmd("ip link", "ifconfig"),
+                    "Make sure the adapter is enabled: " + oscmd("ip link", "ifconfig"),
                 ),
-                oscmd("ip -br addr", "ipconfig /all", "ifconfig"),
+                oscmd("ip -br addr", "ifconfig"),
             ],
         )

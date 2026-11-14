@@ -1,7 +1,7 @@
 """Minimal DNS client (UDP, A records) on the standard library.
 
-Querying a specific resolver directly — instead of shelling out to ``nslookup``,
-whose output is localised on Windows — gives a precise per-server answer:
+Querying a specific resolver directly, instead of shelling out to ``nslookup``,
+gives a precise per-server answer:
 which configured DNS server answers, how fast, and with which response code.
 """
 
