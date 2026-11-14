@@ -443,10 +443,13 @@ def _is_comment(cells: List[str]) -> bool:
 
     A name such as ``#1プレス`` on a device row is kept: only a ``#`` followed
     by a space, another ``#``, an address, or nothing else on the row counts.
-    A header row whose first column is a ``#`` row number is kept too.
+    A header row whose first cell is ``#`` alone (a row-number column) is kept
+    too.
     """
     first = cells[0] if cells else ""
-    if not first.startswith("#") or "host" in _column_keys(cells):
+    if not first.startswith("#"):
+        return False
+    if first == "#" and "host" in _column_keys(cells):
         return False
     rest = first[1:]
     filled = [c for c in cells if c]
