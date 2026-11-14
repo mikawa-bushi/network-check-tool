@@ -58,7 +58,7 @@ def test_unreadable_list_explains_and_waits(fake, tmp_path, capsys):
     bad.write_text("foo,bar\r\n1,2\r\n", encoding="utf-8")
     with pytest.raises(SystemExit) as e:
         launcher.main([str(bad)])
-    assert e.value.code == 2 and fake["paused"] == 1 and fake["devices"] is None
+    assert e.value.code == 4 and fake["paused"] == 1 and fake["devices"] is None
     assert "台帳を読めませんでした" in capsys.readouterr().out
 
 
