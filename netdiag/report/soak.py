@@ -1,7 +1,7 @@
 """Rendering a long-duration measurement (:mod:`netdiag.soak`).
 
 The HTML version draws one row per device and one cell per minute (green = no
-loss, yellow/orange/red = increasing loss, grey = no data), so "everything
+loss, yellow/orange/red = increasing loss, grey = not measured), so "everything
 dropped at 14:03" versus "only the robot drops, every 20 minutes" is visible at
 a glance — without JavaScript (cell details are SVG tooltips).
 """
@@ -12,14 +12,15 @@ import csv
 import html
 import io
 import json
+import math
 import time
 from typing import Dict, List, Optional
 
 from ..core import Status
 from ..i18n import tr
 from ..inventory import excel_safe
-from ..soak import Bucket, DeviceTrack, SoakReport, fmt_secs, hhmmss
-from .common import Style, pad, truncate, width
+from ..soak import CLOCK_STEP_NOTE_S, Bucket, DeviceTrack, SoakReport, fmt_secs
+from .common import Style, pad, status_word, truncate, width
 from .html import _page
 from .text import _fmt_num as _fmt_ms
 
@@ -33,7 +34,37 @@ def _kind_text() -> Dict[str, str]:
         "all": tr("全機器", "all devices"),
         "some": tr("複数台", "several"),
         "single": tr("単独", "single"),
+        "unlocated": tr("場所不明", "location unknown"),
     }
+
+
+def _cell_text(seconds: float) -> str:
+    """One heatmap cell / CSV row, in words: 1分, 10秒, 1時間."""
+    if seconds % 3600 == 0:
+        n = int(seconds // 3600)
+        return tr(f"{n}時間", f"{n} h")
+    if seconds % 60 == 0:
+        n = int(seconds // 60)
+        return tr(f"{n}分", f"{n} min")
+    return tr(f"{seconds:g}秒", f"{seconds:g} s")
+
+
+def _span(rep: SoakReport) -> str:
+    end = _when(rep.finished_at) if rep.multi_day else rep.at(rep.finished_at)
+    return f"{_when(rep.started_at)} 〜 {end}"
+
+
+def _notes(rep: SoakReport) -> List[str]:
+    """Lines that qualify the times shown."""
+    if abs(rep.clock_step_s) < CLOCK_STEP_NOTE_S:
+        return []
+    step = ("+" if rep.clock_step_s > 0 else "-") + fmt_secs(abs(rep.clock_step_s))
+    return [
+        tr(
+            f"測定中にPCの時計が {step} 変更されました。表示の時刻は測定開始時の時計に合わせています。",
+            f"This PC's clock was changed by {step} during the measurement; times shown follow the clock at the start.",
+        )
+    ]
 
 
 def _device_header(with_downtime: bool) -> List[str]:
@@ -67,9 +98,10 @@ def _headline(rep: SoakReport, st: Style) -> str:
             "all": tr("全機器同時の断", "drops on all devices at once"),
             "some": tr("複数台同時の断", "drops on several devices at once"),
             "single": tr("単独の断", "single-device drops"),
+            "unlocated": tr("場所不明の断", "drops of unknown location"),
         }
         parts = []
-        for k in ("all", "some", "single"):
+        for k in ("all", "some", "single", "unlocated"):
             n = sum(1 for i in inc if i.kind == k)
             if n:
                 parts.append(labels[k] + tr(f" {n}回", f" x{n}"))
@@ -81,8 +113,21 @@ def _headline(rep: SoakReport, st: Style) -> str:
             parts.append(
                 tr(f"散発的なロス {sporadic}台", f"sporadic loss on {sporadic}")
             )
+        findings = rep.findings()
+        codes = {f.code for f in findings}
+        if "soak.pc_link_flap" in codes:
+            parts.insert(0, tr("このPCのリンク切断", "this PC's link dropped"))
+        if "soak.nic_errors" in codes:
+            parts.append(tr("このPCのNICエラー", "NIC errors on this PC"))
+        unmeasured = sum(1 for f in findings if f.code == "soak.not_measured")
+        if unmeasured:
+            parts.append(tr(f"測定不可 {unmeasured}台", f"{unmeasured} not measured"))
+        if "soak.unmeasured_time" in codes:
+            parts.append(tr("測定できていない時間帯あり", "time not measured"))
+        if "soak.stopped_early" in codes:
+            parts.append(tr("測定が途中で停止", "measuring stopped early"))
         text = tr("結論: ", "Result: ") + tr("、", "; ").join(
-            parts or [str(status.value)]
+            parts or [status_word(status)]
         )
     return st.status(status, st.bold(f"{st.sym(status)} {text}"))
 
@@ -93,7 +138,7 @@ def render_soak_text(
     st = Style(color=color, unicode=unicode)
     now = rep.finished_at
     lines: List[str] = []
-    span = f"{_when(rep.started_at)} 〜 {hhmmss(rep.finished_at)}"
+    span = _span(rep)
     lines.append(
         st.bold(
             f"{st.rule} netdiag "
@@ -103,6 +148,7 @@ def render_soak_text(
         + f"  {span} ({fmt_secs(now - rep.started_at)})  PC: {rep.hostname}"
         + (tr("  ※途中で終了", "  (stopped early)") if rep.interrupted else "")
     )
+    lines.extend(st.dim(n) for n in _notes(rep))
     lines.append(_headline(rep, st))
     lines.append("")
     lines.append(st.bold(f"{st.bullet} " + tr("機器ごとの結果", "Per device")))
@@ -115,7 +161,7 @@ def render_soak_text(
             loss = f"0% (≤{upper:.2f}%)"
         rows.append(
             [
-                st.sym(t.status()),
+                st.sym(rep.device_status(t)),
                 truncate(t.name, 18),
                 t.address or t.device.host,
                 str(t.sent),
@@ -136,7 +182,7 @@ def render_soak_text(
     for t, r in zip(rep.tracks, rows):
         body = "  ".join(pad(r[i], widths[i]) for i in range(len(r))).rstrip()
         sym = r[0]
-        lines.append("  " + st.status(t.status(), sym) + body[len(sym) :])
+        lines.append("  " + st.status(rep.device_status(t), sym) + body[len(sym) :])
 
     incidents = rep.incidents
     if incidents:
@@ -147,7 +193,7 @@ def render_soak_text(
         kind_text = _kind_text()
         for i in incidents[:50]:
             lines.append(
-                f"  {hhmmss(i.start)}〜{hhmmss(i.end)} ({fmt_secs(i.end - i.start)})  "
+                f"  {rep.at(i.start)}〜{rep.at(i.end)} ({fmt_secs(i.end - i.start)})  "
                 f"[{kind_text[i.kind]}] {', '.join(i.devices)}"
             )
         if len(incidents) > 50:
@@ -214,10 +260,11 @@ def csv_rows(track: DeviceTrack, buckets: List[Bucket]) -> str:
     """CSV lines for some closed minutes of one device (for progressive files)."""
     buf = io.StringIO()
     w = csv.writer(buf, lineterminator="\r\n")
+    stamp = "%Y-%m-%d %H:%M" if track.bucket_s % 60 == 0 else "%Y-%m-%d %H:%M:%S"
     for b in buckets:
         row = {
             **b.to_dict(),
-            "time": time.strftime("%Y-%m-%d %H:%M", time.localtime(b.start)),
+            "time": time.strftime(stamp, time.localtime(b.start)),
             "name": excel_safe(track.name),
             "host": excel_safe(track.device.host),
         }
@@ -234,6 +281,8 @@ def render_soak_csv(rep: SoakReport) -> str:
 
 
 # -------------------------------------------------------------------------- HTML
+
+_HTML_INCIDENTS = 200
 
 
 def _cell_color(b: Optional[Bucket]) -> str:
@@ -259,7 +308,7 @@ def _cells_tip(name: str, cells, clock: str) -> str:
     tip = f"{when} {name}: "
     bs = [b for _s, b in cells if b is not None and b.sent]
     if not bs:
-        return tip + tr("データなし", "no data")
+        return tip + tr("測定なし", "not measured")
     sent, lost = sum(b.sent for b in bs), sum(b.lost for b in bs)
     pct = lost / sent * 100.0
     tip += tr(
@@ -277,7 +326,14 @@ def _cells_tip(name: str, cells, clock: str) -> str:
 
 
 def _heatmap(rep: SoakReport) -> str:
-    starts = sorted({b.start for t in rep.tracks for b in t.buckets.values()})
+    # Every cell of the run, so unmeasured time shows as grey, not as nothing.
+    size = rep.bucket_s
+    first = math.floor(rep.started_at / size) * size
+    n = max(0, math.ceil((rep.finished_at - first) / size))
+    starts = sorted(
+        {first + i * size for i in range(n)}
+        | {b.start for t in rep.tracks for b in t.buckets.values()}
+    )
     if not starts:
         return ""
     label_w, cell, row_h = 170, max(4, min(18, int(820 / max(1, len(starts))))), 20
@@ -285,9 +341,11 @@ def _heatmap(rep: SoakReport) -> str:
     height_px = 30 + row_h * len(rep.tracks)
     out = [
         f'<svg class="heat" viewBox="0 0 {width_px} {height_px}" width="{width_px}" '
-        f'height="{height_px}" role="img" aria-label="{html.escape(tr("分ごとの損失率", "loss per minute"))}">'
+        f'height="{height_px}" role="img" aria-label="{html.escape(_heat_title(rep))}">'
     ]
-    clock = "%H:%M:%S" if rep.bucket_s < 60 else "%H:%M"
+    clock = "%H:%M:%S" if rep.bucket_s % 60 else "%H:%M"
+    if rep.multi_day:
+        clock = "%m/%d " + clock
     step = max(1, len(starts) // 8)
     for i, s in enumerate(starts):
         if i % step == 0:
@@ -320,6 +378,11 @@ def _heatmap(rep: SoakReport) -> str:
     return "".join(out)
 
 
+def _heat_title(rep: SoakReport) -> str:
+    cell = _cell_text(rep.bucket_s)
+    return tr(f"{cell}ごとの損失率", f"Loss per {cell}")
+
+
 # Added to the shared report stylesheet (report/html.py): heatmap and findings.
 _SOAK_CSS = """
 :root { --h0:#2da44e; --l1:#d4a72c; --l2:#e16f24; --l3:#cf222e; --l4:#82071e; --nodata:#d0d7de; }
@@ -347,7 +410,7 @@ def render_soak_html(rep: SoakReport) -> str:
         loss = f"{t.loss_pct:.3f}%" + (
             f" (≤{upper:.3f}%)" if t.lost == 0 and upper is not None else ""
         )
-        s = t.status()
+        s = rep.device_status(t)
         rows.append(
             f"<tr class='{s.value}'><td class='st'>{esc(s.symbol)}</td><td>{esc(t.name)}</td>"
             f"<td class='num'>{esc(t.address or t.device.host)}</td><td class='num'>{t.sent}</td>"
@@ -359,12 +422,25 @@ def render_soak_html(rep: SoakReport) -> str:
         )
     head = _device_header(with_downtime=True)
     kind_text = _kind_text()
+    incidents = rep.incidents
     inc_rows = "".join(
-        f"<tr><td class='num'>{esc(hhmmss(i.start))}〜{esc(hhmmss(i.end))}</td>"
+        f"<tr><td class='num'>{esc(rep.at(i.start))}〜{esc(rep.at(i.end))}</td>"
         f"<td class='num'>{esc(fmt_secs(i.end - i.start))}</td><td>{esc(kind_text[i.kind])}</td>"
         f"<td>{esc(', '.join(i.devices))}</td></tr>"
-        for i in rep.incidents[:200]
+        for i in incidents[:_HTML_INCIDENTS]
     )
+    if len(incidents) > _HTML_INCIDENTS:
+        more = len(incidents) - _HTML_INCIDENTS
+        inc_rows += (
+            "<tr><td colspan='4' class='meta'>"
+            + esc(
+                tr(
+                    f"…ほか {more} 件（全件は --format json で出力できます）",
+                    f"… {more} more (--format json lists them all)",
+                )
+            )
+            + "</td></tr>"
+        )
     finds = "".join(
         f"<div class='find {f.status.value}'><h3>{esc(f.status.symbol)} {esc(f.subject)} — {esc(f.summary)}</h3>"
         + "".join(f"<p class='meta'>{esc(e)}</p>" for e in f.evidence)
@@ -376,22 +452,24 @@ def render_soak_html(rep: SoakReport) -> str:
         + "</div>"
         for f in rep.findings()
     )
+    cell = _cell_text(rep.bucket_s)
     legend = (
         "<p class='legend meta'>"
-        + tr("1マス = 1分：", "one cell = one minute: ")
+        + esc(tr(f"1マス = {cell}：", f"one cell = {cell}: "))
         + f"<span style='background:var(--h0)'></span>{tr('損失なし', 'no loss')}"
         + "<span style='background:var(--l1)'></span>&lt;1%"
         + "<span style='background:var(--l2)'></span>1–10%"
         + "<span style='background:var(--l3)'></span>10–50%"
         + "<span style='background:var(--l4)'></span>≥50%"
-        + f"<span style='background:var(--nodata)'></span>{tr('データなし', 'no data')}</p>"
+        + f"<span style='background:var(--nodata)'></span>{tr('測定なし', 'not measured')}</p>"
     )
     body = (
         f"<h1>netdiag {esc(tr('長時間測定レポート', 'long-duration test report'))}</h1>"
         f"<div class='meta'>PC: {esc(rep.hostname)} · {esc(_when(rep.started_at))} 〜 {esc(_when(rep.finished_at))}"
         f" ({esc(fmt_secs(now - rep.started_at))}) · netdiag {esc(__version__)}</div>"
-        f"<div class='verdict {status.value}'>{esc(verdict_text)}</div>"
-        f"<h2>{esc(tr('分ごとの損失率', 'Loss per minute'))}</h2>{_heatmap(rep)}{legend}"
+        + "".join(f"<p class='meta'>{esc(n)}</p>" for n in _notes(rep))
+        + f"<div class='verdict {status.value}'>{esc(verdict_text)}</div>"
+        f"<h2>{esc(_heat_title(rep))}</h2>{_heatmap(rep)}{legend}"
         f"<h2>{esc(tr('機器ごとの結果', 'Per device'))}</h2>"
         "<table><thead><tr>"
         + "".join(f"<th>{esc(h)}</th>" for h in head)

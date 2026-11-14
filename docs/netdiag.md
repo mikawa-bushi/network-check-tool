@@ -152,25 +152,50 @@ localised `summary`.
 (default every 0.2 s, 1 s timeout, ≤200 pps overall) and keeps per-device state
 with bounded memory, so it can run for a shift:
 
-- **Outages**: two or more consecutive losses (`--min-lost`) after a device has
-  replied once, with start time and length. Isolated single losses are counted
-  as sporadic loss instead.
-- **Correlation**: outages that overlap across devices are grouped into
-  incidents — *all* devices (≥80 % of those alive) → this PC's side (cable,
-  NIC, the switch next to the PC); *some* → a shared switch / cable run (the
-  groups of the device list are named); *single* → that device or its cable.
+- **Outages**: two or more consecutive losses (`--min-lost`), with start time
+  and length. A device that is down when the soak starts gets an outage from
+  its first request to its first reply; one that never replies is reported as
+  unreachable. Isolated single losses are counted as sporadic loss instead.
+- **Correlation**: outages that *start* together (within two ping intervals,
+  at least 1 s) are grouped into incidents. A long outage on one device does not
+  pull in drops elsewhere that merely happen while it lasts, and devices are
+  told apart by address, not by display name. The scope is judged against the
+  devices still answering at that moment: *all* (≥80 % of them) → this PC's
+  side (cable, NIC, the switch next to the PC); *some* → a shared switch /
+  cable run (the groups of the device list are named); *single* → that device
+  or its cable. With no other device answering (a one-device soak, or the
+  others down) the incident is *location unknown*
+  (`soak.outage_unlocated`): add a reference device on the same switch.
+- **Not measured**: a device that could not be pinged at all
+  (`soak.not_measured`), a stretch of more than 5 s (more with a long
+  `--interval` or `--timeout`) in which a device got no
+  request (the PC slept, netdiag was frozen or paused; `soak.unmeasured_time`)
+  and a measurement that stopped before the planned end, with the reason
+  (`soak.stopped_early`), make the result *not measured* (exit 3) unless an
+  outage already gives 1. The heatmap draws such time grey.
 - **This PC**: NIC error counters that grew, and on Linux link drops
   (`carrier_changes`), are put on the same timeline (per `--bucket`). On
   Windows/macOS a drop of the PC's own link shows up as an *all devices*
   incident, which already points at this PC's side.
-- **Live**: outage start/end lines on stderr as they happen; per-minute
-  summaries (`--bucket`). Ctrl-C stops and still writes the report.
-- **Output**: text, JSON (`kind: "soak"`), CSV (one row per device and minute,
+- **Time**: the run is timed on a steady clock that keeps counting while the
+  PC sleeps, so a clock change (NTP, w32time) neither ends nor stretches it.
+  Times shown follow the PC clock at the start; the report notes a clock
+  change. A run over midnight shows dates.
+- **Live**: outage start/end lines on stderr as they happen; one line per
+  completed cell (`--bucket`), labelled with the cell's start. Ctrl-C stops,
+  says so, and still writes the report; a second Ctrl-C does not lose it.
+- **Output**: text, JSON (`kind: "soak"`), CSV (one row per device and cell,
   written progressively with `-o x.csv` so a crash keeps the data) and a
-  self-contained HTML heatmap (device × time).
+  self-contained HTML heatmap (device × time). If the CSV cannot be appended
+  to (open in Excel), the soak warns and keeps measuring. If the report
+  cannot be saved at the end, it is saved next to it under a timestamped name
+  (or printed) and the exit code is 4. `-o` naming a device list being read,
+  or a path that cannot be written, is refused before measuring starts.
 
 Exit codes: 0 clean, 1 outages, 2 sporadic loss only, 3 a device or a time
-window was not measured; 4 and 5 as for `check`. A soak stopped with Ctrl-C
+window was not measured; 4 a usage error (including an `--interval`,
+`--timeout` or `--bucket` that is not a positive number) or a report that
+could not be saved where asked; 5 as for `check`. A soak stopped with Ctrl-C
 still reports and exits with its verdict.
 
 ## Field data (`netdiag collect`)
