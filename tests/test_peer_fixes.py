@@ -11,7 +11,7 @@ import pytest
 
 from netdiag.cli import main
 from netdiag.peer import PeerServer, measure_loss_jitter, measure_throughput
-from netdiag.peer.server import REPLY, REQUEST, reply_for
+from netdiag.peer.server import REPLY, REQUEST, expected_reply, reply_for
 
 
 def _free_port():
@@ -60,8 +60,11 @@ def test_server_answers_only_well_formed_requests(server):
     for junk in (b"hello", b"0:1731500000.0", REPLY + b"\x00" * 12, _request() + b"x"):
         c.sendto(junk, ("127.0.0.1", srv.port))
         assert _recv_or_none(c) is None, junk
-    c.sendto(_request(7, b"abcdefgh"), ("127.0.0.1", srv.port))
-    assert c.recv(2048) == REPLY + (7).to_bytes(4, "big") + b"abcdefgh"
+    request = _request(1026, b"ATTACKER")
+    c.sendto(request, ("127.0.0.1", srv.port))
+    reply = c.recv(2048)
+    assert len(reply) == len(request) and reply.startswith(REPLY)
+    assert request[len(REQUEST) :] not in reply and b"ATTACK" not in reply
 
 
 def test_two_servers_cannot_loop(server):
@@ -78,15 +81,17 @@ def test_server_never_answers_a_privileged_or_its_own_port():
     assert reply_for(_request(), ("192.0.2.5", 50000), own_port=47600) is not None
 
 
-def test_server_bounds_its_reply_rate(server):
+def test_server_sends_at_most_its_rate_in_any_second(server):
     srv = server(reply_rate=20)
     c = _udp_client()
-    for seq in range(200):
-        c.sendto(_request(seq), ("127.0.0.1", srv.port))
+    for _ in range(2):
+        for seq in range(100):
+            c.sendto(_request(seq), ("127.0.0.1", srv.port))
+        time.sleep(0.4)
     got = 0
     while _recv_or_none(c) is not None:
         got += 1
-    assert 10 <= got <= 30
+    assert 10 <= got <= 20
 
 
 def test_udp_echo_survives_a_connection_reset(server):
@@ -144,10 +149,6 @@ def _fake_echo(behaviour):
     return sock.getsockname()[1], stop
 
 
-def _as_new_server(data):
-    return REPLY + data[len(REQUEST) :]
-
-
 def test_one_late_reply_does_not_make_later_probes_count_as_lost():
     first = []
 
@@ -156,8 +157,8 @@ def test_one_late_reply_does_not_make_later_probes_count_as_lost():
             first.append(data)
             return
         if n == 3:  # probe 0 timed out long ago; its reply lands just before 3's
-            sock.sendto(_as_new_server(first[0]), addr)
-        sock.sendto(_as_new_server(data), addr)
+            sock.sendto(expected_reply(first[0]), addr)
+        sock.sendto(expected_reply(data), addr)
 
     port, stop = _fake_echo(late_first)
     rep = measure_loss_jitter("127.0.0.1", port, count=10, interval=0.0, timeout=0.2)
@@ -167,8 +168,8 @@ def test_one_late_reply_does_not_make_later_probes_count_as_lost():
 
 def test_duplicated_replies_do_not_make_later_probes_count_as_lost():
     def twice(sock, data, addr, n):
-        sock.sendto(_as_new_server(data), addr)
-        sock.sendto(_as_new_server(data), addr)
+        sock.sendto(expected_reply(data), addr)
+        sock.sendto(expected_reply(data), addr)
 
     port, stop = _fake_echo(twice)
     rep = measure_loss_jitter("127.0.0.1", port, count=10, interval=0.0, timeout=0.2)

@@ -99,7 +99,7 @@ from before proves nothing — the device may have died seconds ago.
 | `netdiag explain [PROBE]` | With no `PROBE`, every check with its layer; with one, what it does, the manual commands, and the next steps |
 | `netdiag scenario FILE` | A YAML/JSON/TOML scenario: `checks` (host probes), `devices` (device list), `config`; runs and exits like `check` |
 | `netdiag snapshot save/list/diff [NAME]` | Save the network configuration while it works; diff later ("what changed?"). Windows, macOS and Linux |
-| `netdiag peer serve` / `peer test ADDR` | Two-host LAN quality (loss/jitter/throughput) for closed networks; the `serve` end must be 0.6.0 or later |
+| `netdiag peer serve` / `peer test ADDR` | Two-host LAN quality (loss/jitter/throughput) for closed networks; the `test` end must be 0.6.0 or later |
 | `netdiag watch` | Always-on: light loop, alerts only on state change (`--no-internet` on closed networks), webhook/Slack/desktop sinks; records every sweep to the history DB (`--no-save` to skip) |
 | `netdiag status` / `history` / `prune` | Watcher state, baseline & change-point analysis, retention |
 | `netdiag service print/install` | systemd unit for `watch` |
@@ -271,15 +271,21 @@ entry counts only when the same address answers with another MAC. Exit codes:
 0.6.0, a bad name, or an unsupported OS. `snapshot save` exits 3 and saves
 nothing when it could not read this PC's configuration.
 
-`netdiag peer serve` answers only netdiag's own 16-byte requests, never a
-reply, never a privileged or its own source port, and at most 200 replies a
-second, so it cannot be used to reflect packets at a PLC. It refuses to start
+`netdiag peer serve` answers only netdiag's own 16-byte requests. It never
+answers a reply, a privileged source port or its own port, so two responders
+cannot loop. Each reply is a fixed-format 16 bytes, no larger than the
+request: a marker and a digest of the request, none of the request's own
+bytes. It sends at most 200 replies in any second. A request with a forged
+source address still gets its reply sent to that address, so run
+`peer serve` only while you test. It listens on every adapter so that the
+other PC can reach it; `--host` limits it to one address. It refuses to start
 (exit 4) when it cannot listen. `netdiag peer test ADDR` matches each reply to
 its request, so late or duplicated replies do not count as loss. With no reply
 at all it says whether nothing listens there or nothing answered, and exits 3
 instead of reporting 100 % loss; a throughput test that cannot connect also
-exits 3. A 0.6.0 `peer test` also works against a 0.5
-`peer serve`; a 0.5 `peer test` gets no reply from a 0.6.0 `peer serve`.
+exits 3. A 0.6.0 `peer test` also works against a 0.5 `peer serve`; a 0.5
+`peer test` gets no reply from a 0.6.0 `peer serve`, so upgrade the `test`
+end too.
 
 ## Always-on watching (`netdiag watch`)
 

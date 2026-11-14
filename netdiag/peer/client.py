@@ -13,7 +13,7 @@ import time
 from dataclasses import dataclass
 from typing import List, Optional
 
-from .server import _BODY, _CHUNK, DEFAULT_PORT, REPLY, REQUEST
+from .server import _BODY, _CHUNK, DEFAULT_PORT, REQUEST, expected_reply
 
 
 @dataclass
@@ -45,7 +45,7 @@ def _wait_for_reply(sock: socket.socket, request: bytes, deadline: float) -> boo
     so one slow reply never shifts every later probe onto the wrong answer.
     A 0.5 responder echoes the request unchanged; that counts as a reply too.
     """
-    expected = (REPLY + request[len(REQUEST) :], request)
+    expected = (expected_reply(request), request)
     while True:
         remaining = deadline - time.perf_counter()
         if remaining <= 0:

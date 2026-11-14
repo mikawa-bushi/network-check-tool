@@ -22,11 +22,21 @@ def peer():
 
 @peer.command("serve")
 @click.option(
-    "--host", default="0.0.0.0", help=H("待ち受けアドレス", "Address to listen on.")
+    "--host",
+    default="0.0.0.0",
+    help=H(
+        "待ち受けアドレス（既定: すべてのアダプター）",
+        "Address to listen on (default: every adapter).",
+    ),
 )
 @click.option("--port", default=DEFAULT_PORT, type=_PORT)
 def peer_serve(host, port):
-    """相手側で応答役を起動（Ctrl-C で停止）/ Run the responder on the other end."""
+    """相手側で応答役を起動（Ctrl-C で停止）/ Run the responder on the other end.
+
+    送信元を偽った要求にも16バイトの応答を返すため、測定中だけ起動してください。
+
+    It answers a request with a forged source too, so run it only while testing.
+    """
     from ..peer import PeerServer
 
     server = PeerServer(host, port)
@@ -62,11 +72,11 @@ def _no_reply_message(address: str, port: int, refused: bool) -> str:
         )
     return tr(
         f"? {address}:{port} から応答がありません。次のどれかです: 相手のPCで "
-        "netdiag peer serve（0.6.0 以降）が動いていない、相手のファイアウォールが "
+        "netdiag peer serve が動いていない、相手のファイアウォールが "
         f"UDP {port} を止めている、LAN の経路が切れている。経路は「netdiag ping {address}」で確認できます。",
-        f"? no reply from {address}:{port}. Either 'netdiag peer serve' (0.6.0 or "
-        f"later) is not running there, its firewall blocks UDP {port}, or the LAN "
-        f"path is down. Check the path with 'netdiag ping {address}'.",
+        f"? no reply from {address}:{port}. Either 'netdiag peer serve' is not "
+        f"running there, its firewall blocks UDP {port}, or the LAN path is down. "
+        f"Check the path with 'netdiag ping {address}'.",
     )
 
 
