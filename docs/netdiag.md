@@ -248,7 +248,10 @@ UTF-8, Shift_JIS or UTF-16 (what Notepad and Excel save). Top-level keys are
 is a list of check names or of mappings with `probe` and the check's own
 settings (`target`, `resolver`, `url`, …) and an optional `label`, shown as
 the check's title. A check may appear more than once with different
-settings; each one runs. In YAML, `0012` stays the text `0012`. A file
+settings; each one runs. Targets in `config.tcp_targets` go to a `tcp`
+check that has no `target`; when every `tcp` check has one, they join the
+first, and no target is checked twice. In YAML, `0012` stays the text
+`0012`. A file
 netdiag cannot use (a syntax error, an unknown key or check name, `checks`
 that is not a list, a bad device) exits 4 with the file name and the problem.
 The exit codes are those of `check`.

@@ -1,12 +1,14 @@
 """``netdiag scenario``: every check in the file runs, bad files exit 4.
 
-The host network and the probes are fakes; the scenario loader, the runner and
-the CLI are real.
+The host network and the probes are fakes, except the TCP check, which
+connects to local listeners; the scenario loader, the runner and the CLI are
+real.
 """
 
 import csv
 import io
 import json
+import socket
 import sys
 
 import pytest
@@ -84,6 +86,48 @@ def test_the_same_check_twice_runs_both_with_their_own_settings(tmp_path, capsys
     assert code == 0, out
     assert "echo 192.0.2.1 ok" in out
     assert "echo 192.0.2.2 ok" in out
+
+
+@pytest.fixture
+def listeners():
+    socks = []
+    for _ in range(2):
+        s = socket.socket()
+        s.bind(("127.0.0.1", 0))
+        s.listen()
+        socks.append(s)
+    yield [f"127.0.0.1:{s.getsockname()[1]}" for s in socks]
+    for s in socks:
+        s.close()
+
+
+def _tcp_targets_checked(capsys, sc):
+    code, out, err = _run(capsys, sc, "--format", "json")
+    rows = [
+        row["target"]
+        for r in json.loads(out)["host"]["results"]
+        if r["name"] == "tcp"
+        for row in r["detail"]["targets"]
+    ]
+    return code, rows
+
+
+@pytest.mark.parametrize(
+    "wide, own",
+    [([0], [1]), ([0, 1], [1]), ([0], [0])],
+    ids=["different", "overlapping", "same"],
+)
+def test_scenario_wide_tcp_targets_join_a_tcp_check_with_its_own_target(
+    tmp_path, capsys, listeners, wide, own
+):
+    scenario = {
+        "config": {"tcp_targets": [listeners[i] for i in wide]},
+        "checks": [{"probe": "tcp", "target": [listeners[i] for i in own]}],
+    }
+    sc = _write(tmp_path, "tcp.json", json.dumps(scenario))
+    code, checked = _tcp_targets_checked(capsys, sc)
+    assert code == 0
+    assert checked == list(dict.fromkeys(listeners[i] for i in wide + own))
 
 
 def test_a_failing_second_check_is_not_hidden_by_a_passing_first(tmp_path, capsys):

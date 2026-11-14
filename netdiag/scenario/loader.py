@@ -157,6 +157,28 @@ def _parse_check(n: int, item: Any, source: str) -> ScenarioCheck:
     )
 
 
+def _fold_tcp_targets(checks: List[ScenarioCheck], config: Dict[str, Any]) -> None:
+    """``config.tcp_targets`` and the ``tcp`` checks' targets are checked once each.
+
+    A ``tcp`` check without a target uses the scenario-wide list. When every
+    ``tcp`` check names its own targets, the scenario-wide ones join the
+    first check, so none is dropped and none is checked twice.
+    """
+    wide = config.get("tcp_targets")
+    if isinstance(wide, str):
+        wide = config["tcp_targets"] = [wide]
+    tcp = [c for c in checks if c.probe == "tcp"]
+    if not isinstance(wide, list) or not wide or not tcp:
+        return
+    if any("tcp_targets" not in c.config for c in tcp):
+        return
+    merged: List[Any] = []
+    for target in [*wide, *tcp[0].config["tcp_targets"]]:
+        if target not in merged:
+            merged.append(target)
+    tcp[0].config["tcp_targets"] = merged
+
+
 def parse_scenario(raw: Any, source: str = "scenario") -> Scenario:
     """Validate parsed file content into a :class:`Scenario` (InputError if unusable)."""
     if raw is None:
@@ -192,6 +214,7 @@ def parse_scenario(raw: Any, source: str = "scenario") -> Scenario:
             f"'config' must be a mapping (key: value), got a {_kind(config)}",
         )
     config = dict(config)
+    _fold_tcp_targets(checks, config)
     devices: List[Any] = []
     if raw.get("devices"):
         from ..inventory import InventoryError, parse_structured
