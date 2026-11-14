@@ -27,6 +27,7 @@ from .model import (
     Neighbor,
     Route,
     RouteDecision,
+    RouteRule,
     mac_is_local,
     normalize_mac,
 )
@@ -39,6 +40,7 @@ __all__ = [
     "Neighbor",
     "Route",
     "RouteDecision",
+    "RouteRule",
     "KIND_ETHERNET",
     "KIND_WIFI",
     "KIND_LOOPBACK",

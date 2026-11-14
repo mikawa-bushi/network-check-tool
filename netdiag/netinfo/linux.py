@@ -3,15 +3,19 @@
 ``ip -j`` gives structured data that does not depend on column layout or
 locale; sysfs adds what ``ip`` does not show (negotiated speed/duplex, error
 counters, whether a NIC is physical, Wi-Fi or virtual). A plain-text fallback
-covers old/BusyBox ``ip`` builds without ``-j``.
+covers old/BusyBox ``ip`` builds without ``-j``, and ``/sys`` plus ``/proc``
+cover systems without iproute2 at all (slim containers).
 """
 
 from __future__ import annotations
 
+import ipaddress
 import json
 import re
+import socket
+import struct
 from pathlib import Path
-from typing import Dict, List, Optional
+from typing import Dict, List, Optional, Tuple
 
 from ..core.util import have, run
 from .model import (
@@ -28,16 +32,21 @@ from .model import (
     NEIGH_REACHABLE,
     NEIGH_STALE,
     NEIGH_UNKNOWN,
+    NO_ARP_FLAGS,
     Address,
     HostNetwork,
     Interface,
     LinkStats,
     Neighbor,
     Route,
+    RouteRule,
     normalize_mac,
 )
 
 SYS_NET = Path("/sys/class/net")
+PROC_NET = Path("/proc/net")
+RESOLV_CONF = Path("/etc/resolv.conf")
+RESOLVED_CONF = Path("/run/systemd/resolve/resolv.conf")
 
 _NEIGH_STATES = {
     "REACHABLE": NEIGH_REACHABLE,
@@ -67,8 +76,8 @@ def _ip_json(*args: str) -> Optional[list]:
 
 def _read(path: Path) -> Optional[str]:
     try:
-        return path.read_text(encoding="utf-8").strip()
-    except (OSError, ValueError):
+        return path.read_text(encoding="utf-8", errors="replace").strip()
+    except OSError:
         return None
 
 
@@ -98,7 +107,7 @@ def read_link_stats(name: str, base: Path = SYS_NET) -> Optional[LinkStats]:
 
 
 def _kind(name: str, link_type: Optional[str], flags: List[str], base: Path) -> str:
-    if "LOOPBACK" in flags or link_type == "loopback":
+    if "LOOPBACK" in flags or link_type == "loopback" or name == "lo":
         return KIND_LOOPBACK
     d = base / name
     if (d / "wireless").exists() or (d / "phy80211").exists():
@@ -126,6 +135,60 @@ def _apply_sysfs(iface: Interface, base: Path = SYS_NET) -> None:
     iface.stats = read_link_stats(iface.name, base)
 
 
+_IFF_FLAGS = ((0x1, "UP"), (0x8, "LOOPBACK"), (0x10, "POINTOPOINT"), (0x80, "NOARP"))
+_ARPHRD = {"1": "ether", "512": "ppp", "772": "loopback", "65534": "none"}
+SIOCGIFADDR = 0x8915
+SIOCGIFNETMASK = 0x891B
+IFREQ_SIN_ADDR = slice(20, 24)  # ifr_name[16], then sockaddr_in's family, port
+RTF_UP = 0x1
+RTF_GATEWAY = 0x2
+ATF_COM = 0x2
+ATF_PERM = 0x4
+
+
+def _ioctl_ipv4(name: str) -> Optional[Address]:
+    """The first IPv4 address of *name*: the ioctl returns only one."""
+    import fcntl  # Unix only; this module is imported on every OS by the tests
+
+    req = struct.pack("256s", name.encode()[:15])
+    with socket.socket(socket.AF_INET, socket.SOCK_DGRAM) as s:
+        try:
+            ip = fcntl.ioctl(s.fileno(), SIOCGIFADDR, req)[IFREQ_SIN_ADDR]
+            mask = fcntl.ioctl(s.fileno(), SIOCGIFNETMASK, req)[IFREQ_SIN_ADDR]
+        except OSError:
+            return None
+    return Address(
+        ip=socket.inet_ntoa(ip), prefixlen=bin(int.from_bytes(mask, "big")).count("1")
+    )
+
+
+def read_sys_interfaces(base: Path = SYS_NET) -> List[Interface]:
+    """Interfaces from ``/sys/class/net`` when iproute2 is not installed."""
+    out: List[Interface] = []
+    for d in sorted(base.iterdir()) if base.is_dir() else []:
+        try:
+            bits = int(_read(d / "flags") or "0", 16)
+        except ValueError:
+            bits = 0
+        flags = [name for bit, name in _IFF_FLAGS if bits & bit]
+        iface = Interface(
+            name=d.name,
+            index=_read_int(d / "ifindex"),
+            mac=normalize_mac(_read(d / "address")),
+            admin_up="UP" in flags,
+            up="UP" in flags and _read(d / "operstate") in ("up", "unknown"),
+            mtu=_read_int(d / "mtu"),
+            kind=_kind(d.name, _ARPHRD.get(_read(d / "type") or ""), flags, base),
+            arp=not NO_ARP_FLAGS & set(flags),
+        )
+        addr = _ioctl_ipv4(d.name)
+        if addr is not None:
+            iface.addresses.append(addr)
+        _apply_sysfs(iface, base)
+        out.append(iface)
+    return out
+
+
 # --------------------------------------------------------------------------- parse
 
 
@@ -145,6 +208,7 @@ def parse_addr_json(data: list, base: Path = SYS_NET) -> List[Interface]:
             # UNKNOWN is what loopback/tun report while working; trust LOWER_UP.
             up="LOWER_UP" in flags and oper in ("UP", "UNKNOWN"),
             mtu=rec.get("mtu"),
+            arp=not NO_ARP_FLAGS & set(flags),
         )
         iface.kind = _kind(name, rec.get("link_type"), flags, base)
         for a in rec.get("addr_info", []):
@@ -171,11 +235,16 @@ def parse_addr_json(data: list, base: Path = SYS_NET) -> List[Interface]:
     return out
 
 
+# Route types that carry no traffic to a target (the kernel's local table, and
+# "throw", which hands the lookup to the next rule).
+_NOT_FORWARDING = {"local", "broadcast", "multicast", "anycast", "throw", "nat"}
+
+
 def parse_route_json(data: list) -> List[Route]:
     routes: List[Route] = []
     for rec in data:
         dst = rec.get("dst")
-        if not dst:
+        if not dst or rec.get("type") in _NOT_FORWARDING:
             continue
         if dst == "default":
             dst = "0.0.0.0/0"
@@ -183,15 +252,68 @@ def parse_route_json(data: list) -> List[Route]:
             dst = f"{dst}/32"
         if ":" in dst:
             continue  # IPv4 table only
-        routes.append(
-            Route(
-                destination=dst,
-                gateway=rec.get("gateway"),
-                interface=rec.get("dev"),
-                metric=rec.get("metric"),
+        # A multipath (ECMP) route lists its gateways under "nexthops".
+        for hop in rec.get("nexthops") or [rec]:
+            routes.append(
+                Route(
+                    destination=dst,
+                    gateway=hop.get("gateway"),
+                    interface=hop.get("dev"),
+                    metric=rec.get("metric", 0),  # iproute2 omits a metric of 0
+                    table=str(rec.get("table", "main")),
+                )
+            )
+    return routes
+
+
+_SKIPPED_RULE_SELECTORS = (
+    "iif",
+    "oif",
+    "l3mdev",
+    "uid",
+    "ipproto",
+    "sport",
+    "dport",
+    "tos",
+    "dscp",
+    "flowlabel",
+    "tun_id",
+)
+
+
+def _matches_unmarked(rec: dict) -> bool:
+    """Does the rule select packets without a firewall mark, as netdiag sends?"""
+    matches = int(str(rec.get("fwmark", "0")), 16) == 0
+    return not matches if "not" in rec else matches
+
+
+def parse_rule_json(data: list) -> List[RouteRule]:
+    """``ip -j rule show``: the lookups this PC's own traffic goes through, in order."""
+    out: List[RouteRule] = []
+    for rec in sorted(data, key=lambda r: r.get("priority", 0)):
+        if not rec.get("table") or rec.get("src", "all") != "all":
+            continue
+        if any(key.startswith(_SKIPPED_RULE_SELECTORS) for key in rec):
+            continue
+        try:
+            if not _matches_unmarked(rec):
+                continue
+            dst = rec.get("dst", "all")
+            destination = (
+                None
+                if dst == "all"
+                else str(ipaddress.ip_network(f"{dst}/{rec.get('dstlen', 32)}", False))
+            )
+        except ValueError:
+            continue
+        out.append(
+            RouteRule(
+                table=str(rec["table"]),
+                destination=destination,
+                suppress_prefixlength=int(rec.get("suppress_prefixlen", -1)),
             )
         )
-    return routes
+    return out
 
 
 def parse_neigh_json(data: list) -> List[Neighbor]:
@@ -224,9 +346,12 @@ def parse_neigh_json(data: list) -> List[Neighbor]:
 _ADDR_TEXT_RE = re.compile(r"^\d+:\s+(\S+)\s+(inet6?)\s+(\S+)")
 
 
-def parse_addr_text(addr_text: str, link_text: str = "") -> List[Interface]:
+def parse_addr_text(
+    addr_text: str, link_text: str = "", base: Path = SYS_NET
+) -> List[Interface]:
     """Fallback for ``ip -o addr show`` / ``ip -o link show`` text output."""
     by_name: Dict[str, Interface] = {}
+    links: Dict[str, Tuple[Optional[str], List[str]]] = {}
     for line in link_text.splitlines():
         parts = line.split()
         if len(parts) < 2:
@@ -235,51 +360,114 @@ def parse_addr_text(addr_text: str, link_text: str = "") -> List[Interface]:
         iface = by_name.setdefault(name, Interface(name=name))
         iface.up = "LOWER_UP" in line or "state UP" in line
         iface.admin_up = "<" in line and ",UP" in line or "<UP" in line
-        if "LOOPBACK" in line:
-            iface.kind = KIND_LOOPBACK
-        m = re.search(r"link/\S+\s+([0-9a-f:]{17})", line)
-        if m:
-            iface.mac = normalize_mac(m.group(1))
+        m = re.search(r"<([^>]*)>", line)
+        flags = m.group(1).split(",") if m else []
+        iface.arp = not NO_ARP_FLAGS & set(flags)
+        m = re.search(r"link/(\S+)(?:\s+([0-9a-f:]{17}))?", line)
+        links[name] = (m.group(1) if m else None, flags)
+        if m and m.group(2):
+            iface.mac = normalize_mac(m.group(2))
     for line in addr_text.splitlines():
         m = _ADDR_TEXT_RE.match(line)
         if not m:
             continue
         name, fam, cidr = m.groups()
         iface = by_name.setdefault(name, Interface(name=name))
-        if name == "lo":
-            iface.kind = KIND_LOOPBACK
         ip, _, plen = cidr.partition("/")
         iface.addresses.append(
             Address(ip=ip, prefixlen=int(plen or 32), family=6 if fam == "inet6" else 4)
         )
         if not link_text:
             iface.up = True  # no link info: assume an addressed NIC is usable
+    for iface in by_name.values():
+        iface.kind = _kind(iface.name, *links.get(iface.name, (None, [])), base)
     return list(by_name.values())
+
+
+def _word_after(parts: List[str], key: str) -> Optional[str]:
+    return parts[parts.index(key) + 1] if key in parts[:-1] else None
 
 
 def parse_route_text(text: str) -> List[Route]:
     routes: List[Route] = []
+    head: Optional[Route] = None
     for line in text.splitlines():
         parts = line.split()
         if not parts:
+            continue
+        if parts[0] == "nexthop" and head is not None:
+            routes.append(
+                Route(
+                    destination=head.destination,
+                    gateway=_word_after(parts, "via"),
+                    interface=_word_after(parts, "dev"),
+                    metric=head.metric,
+                )
+            )
             continue
         dst = parts[0]
         if dst == "default":
             dst = "0.0.0.0/0"
         elif "/" not in dst:
             dst = f"{dst}/32"
-        r = Route(destination=dst)
-        if "via" in parts:
-            r.gateway = parts[parts.index("via") + 1]
-        if "dev" in parts:
-            r.interface = parts[parts.index("dev") + 1]
-        if "metric" in parts:
-            try:
-                r.metric = int(parts[parts.index("metric") + 1])
-            except (ValueError, IndexError):
-                pass
-        routes.append(r)
+        metric = _word_after(parts, "metric")
+        head = Route(
+            destination=dst,
+            gateway=_word_after(parts, "via"),
+            interface=_word_after(parts, "dev"),
+            metric=int(metric) if metric and metric.isdigit() else 0,
+        )
+        if head.gateway or head.interface:  # else its nexthop lines follow
+            routes.append(head)
     return routes
+
+
+def _proc_ip(word: str) -> str:
+    """``010200C0`` -> ``192.0.2.1`` on x86: /proc prints addresses in host order."""
+    return socket.inet_ntoa(struct.pack("=I", int(word, 16)))
+
+
+def parse_proc_route(text: str) -> List[Route]:
+    """``/proc/net/route`` (the main table) when iproute2 is not installed."""
+    routes: List[Route] = []
+    for line in text.splitlines()[1:]:
+        f = line.split()
+        try:
+            flags, metric, mask = int(f[3], 16), int(f[6]), int(f[7], 16)
+            dst, gw = _proc_ip(f[1]), _proc_ip(f[2])
+        except (IndexError, ValueError, struct.error):
+            continue
+        if not flags & RTF_UP:
+            continue
+        routes.append(
+            Route(
+                destination=f"{dst}/{bin(mask).count('1')}",
+                gateway=gw if flags & RTF_GATEWAY else None,
+                interface=None if f[0] == "*" else f[0],
+                metric=metric,
+            )
+        )
+    return routes
+
+
+def parse_proc_arp(text: str) -> List[Neighbor]:
+    """``/proc/net/arp`` when iproute2 is not installed (no freshness)."""
+    out: List[Neighbor] = []
+    for line in text.splitlines()[1:]:
+        f = line.split()
+        if len(f) < 6:
+            continue
+        try:
+            flags = int(f[2], 16)
+        except ValueError:
+            continue
+        mac = normalize_mac(f[3])
+        if not flags & ATF_COM or mac == "00:00:00:00:00:00":
+            state, mac = NEIGH_INCOMPLETE, None
+        else:
+            state = NEIGH_PERMANENT if flags & ATF_PERM else NEIGH_STALE
+        out.append(Neighbor(ip=f[0], mac=mac, state=state, interface=f[5]))
+    return out
 
 
 def parse_neigh_text(text: str) -> List[Neighbor]:
@@ -312,65 +500,92 @@ def parse_resolv_conf(text: str) -> List[str]:
 
 
 def resolvers() -> List[str]:
-    servers = parse_resolv_conf(_read(Path("/etc/resolv.conf")) or "")
+    servers = parse_resolv_conf(_read(RESOLV_CONF) or "")
     if servers and all(s.startswith("127.0.0.53") for s in servers):
         # systemd-resolved stub: report the real upstream servers it forwards to.
-        upstream = parse_resolv_conf(
-            _read(Path("/run/systemd/resolve/resolv.conf")) or ""
-        )
+        upstream = parse_resolv_conf(_read(RESOLVED_CONF) or "")
         if upstream:
             return upstream
     return servers
 
 
-def collect() -> HostNetwork:
-    hn = HostNetwork(source="linux")
-    if not have("ip"):
-        hn.errors.append("'ip' command not found (install iproute2)")
-        hn.resolvers = resolvers()
-        return hn
-    addr = _ip_json("addr", "show")
-    if addr is not None:
-        hn.interfaces = parse_addr_json(addr)
-        hn.source = "linux:ip-json"
-    else:
+def _interfaces() -> Tuple[List[Interface], str]:
+    if have("ip"):
+        addr = _ip_json("addr", "show")
+        if addr is not None:
+            return parse_addr_json(addr, SYS_NET), "linux:ip-json"
         a = run(["ip", "-o", "addr", "show"], timeout=8)
-        link = run(["ip", "-o", "link", "show"], timeout=8)
-        hn.interfaces = parse_addr_text(a.stdout, link.stdout if link.ok else "")
-        for iface in hn.interfaces:
-            _apply_sysfs(iface)
-        hn.source = "linux:ip-text"
-    route = _ip_json("route", "show")
-    if route is not None:
-        hn.routes = parse_route_json(route)
+        if a.ok:
+            link = run(["ip", "-o", "link", "show"], timeout=8)
+            ifaces = parse_addr_text(a.stdout, link.stdout if link.ok else "", SYS_NET)
+            for iface in ifaces:
+                _apply_sysfs(iface, SYS_NET)
+            return ifaces, "linux:ip-text"
+    return read_sys_interfaces(SYS_NET), "linux:sysfs"
+
+
+def _routes() -> Tuple[Optional[List[Route]], List[RouteRule]]:
+    if have("ip"):
+        rules = _ip_json("-4", "rule", "show")
+        if rules is not None:
+            data = _ip_json("-4", "route", "show", "table", "all")
+            if data is not None:
+                return parse_route_json(data), (
+                    parse_rule_json(rules) or [RouteRule(table="main")]
+                )
+        data = _ip_json("route", "show")
+        if data is not None:
+            return parse_route_json(data), []
+        res = run(["ip", "route", "show"], timeout=8)
+        if res.ok:
+            return parse_route_text(res.stdout), []
+    text = _read(PROC_NET / "route")
+    return (parse_proc_route(text) if text is not None else None), []
+
+
+def collect() -> HostNetwork:
+    interfaces, source = _interfaces()
+    hn = HostNetwork(interfaces=interfaces, source=source, resolvers=resolvers())
+    if not interfaces:
+        hn.errors.append(
+            "could not read the network interfaces ('ip' failed and "
+            "/sys/class/net is unreadable)"
+        )
+    routes, hn.rules = _routes()
+    if routes is None:
+        hn.errors.append(
+            "could not read the routing table ('ip' failed and /proc/net/route "
+            "is unreadable)"
+        )
     else:
-        hn.routes = parse_route_text(run(["ip", "route", "show"], timeout=8).stdout)
-    hn.resolvers = resolvers()
+        hn.routes = routes
     return hn
 
 
 def neighbors() -> List[Neighbor]:
-    if not have("ip"):
-        return []
-    data = _ip_json("-s", "neigh", "show")
-    if data is not None:
-        return parse_neigh_json(data)
-    return parse_neigh_text(run(["ip", "neigh", "show"], timeout=8).stdout)
+    if have("ip"):
+        data = _ip_json("-s", "neigh", "show")
+        if data is not None:
+            return parse_neigh_json(data)
+        res = run(["ip", "neigh", "show"], timeout=8)
+        if res.ok:
+            return parse_neigh_text(res.stdout)
+    return parse_proc_arp(_read(PROC_NET / "arp") or "")
 
 
 def neighbor(ip: str) -> Optional[Neighbor]:
-    if not have("ip"):
-        return None
-    data = _ip_json("-s", "neigh", "show", "to", ip)
-    found = (
-        parse_neigh_json(data)
-        if data is not None
-        else parse_neigh_text(run(["ip", "neigh", "show", "to", ip], timeout=5).stdout)
-    )
-    for n in found:
-        if n.ip == ip:
-            return n
-    return None
+    if have("ip"):
+        data = _ip_json("-s", "neigh", "show", "to", ip)
+        found = (
+            parse_neigh_json(data)
+            if data is not None
+            else parse_neigh_text(
+                run(["ip", "neigh", "show", "to", ip], timeout=5).stdout
+            )
+        )
+    else:
+        found = parse_proc_arp(_read(PROC_NET / "arp") or "")
+    return next((n for n in found if n.ip == ip), None)
 
 
 def link_stats() -> Dict[str, LinkStats]:
