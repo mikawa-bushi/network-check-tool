@@ -183,6 +183,35 @@ def test_no_host_with_devices_checks_only_the_devices(run):
     assert [d.host for d in run.seen["devices"]] == ["192.0.2.10"]
 
 
+# ------------------------------------------------------ zero-padded addresses
+
+
+def test_a_zero_padded_external_ip_is_read_as_decimal(run):
+    code, _, _ = run("check", "--external-ip", "192.000.002.010")
+    assert code == 0 and run.seen["config"]["external_ip"] == "192.0.2.10"
+
+
+def test_an_external_ip_that_is_not_an_address_is_a_usage_error(run):
+    code, _, err = run("check", "--external-ip", "192.0.2")
+    assert code == 4 and "config" not in run.seen
+    assert "not a valid IPv4 address" in err
+
+
+def test_ping_reads_a_zero_padded_address_as_decimal(run, monkeypatch):
+    import netdiag.measure as measure
+
+    pinged = []
+
+    def ping(host, **kw):
+        pinged.append(host)
+        return PingStats(target=host, sent=5, received=5, rtts_ms=[0.4] * 5)
+
+    monkeypatch.setattr(measure, "ping", ping)
+    code, out, _ = run("ping", "127.000.000.010")
+    assert (code, pinged) == (0, ["127.0.0.10"])
+    assert "127.0.0.10:" in out
+
+
 # --------------------------------------------------------------------- --lang
 
 

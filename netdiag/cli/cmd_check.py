@@ -13,6 +13,7 @@ from ..inventory import (
     Device,
     InventoryError,
     load_devices,
+    normalize_host,
     parse_ports,
     parse_target_spec,
 )
@@ -61,6 +62,17 @@ def _collect_devices(targets, device_files, ports) -> List[Device]:
             if p not in d.ports:
                 d.ports.append(p)
     return devices
+
+
+def _host(ctx: click.Context, param: click.Parameter, value):
+    """A host from the command line, read like a ledger cell: ``192.168.001.010``
+    is ``192.168.1.10``, not the octal address the OS resolver would make of it."""
+    if value is None:
+        return None
+    try:
+        return normalize_host(value)
+    except InventoryError as e:
+        raise click.BadParameter(str(e)) from e
 
 
 _COUNT = click.IntRange(min=1)
@@ -166,6 +178,7 @@ Exit codes:
 )
 @click.option(
     "--external-ip",
+    callback=_host,
     help=H(
         "外部到達確認に使うIP（指定すると --internet）",
         "Off-LAN IP for the reachability check (implies --internet).",
@@ -345,7 +358,7 @@ def check(
 
 
 @cli.command()
-@click.argument("host")
+@click.argument("host", callback=_host)
 @click.option(
     "--count", "-c", type=_COUNT, default=10, help=H("回数", "Number of pings.")
 )
