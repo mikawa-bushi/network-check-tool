@@ -601,27 +601,6 @@ def test_a_device_down_from_the_start_gets_a_live_dropped_line(
     assert err.index("dropped") < err.index("PLC back")
 
 
-def test_live_lines_have_no_colour_codes_a_console_cannot_draw(
-    monkeypatch, quiet_pc, tmp_path
-):
-    import io
-
-    import netdiag.cli._app as app
-
-    class Console(io.StringIO):
-        def isatty(self):
-            return True
-
-    err = Console()
-    monkeypatch.setattr(sys, "stderr", err)
-    monkeypatch.setattr(app, "_WINDOWS", True)
-    monkeypatch.setattr(app, "_enable_vt", lambda stream: False)  # before Windows 10
-    stream = _stream(lost=lambda t, k: 5 <= k < 15)
-    args = ["192.0.2.1", "--duration", "2", "-o", str(tmp_path / "soak.json")]
-    assert _main(monkeypatch, args, stream) == 1
-    assert "dropped" in err.getvalue() and "\033[" not in err.getvalue()
-
-
 @pytest.mark.skipif(
     not hasattr(os, "geteuid") or os.geteuid() == 0, reason="needs file permissions"
 )
@@ -662,7 +641,6 @@ def test_live_line_names_the_cell_it_summarises(
     assert stamps and set(stamps) <= lossy
 
 
-@pytest.mark.skipif(sys.platform == "win32", reason="POSIX signals")
 def test_a_second_ctrl_c_does_not_lose_the_report(tmp_path):
     script = textwrap.dedent("""
         import sys, time

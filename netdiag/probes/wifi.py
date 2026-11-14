@@ -11,7 +11,7 @@ import re
 from typing import List, Optional
 
 from ..core import CheckResult, Context, Probe, register
-from ..core.util import have, is_linux, is_windows, run
+from ..core.util import have, is_linux, run
 from ..i18n import Text, tr
 
 _SIGNAL_RE = re.compile(r"signal:\s*(-?\d+)\s*dBm")
@@ -27,35 +27,6 @@ def _wifi_interfaces() -> List[str]:
     if not res.ok:
         return []
     return re.findall(r"Interface\s+(\S+)", res.stdout)
-
-
-def parse_netsh_wlan(text: str) -> List[dict]:
-    """``netsh wlan show interfaces`` in any language.
-
-    Keys are localised (シグナル / Signal), so values are recognised by shape:
-    the signal is the only ``NN%`` value, SSID/BSSID keep their English names,
-    and the receive/transmit rates are numeric lines after the radio type.
-    """
-    out: List[dict] = []
-    cur: Optional[dict] = None
-    for line in text.splitlines():
-        if ":" not in line:
-            continue
-        key, _, value = line.partition(":")
-        key, value = key.strip(), value.strip()
-        if key.lower() in ("name", "名前"):
-            cur = {"iface": value}
-            out.append(cur)
-            continue
-        if cur is None:
-            continue
-        if key == "SSID":
-            cur["ssid"] = value
-        elif re.fullmatch(r"\d{1,3}\s*%", value):
-            cur["quality_pct"] = int(value.rstrip("% "))
-        elif "(Mbps)" in key and re.fullmatch(r"[\d.]+", value):
-            cur.setdefault("rates", []).append(float(value))
-    return out
 
 
 def _no_link(name: str, idle: List[str]) -> CheckResult:
@@ -95,7 +66,7 @@ class WifiProbe(Probe):
         "A weak/degrading radio link causes intermittent loss that looks like an "
         "upstream fault. Reading L1 directly tells you it's the air, not the WAN.",
     )
-    manual_commands = ["netsh wlan show interfaces", "iw dev <iface> link"]
+    manual_commands = ["iw dev <iface> link"]
     means = Text(
         "無線LANの電波が弱く、通信が不安定になります。",
         "The Wi-Fi radio link is weak, so traffic over it is unreliable.",
@@ -108,14 +79,12 @@ class WifiProbe(Probe):
     ]
 
     def check(self, ctx: Context) -> CheckResult:
-        if is_windows():
-            return self._check_windows()
         if not is_linux():
             return CheckResult.skip(
                 self.name,
                 tr(
-                    "Wi-Fi確認はLinux/Windowsのみ対応",
-                    "Wi-Fi inspection only on Linux/Windows",
+                    "Wi-Fi確認はLinuxのみ対応",
+                    "Wi-Fi inspection only on Linux",
                 ),
                 code="wifi.unsupported",
             )
@@ -171,47 +140,5 @@ class WifiProbe(Probe):
             elif worst is None:
                 worst = CheckResult.ok(
                     self.name, desc, metrics=metrics, detail=detail, code="wifi.ok"
-                )
-        return worst or _no_link(self.name, idle)
-
-    def _check_windows(self) -> CheckResult:
-        res = run(["netsh", "wlan", "show", "interfaces"], timeout=10)
-        ifaces = parse_netsh_wlan(res.stdout) if res.ok else []
-        if not ifaces:
-            return CheckResult.skip(
-                self.name,
-                tr("無線LANアダプタなし", "no Wi-Fi interface present"),
-                code="wifi.none",
-            )
-        worst: Optional[CheckResult] = None
-        idle: List[str] = []
-        for w in ifaces:
-            if not w.get("ssid"):
-                idle.append(w["iface"])
-                continue
-            q = w.get("quality_pct")
-            metrics = {"associated": 1.0}
-            desc = f"{w['iface']} → {w['ssid']}"
-            if q is not None:
-                metrics["signal_pct"] = float(q)
-                dbm = q / 2 - 100  # Windows' quality% maps linearly to -100..-50 dBm
-                metrics["signal_dbm"] = dbm
-                desc += tr(
-                    f", 電波 {q}%（約 {dbm:.0f} dBm）",
-                    f", signal {q}% (~{dbm:.0f} dBm)",
-                )
-            if w.get("rates"):
-                desc += f", {max(w['rates']):g} Mbit/s"
-            if q is not None and q / 2 - 100 <= WEAK_DBM:
-                worst = CheckResult.warn(
-                    self.name,
-                    desc + tr("（電波が弱い）", " (weak signal)"),
-                    metrics=metrics,
-                    detail=w,
-                    code="wifi.weak",
-                )
-            elif worst is None:
-                worst = CheckResult.ok(
-                    self.name, desc, metrics=metrics, detail=w, code="wifi.ok"
                 )
         return worst or _no_link(self.name, idle)

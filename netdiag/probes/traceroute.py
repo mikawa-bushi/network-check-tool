@@ -13,7 +13,7 @@ import socket
 from typing import List, Optional, Set
 
 from ..core import CheckResult, Context, Probe, register
-from ..core.util import have, is_windows, run
+from ..core.util import have, run
 from ..i18n import Text, tr
 
 # Matches both traceroute ("  1  10.0.0.1 ...") and tracepath (" 1:  10.0.0.1 ...");
@@ -89,7 +89,6 @@ class TracerouteProbe(Probe):
         "stopping mid-path implicates a specific upstream/ISP segment.",
     )
     manual_commands = [
-        "tracert -d <host>",
         "traceroute -n -w2 -q1 <host>",
         "tracepath <host>",
     ]
@@ -107,9 +106,7 @@ class TracerouteProbe(Probe):
         host = ctx.get("trace_target", ctx.get("external_ip", "1.1.1.1"))
         max_hops = int(ctx.get("max_hops", 20))
 
-        if is_windows() and have("tracert"):
-            res = run(["tracert", "-d", "-h", str(max_hops), host], timeout=TIMEOUT_S)
-        elif have("traceroute"):
+        if have("traceroute"):
             res = run(
                 ["traceroute", "-n", "-w", "2", "-q", "1", "-m", str(max_hops), host],
                 timeout=TIMEOUT_S,
@@ -120,8 +117,8 @@ class TracerouteProbe(Probe):
             return CheckResult.unknown(
                 self.name,
                 tr(
-                    "traceroute/tracepath/tracert がありません",
-                    "no traceroute/tracepath/tracert command",
+                    "traceroute/tracepath がありません",
+                    "no traceroute/tracepath command",
                 ),
                 code="traceroute.no_tool",
             )

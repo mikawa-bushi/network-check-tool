@@ -8,14 +8,13 @@ don't, and the culprit change is usually right there.
 Each source is a set of stable lines: configuration only, never a counter, a
 lease time or a cache state, so two captures of an unchanged PC are equal.
 Most sources come from the same OS-neutral model ``netdiag check`` reads
-(:mod:`netdiag.netinfo`), so Windows, macOS and Linux are captured alike. A
+(:mod:`netdiag.netinfo`), so macOS and Linux are captured alike. A
 source that could not be read is ``None``: unknown, never "empty".
 """
 
 from __future__ import annotations
 
 import json
-import os
 import platform
 import re
 import time
@@ -30,7 +29,7 @@ from ..netinfo.model import KIND_WIFI, HostNetwork, mac_is_null
 
 FORMAT_VERSION = 2
 DEFAULT_DIR = Path.home() / ".netdiag" / "snapshots"
-SUPPORTED_OS = ("linux", "windows", "macos")
+SUPPORTED_OS = ("linux", "macos")
 
 # Sources derived from the netinfo model; compared only between captures made
 # by the same collector (a fallback collector sees less).
@@ -104,13 +103,6 @@ def _model_sources(hn: HostNetwork) -> Sources:
     sources["neighbours"] = _text(
         f"{n.ip} {n.mac}" for n in netinfo.neighbors() if not mac_is_null(n.mac)
     )
-    if "firewall" in hn.extras:
-        sources["firewall"] = _text(
-            f"{p.get('Name')}: enabled={p.get('Enabled')} "
-            f"inbound={p.get('DefaultInboundAction')} "
-            f"outbound={p.get('DefaultOutboundAction')}"
-            for p in hn.extras["firewall"] or []
-        )
     return sources
 
 
@@ -127,13 +119,6 @@ def _config_lines(text: Optional[str]) -> Optional[str]:
         return None
     lines = (" ".join(ln.split("#", 1)[0].split()) for ln in text.splitlines())
     return _text(ln for ln in lines if ln)
-
-
-def _hosts_path(kind: str) -> Path:
-    if kind == "windows":
-        root = os.environ.get("SystemRoot", r"C:\Windows")
-        return Path(root) / "System32" / "drivers" / "etc" / "hosts"
-    return Path("/etc/hosts")
 
 
 def _command(args: List[str]) -> Optional[str]:
@@ -175,14 +160,14 @@ def capture() -> Dict:
         raise InputError(
             tr(
                 f"snapshot はこのOS（{platform.system()}）では使えません"
-                "（Windows・macOS・Linux のみ）",
+                "（macOS・Linux のみ）",
                 f"snapshot is not supported on {platform.system()} "
-                "(Windows, macOS and Linux only)",
+                "(macOS and Linux only)",
             )
         )
     hn = netinfo.collect()
     sources = _model_sources(hn)
-    sources["hosts"] = _config_lines(_read(_hosts_path(kind)))
+    sources["hosts"] = _config_lines(_read(Path("/etc/hosts")))
     if kind == "linux":
         sources.update(_linux_sources())
     return {

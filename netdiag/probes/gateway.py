@@ -51,7 +51,7 @@ class GatewayProbe(Probe):
         "Splits LAN problems from WAN problems. Gateway down with NIC up means a "
         "local fault (router/cable/Wi-Fi); gateway up isolates the fault upstream.",
     )
-    manual_commands = ["route print -4 / ip route show default", "ping <gateway-ip>"]
+    manual_commands = ["ip route show default", "ping <gateway-ip>"]
 
     def check(self, ctx: Context) -> CheckResult:
         hn = ctx.network()
@@ -217,7 +217,7 @@ class GatewayProbe(Probe):
         gw = detail.get("gateway") or tr("<ゲートウェイIP>", "<gateway-ip>")
         iface = detail.get("interface") or tr("<アダプタ>", "<adapter>")
         others = ", ".join(detail.get("other_gateways") or [])
-        show_route = oscmd("ip route show default", "route print -4", "netstat -rn")
+        show_route = oscmd("ip route show default", "netstat -rn")
         if code == "gateway.none":
             return (
                 tr(
@@ -229,7 +229,7 @@ class GatewayProbe(Probe):
                         "LAN外（社内サーバー・インターネット）へ出る必要がある場合のみ、ネットワーク管理者に確認してゲートウェイを設定する",
                         "Only if the PC must reach other networks: ask the network admin for the gateway address",
                     ),
-                    oscmd("ip route", "route print -4", "netstat -rn"),
+                    oscmd("ip route", "netstat -rn"),
                 ],
             )
         if code == "gateway.routes_unknown":
@@ -266,8 +266,8 @@ class GatewayProbe(Probe):
                         "To measure the gateway's latency and loss, ask the network admin to allow ping to it",
                     ),
                     tr(
-                        f"ARPを確認: {oscmd(f'ip neigh show {gw}', f'arp -a {gw}', f'arp -n {gw}')}",
-                        f"Check its ARP entry: {oscmd(f'ip neigh show {gw}', f'arp -a {gw}', f'arp -n {gw}')}",
+                        f"ARPを確認: {oscmd(f'ip neigh show {gw}', f'arp -n {gw}')}",
+                        f"Check its ARP entry: {oscmd(f'ip neigh show {gw}', f'arp -n {gw}')}",
                     ),
                 ],
             )

@@ -33,12 +33,6 @@ def test_detect_language(env, expected, monkeypatch):
     assert got == (expected or i18n.DEFAULT)
 
 
-def test_windows_style_locale_names_are_understood():
-    assert i18n.normalize("Japanese_Japan") == "ja"
-    assert i18n.normalize("English_United States") == "en"
-    assert i18n.normalize("C") is None
-
-
 def test_tr_and_lazy_text_follow_the_active_language():
     t = i18n.Text("ゲートウェイ", "gateway")
     i18n.set_language("ja")

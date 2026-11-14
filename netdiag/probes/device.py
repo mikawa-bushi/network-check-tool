@@ -33,7 +33,7 @@ from ..inventory import SERVICE_NAMES
 from ..measure import PingStats, ping, tcp_check_many
 from ..measure.icmp import _literal_family, _resolve_v4
 from ..netinfo import model as nm
-from ._common import classify_latency, fmt_ms, oscmd, ping_settings, ping_summary
+from ._common import classify_latency, fmt_ms, ping_settings, ping_summary
 
 
 @dataclass(frozen=True)
@@ -123,7 +123,7 @@ class RouteProbe(Probe):
         "If the PC and the device are in different subnets nothing gets through, "
         "even with a perfect cable and a healthy device — the most common field mistake.",
     )
-    manual_commands = ["ipconfig", "route print -4", "ip route get <device-ip>"]
+    manual_commands = ["ip route get <device-ip>"]
 
     def check(self, ctx: Context) -> CheckResult:
         t = target(ctx)
@@ -306,15 +306,7 @@ class RouteProbe(Probe):
                         f"PCのIPを {example} の未使用番号に設定する（サブネットマスクは機器と同じに。多くは 255.255.255.0）",
                         f"Give the PC an unused address in {example} (same mask as the device, usually 255.255.255.0)",
                     ),
-                    tr(
-                        "今の設定を残したい場合は『IPv4の詳細設定』でIPアドレスを追加できます（Windows）",
-                        "Windows can keep the current IP and add a second one under IPv4 'Advanced' settings",
-                    ),
-                    oscmd(
-                        f"sudo ip addr add {example.replace('.x/24', '.200/24')} dev <iface>",
-                        f'netsh interface ip add address "{tr("イーサネット", "Ethernet")}" '
-                        f"{example.replace('.x/24', '.200')} 255.255.255.0",
-                    ),
+                    f"sudo ip addr add {example.replace('.x/24', '.200/24')} dev <iface>",
                     tr(
                         "機器側のIP・サブネットマスク設定が想定どおりかも確認する",
                         "Also confirm the device's own IP/mask settings",
@@ -324,9 +316,9 @@ class RouteProbe(Probe):
                     [
                         tr(
                             f"機器がルーターの先にある構成なら、ゲートウェイ {d.get('gateway')} から先の経路を確認する: "
-                            + oscmd(f"tracepath {ip}", f"tracert -d {ip}"),
+                            + f"tracepath {ip}",
                             f"If the device really sits behind a router, check the path past {d.get('gateway')}: "
-                            + oscmd(f"tracepath {ip}", f"tracert -d {ip}"),
+                            + f"tracepath {ip}",
                         )
                     ]
                     if code == "route.default_only"
@@ -369,7 +361,7 @@ class RouteProbe(Probe):
                 "The device address or route is wrong.",
             ),
             [
-                oscmd(f"ip route get {ip}", "route print -4"),
+                f"ip route get {ip}",
                 tr(
                     "台帳のIPアドレスを確認する", "Check the address in the device list"
                 ),
@@ -393,8 +385,6 @@ class ReachProbe(Probe):
         "Separates a dead or miswired device, a live device that ignores ping, an IP conflict and intermittent loss.",
     )
     manual_commands = [
-        "ping -n 20 <device-ip>",
-        "arp -a <device-ip>",
         "ping -c 20 <device-ip> ; ip neigh show <device-ip>",
     ]
 
@@ -599,8 +589,8 @@ class ReachProbe(Probe):
                 ),
                 [
                     tr(
-                        f"ARP表で応答したMACを確認し、どの機器か特定する: {oscmd(f'ip neigh show {ip}', f'arp -a {ip}')}",
-                        f"Identify the answering MAC in the ARP table: {oscmd(f'ip neigh show {ip}', f'arp -a {ip}')}",
+                        f"ARP表で応答したMACを確認し、どの機器か特定する: ip neigh show {ip}",
+                        f"Identify the answering MAC in the ARP table: ip neigh show {ip}",
                     ),
                     tr(
                         "最近交換した機器・持ち込みPC・保守用ノートPCの固定IPを確認する",
@@ -665,7 +655,7 @@ class ReachProbe(Probe):
                     "ルーター越しの場合は、途中のルーター/ファイアウォールでpingが遮断されていないか確認する",
                     "Across routers, check whether a router/firewall drops ping",
                 ),
-                oscmd(f"tracepath {ip}", f"tracert -d {ip}"),
+                f"tracepath {ip}",
             ],
         )
 
@@ -687,7 +677,6 @@ class PortsProbe(Probe):
         "and 'no answer' (firewall/down) mean different fixes.",
     )
     manual_commands = [
-        "Test-NetConnection <device-ip> -Port 502",
         "nc -vz <device-ip> 502",
     ]
 
@@ -795,9 +784,9 @@ class PortsProbe(Probe):
                     ),
                     tr(
                         "ルーター/ファイアウォールを経由する場合は、どこで止まるか確認する: "
-                        + oscmd(f"tracepath {ip}", f"tracert -d {ip}"),
+                        + f"tracepath {ip}",
                         "Across routers/firewalls, find where it stops: "
-                        + oscmd(f"tracepath {ip}", f"tracert -d {ip}"),
+                        + f"tracepath {ip}",
                     ),
                 ],
             )
@@ -829,9 +818,7 @@ class PortsProbe(Probe):
                 "Some controllers allow only a few concurrent connections; check other PCs/software holding them",
             )
         )
-        steps.append(
-            oscmd(f"nc -vz {ip} <port>", f"Test-NetConnection {ip} -Port <port>")
-        )
+        steps.append(f"nc -vz {ip} <port>")
         return (
             tr(
                 f"{ip} には届いていますが、サービスのポートに接続できません。",

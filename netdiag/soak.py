@@ -1151,9 +1151,9 @@ def nic_deltas(
 
 def gap_threshold(interval: float, timeout: float, n_addresses: int) -> float:
     """Longest wait between two requests to one device that is still normal."""
-    from .measure.icmp import MAX_PPS, system_ping_cadence
+    from .measure.icmp import MAX_PPS, SYSTEM_PING_CADENCE
 
-    spacing = max(interval, n_addresses / MAX_PPS, system_ping_cadence())
+    spacing = max(interval, n_addresses / MAX_PPS, SYSTEM_PING_CADENCE)
     return max(MIN_GAP_S, 3 * spacing + 2 * timeout)
 
 

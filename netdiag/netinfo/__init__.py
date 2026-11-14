@@ -2,8 +2,8 @@
 
 Probes ask questions of a :class:`HostNetwork` snapshot ("which NIC reaches
 192.168.3.39?", "is there a default gateway?") instead of shelling out and
-parsing on their own. Collection is OS-specific (``linux``/``windows``/
-``macos`` modules); everything above this package is OS-neutral.
+parsing on their own. Collection is OS-specific (``linux``/``macos``
+modules); everything above this package is OS-neutral.
 """
 
 from __future__ import annotations
@@ -58,10 +58,7 @@ __all__ = [
 
 
 def _backend():
-    name = os_name()
-    if name == "windows":
-        from . import windows as mod
-    elif name == "macos":
+    if os_name() == "macos":
         from . import macos as mod
     else:
         from . import linux as mod
@@ -84,8 +81,7 @@ SNAPSHOT_TTL = 5.0
 def snapshot(max_age: float = SNAPSHOT_TTL) -> HostNetwork:
     """A recent snapshot shared by all probes of one run (cached briefly).
 
-    Collecting once matters on Windows, where each PowerShell start costs about
-    a second; several probes asking within a few seconds share one collection.
+    Several probes asking within a few seconds share one collection.
     """
     with _cache_lock:
         hn = _cache.get("hn")

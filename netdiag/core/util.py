@@ -41,9 +41,9 @@ def have(cmd: str) -> bool:
 def decode_output(data: Optional[bytes]) -> str:
     """Decode command output without ever raising.
 
-    Tries UTF-8 first (Linux/macOS, PowerShell with UTF-8 output), then the
-    console/ANSI code page (cp932 on Japanese Windows, where ``ping``/``arp``
-    print Shift_JIS), and finally replaces undecodable bytes.
+    Tries UTF-8 first, then the locale's encoding and Shift_JIS (an SSID or
+    a device name typed on a Japanese PC), and finally replaces undecodable
+    bytes.
     """
     if not data:
         return ""
@@ -63,13 +63,6 @@ def decode_output(data: Optional[bytes]) -> str:
 
 def _fallback_encodings() -> List[str]:
     encs: List[str] = []
-    if is_windows():
-        try:
-            import ctypes
-
-            encs.append(f"cp{ctypes.windll.kernel32.GetOEMCP()}")  # console CP
-        except (AttributeError, OSError):  # pragma: no cover - non-Windows
-            pass
     preferred = locale.getpreferredencoding(False)
     if preferred:
         encs.append(preferred)
@@ -80,14 +73,12 @@ def _fallback_encodings() -> List[str]:
 def _command_env() -> Dict[str, str]:
     """Environment for child processes.
 
-    On Linux/macOS force the C locale so tools print stable English output that
-    the parsers understand. Windows tools are localised regardless of env vars,
-    so their parsers are written to be language-independent instead.
+    Force the C locale so tools print stable English output that the parsers
+    understand.
     """
     env = dict(os.environ)
-    if not is_windows():
-        env["LC_ALL"] = "C"
-        env["LANG"] = "C"
+    env["LC_ALL"] = "C"
+    env["LANG"] = "C"
     return env
 
 
@@ -113,7 +104,6 @@ def run_bytes(args: List[str], timeout: float = 10.0) -> RawResult:
             timeout=timeout,
             check=False,
             env=_command_env(),
-            **_no_window_kwargs(),
         )
         return RawResult(
             proc.returncode, proc.stdout, proc.stderr, time.perf_counter() - start
@@ -161,12 +151,6 @@ def run(args: List[str], timeout: float = 10.0) -> CommandResult:
     )
 
 
-def _no_window_kwargs() -> dict:
-    """Keep console windows from flashing when launched from a GUI on Windows."""
-    flag = getattr(subprocess, "CREATE_NO_WINDOW", 0)
-    return {"creationflags": flag} if is_windows() and flag else {}
-
-
 def is_linux() -> bool:
     return platform.system() == "Linux"
 
@@ -175,23 +159,14 @@ def is_macos() -> bool:
     return platform.system() == "Darwin"
 
 
-def is_windows() -> bool:
-    return platform.system() == "Windows"
-
-
 def os_name() -> str:
-    """``linux`` / ``windows`` / ``macos`` / ``other``."""
+    """``linux`` / ``macos`` / ``other``."""
     if is_linux():
         return "linux"
-    if is_windows():
-        return "windows"
     if is_macos():
         return "macos"
     return "other"
 
 
 def is_root() -> bool:
-    try:
-        return os.geteuid() == 0  # type: ignore[attr-defined]
-    except AttributeError:  # Windows
-        return False
+    return os.geteuid() == 0

@@ -30,13 +30,13 @@ _current: Optional[str] = None
 
 
 def normalize(value: Optional[str]) -> Optional[str]:
-    """Map a user/locale value (``ja_JP.UTF-8``, ``English``...) to ja/en/None."""
+    """Map a user/locale value (``ja_JP.UTF-8``, ``en``...) to ja/en/None."""
     if not value:
         return None
     v = value.strip().lower()
-    if v.startswith(("ja", "japanese")):
+    if v.startswith("ja"):
         return "ja"
-    if v.startswith(("en", "english")):
+    if v.startswith("en"):
         return "en"
     return None
 
@@ -59,7 +59,7 @@ def detect(env: Optional[Mapping[str, str]] = None) -> str:
 
 
 def _os_language() -> Optional[str]:
-    """The OS locale's language (on Windows, e.g. ``Japanese_Japan.932``).
+    """The OS locale's language (``ja_JP.UTF-8`` gives ``ja``).
 
     The C/POSIX locale names no language. Python coerces it to ``C.UTF-8``,
     which ``getlocale()`` on 3.11 reports as ``en_US``, so it is checked first.

@@ -94,29 +94,6 @@ def test_server_sends_at_most_its_rate_in_any_second(server):
     assert 10 <= got <= 20
 
 
-def test_udp_echo_survives_a_connection_reset(server):
-    srv = server()
-    real = srv._udp
-
-    class _ResetOnce:
-        def __init__(self):
-            self.raised = False
-
-        def __getattr__(self, name):
-            return getattr(real, name)
-
-        def recvfrom(self, n):
-            if not self.raised:
-                self.raised = True
-                raise ConnectionResetError(10054, "reset by peer")
-            return real.recvfrom(n)
-
-    srv._udp = _ResetOnce()
-    time.sleep(0.6)
-    rep = measure_loss_jitter("127.0.0.1", srv.port, count=5, interval=0.0)
-    assert rep.received == 5
-
-
 def test_tcp_sink_keeps_accepting_after_a_flood_of_idle_connections(server):
     srv = server(max_connections=2)
     idle = [socket.create_connection(("127.0.0.1", srv.port)) for _ in range(6)]

@@ -41,7 +41,7 @@ from ._app import H, Progress, cli
 def collect(output, targets, no_mask, no_ping):
     """実機の生出力をzipに収集（不具合報告・検証用）/ Collect raw output for verification.
 
-    netdiag が使うOSコマンド（ping・arp・route・PowerShell など）の出力を文字コード
+    netdiag が使うOSコマンド（ping・ip・arp・route など）の出力を文字コード
     変換前のまま保存し、netdiag の解釈結果と一緒にまとめます。IPアドレスやMAC、PC名は
     既定で伏せます（自動処理のため、社外に送る前に中身を確認してください）。
     """

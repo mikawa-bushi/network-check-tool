@@ -4,8 +4,8 @@ Checks this PC's network (link quality, IP settings, gateway, ARP) and every
 device on the line (PLCs, HMIs, robot controllers: route, ping statistics, ARP
 presence, service ports), then a dependency-graph engine separates the *root
 cause* from its *consequences* and says what to check next — in Japanese or
-English. Runs fully offline, as an unprivileged user, on Windows, Linux and
-macOS, on the standard library alone (``click`` is the only hard dependency).
+English. Runs fully offline, as an unprivileged user, on Linux and macOS,
+on the standard library alone (``click`` is the only hard dependency).
 """
 
 import logging

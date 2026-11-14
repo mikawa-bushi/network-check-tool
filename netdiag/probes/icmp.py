@@ -12,7 +12,7 @@ from ..core import CheckResult, Context, Probe, register
 from ..i18n import Text, tr
 from ..measure import PingStats
 from ..measure import ping as _ping
-from ._common import classify_latency, oscmd, ping_settings, ping_summary
+from ._common import classify_latency, ping_settings, ping_summary
 
 
 def ping(
@@ -149,7 +149,7 @@ class PingProbe(Probe):
         "指定した相手への到達性・遅延・パケットロスを測ります。",
         "Measures raw reachability, RTT and packet loss to a chosen destination.",
     )
-    manual_commands = [oscmd("ping -c 10 <host>", "ping -n 10 <host>")]
+    manual_commands = ["ping -c 10 <host>"]
 
     def check(self, ctx: Context) -> CheckResult:
         host = ctx.get("target")

@@ -86,7 +86,7 @@ def test_soak_html_report_prints_the_package_version():
 
 def test_collect_manifest_records_the_package_version(monkeypatch, tmp_path):
     monkeypatch.setattr(netinfo, "collect", lambda: HostNetwork())
-    monkeypatch.setattr(collect_mod, "os_name", lambda: "windows")
+    monkeypatch.setattr(collect_mod, "os_name", lambda: "linux")
 
     def no_check(*args, **kwargs):
         raise RuntimeError("not measured in this test")

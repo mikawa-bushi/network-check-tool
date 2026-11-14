@@ -414,8 +414,8 @@ def test_ports_ok_settles_an_icmp_silent_device():
 
 
 def test_silent_on_link_devices_get_a_direct_arp_answer(monkeypatch):
-    # Windows: SendARP says "nobody answered" -> definite absence; a device in
-    # the cache before the test that SendARP still resolves stays "unknown".
+    # No ARP answer -> definite absence; a device in the cache before the
+    # test that still resolves stays "unknown".
     from netdiag import runner
 
     hn = _hn()
