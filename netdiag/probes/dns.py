@@ -18,10 +18,11 @@ from typing import List, Optional
 
 from ..core import CheckResult, Context, Probe, register
 from ..i18n import Text, tr
-from ..measure.dns import DnsAnswer, query
+from ..measure.dns import DnsAnswer, DnsReplyError, query
 from ._common import fmt_ms, oscmd
 
 SLOW_MS = 1000.0
+_ANSWERED = ("NOERROR", "NXDOMAIN")  # SERVFAIL, REFUSED ... mean a broken server
 
 
 def configured_resolvers() -> List[str]:
@@ -54,6 +55,19 @@ def _resolve(name: str, timeout: float = 3.0) -> Optional[List[str]]:
     if worker.is_alive():
         return None  # resolver exceeded the budget
     return result[0]
+
+
+def _ask(name: str, server: str, timeout: float) -> DnsAnswer:
+    """Query one server; a garbled reply makes that server bad, not the whole check."""
+    try:
+        return query(name, server, timeout=timeout)
+    except DnsReplyError as e:
+        return DnsAnswer(server=server, name=name, error=f"bad reply: {e}")
+
+
+def _answers(a: DnsAnswer) -> bool:
+    """The server resolved the query: an address, or a definite "no such name"."""
+    return a.error is None and a.rcode in _ANSWERED
 
 
 def _server_line(a: DnsAnswer) -> str:
@@ -90,7 +104,7 @@ class DnsProbe(Probe):
         if resolver:
             # A scenario asked for a specific resolver: query exactly that server
             # and never silently fall back to the system configuration.
-            a = query(name, resolver, timeout=timeout)
+            a = _ask(name, resolver, timeout)
             detail = {
                 "resolver": resolver,
                 "query": name,
@@ -117,7 +131,7 @@ class DnsProbe(Probe):
         start = time.perf_counter()
         addrs = _resolve(name, timeout=timeout)
         elapsed = (time.perf_counter() - start) * 1000.0
-        per_server = [query(name, s, timeout=min(timeout, 2.0)) for s in resolvers[:4]]
+        per_server = [_ask(name, s, min(timeout, 2.0)) for s in resolvers[:4]]
         detail = {
             "resolvers": resolvers,
             "query": name,
@@ -141,15 +155,25 @@ class DnsProbe(Probe):
                 detail=detail,
                 code="dns.failed" if resolvers else "dns.no_resolver",
             )
-        dead = [a for a in per_server if a.error]
-        if dead and len(dead) < len(per_server):
+        lines = ", ".join(_server_line(a) for a in per_server)
+        dead = [a for a in per_server if not _answers(a)]
+        if dead and len(dead) == len(per_server):
+            return CheckResult.fail(
+                self.name,
+                tr(
+                    f"{name} はキャッシュ/hostsからは解決できますが、DNSサーバーが1台も応答しません: {lines}",
+                    f"{name} resolves only from the cache or hosts file; no DNS server answers: {lines}",
+                ),
+                metrics={"resolved": 1.0, "resolve_ms": elapsed},
+                detail=detail,
+                code="dns.all_servers_down",
+            )
+        if dead:
             return CheckResult.warn(
                 self.name,
                 tr(
-                    f"{name} は解決できますが応答しないDNSサーバーがあります: "
-                    + ", ".join(_server_line(a) for a in per_server),
-                    f"{name} resolves but a DNS server is not answering: "
-                    + ", ".join(_server_line(a) for a in per_server),
+                    f"{name} は解決できますが応答しないDNSサーバーがあります: {lines}",
+                    f"{name} resolves but a DNS server is not answering: {lines}",
                 ),
                 metrics={"resolved": 1.0, "resolve_ms": elapsed},
                 detail=detail,
