@@ -107,6 +107,21 @@ def test_a_healthy_line_checked_without_the_host_exits_0(line):
     assert rep.to_dict()["devices"][0]["status"] == "ok"
 
 
+@pytest.mark.parametrize("lang", ["en", "ja"])
+def test_a_report_without_the_host_never_claims_this_pc_was_checked(line, lang):
+    from netdiag.i18n import set_language
+    from netdiag.report import render_check_html
+
+    set_language(lang)
+    line["replies"]["192.0.2.39"] = _ping("192.0.2.39", 10)
+    rep = _check([Device(name="PLC", host="192.0.2.39")])
+    text = render_check_text(rep, color=False)
+    html = render_check_html(rep)
+    for this_pc in ("This PC", "this PC", "このPC"):
+        assert this_pc not in text and this_pc not in html
+    assert "1 device(s)" in text or "機器 1台" in text
+
+
 def test_nic_errors_appear_once_and_follow_only_and_skip(line, monkeypatch):
     grown = {"eth0": LinkStats(rx_packets=20, tx_packets=20, rx_errors=4)}
     monkeypatch.setattr(netinfo, "link_stats", lambda: grown)

@@ -300,21 +300,8 @@ def render_check_text(
     )
     lines.append(_headline(report, st))
 
-    # ---- this PC
-    lines.append("")
-    lines.append(
-        st.bold(f"{st.bullet} " + tr("このPCのネットワーク", "This PC's network"))
-    )
-    shown = [r for r in report.host.results if show_all or not is_not_applicable(r)]
-    title_w = min(22, max((width(r.title) for r in shown), default=8))
-    for r in shown:
-        name = pad(truncate(r.title, title_w), title_w)
-        layer = f"[{r.layer}]".ljust(8)  # "[SYSTEM]" is the widest tag
-        extra = st.dim(f" ({r.name})") if verbose else ""
-        lines.append(f"  {st.status(r.status)} {layer} {name}  {r.summary}{extra}")
-    hidden = len(report.host.results) - len(shown)
-    if hidden:
-        lines.append(_hidden_note(st, hidden))
+    if report.host_checked:
+        lines.extend(_host_section(report, st, verbose, show_all))
 
     # ---- devices
     if report.devices:
@@ -365,6 +352,24 @@ def render_check_text(
     return "\n".join(lines)
 
 
+def _host_section(report, st: Style, verbose: bool, show_all: bool) -> List[str]:
+    lines = [
+        "",
+        st.bold(f"{st.bullet} " + tr("このPCのネットワーク", "This PC's network")),
+    ]
+    shown = [r for r in report.host.results if show_all or not is_not_applicable(r)]
+    title_w = min(22, max((width(r.title) for r in shown), default=8))
+    for r in shown:
+        name = pad(truncate(r.title, title_w), title_w)
+        layer = f"[{r.layer}]".ljust(8)  # "[SYSTEM]" is the widest tag
+        extra = st.dim(f" ({r.name})") if verbose else ""
+        lines.append(f"  {st.status(r.status)} {layer} {name}  {r.summary}{extra}")
+    hidden = len(report.host.results) - len(shown)
+    if hidden:
+        lines.append(_hidden_note(st, hidden))
+    return lines
+
+
 def _headline(report, st: Style) -> str:
     status = report.status
     n = len(report.devices)
@@ -407,11 +412,12 @@ def _headline(report, st: Style) -> str:
     if skipped:
         parts.append(tr(f"{len(skipped)}台は未評価", f"{len(skipped)} not checked"))
     if status == Status.OK:
-        what = (
-            tr(f"このPC と 機器 {n}台", f"this PC and {n} device(s)")
-            if n
-            else tr("このPC", "this PC")
-        )
+        if not report.host_checked:
+            what = tr(f"機器 {n}台", f"{n} device(s)")
+        elif n:
+            what = tr(f"このPC と 機器 {n}台", f"this PC and {n} device(s)")
+        else:
+            what = tr("このPC", "this PC")
         text = tr(
             f"結論: 異常は見つかりませんでした（{what}）",
             f"Result: no problems found ({what})",

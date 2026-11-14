@@ -226,8 +226,9 @@ def render_check_html(report, show_all: bool = True) -> str:
         parts.append(f"<h2>{tr('診断と次の確認', 'Diagnosis and next steps')}</h2>")
         parts.extend(hyps)
 
-    parts.append(f"<h2>{tr('このPCのネットワーク', 'This PC')}</h2>")
-    parts.append(_results_table(report.host.results, show_all=show_all))
+    if report.host_checked:
+        parts.append(f"<h2>{tr('このPCのネットワーク', 'This PC')}</h2>")
+        parts.append(_results_table(report.host.results, show_all=show_all))
     parts.append(
         f"<p class='foot'>{tr('測定条件', 'Settings')}: {_esc(settings)} — "
         + tr(
