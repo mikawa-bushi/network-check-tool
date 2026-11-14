@@ -20,10 +20,17 @@ def snapshot():
 @snapshot.command("save")
 @click.argument("name", default="default")
 def snapshot_save(name):
-    """現在のネットワーク設定を保存（正常なときに）/ Save the current configuration."""
+    """現在のネットワーク設定を保存（正常なときに）/ Save the current configuration.
+
+    終了コード: 0 = 保存, 3 = 設定を読めず保存しなかった, 4 = 使えない名前・未対応のOS
+    """
     from .. import snapshot as snap
 
-    path = snap.save(name)
+    try:
+        path = snap.save(name)
+    except snap.NothingCaptured as e:
+        click.echo(str(e), err=True)
+        sys.exit(ExitCode.INCOMPLETE)
     click.echo(
         tr(
             f"スナップショット '{name}' を保存: {path}",

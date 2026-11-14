@@ -215,13 +215,17 @@ def _path(name: str, directory: Optional[Path]) -> Path:
     return (Path(directory) if directory else DEFAULT_DIR) / f"{name}.json"
 
 
+class NothingCaptured(Exception):
+    """The capture read none of this PC's network configuration."""
+
+
 def save(name: str = "default", directory: Optional[Path] = None) -> Path:
-    """Capture now and write it; refuses to write a capture that saw nothing."""
+    """Capture now and write it; NothingCaptured instead of writing an empty capture."""
     path = _path(name, directory)
     snap = capture()
     if snap["sources"].get("interfaces") is None:
         reason = "; ".join(snap["errors"]) or tr("原因不明", "unknown reason")
-        raise InputError(
+        raise NothingCaptured(
             tr(
                 f"このPCのネットワーク設定を読めなかったため、保存しませんでした（{reason}）",
                 f"could not read this PC's network configuration, so nothing "

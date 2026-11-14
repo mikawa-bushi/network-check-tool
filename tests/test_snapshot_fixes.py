@@ -198,15 +198,15 @@ def test_japanese_headings(windows_pc, capsys):
     assert "■ ファイアウォール" in out
 
 
-def test_save_refuses_when_nothing_could_be_read(
+def test_save_refuses_and_exits_3_when_nothing_could_be_read(
     windows_pc, capsys, tmp_path, monkeypatch
 ):
     windows_pc["ps"] = None
     failed = CommandResult(False, 1, "", "", True)
     monkeypatch.setattr(win, "run", lambda args, timeout=10.0: failed)
     code, out, err = _run(capsys, "save", "empty")
-    assert code == 4
-    assert "nothing was saved" in err
+    assert code == 3
+    assert "nothing was saved" in err and "Traceback" not in err
     assert not (tmp_path / "snapshots" / "empty.json").exists()
 
 

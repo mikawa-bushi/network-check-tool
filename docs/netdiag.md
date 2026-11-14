@@ -268,7 +268,8 @@ addresses, Wi-Fi rates and line order never count as a change, and an ARP
 entry counts only when the same address answers with another MAC. Exit codes:
 0 no change, 2 changed, 3 nothing changed but a part could not be compared
 (read on one side only), 4 no such snapshot, a damaged one, one saved before
-0.6.0, a bad name, or a PC whose configuration could not be read.
+0.6.0, a bad name, or an unsupported OS. `snapshot save` exits 3 and saves
+nothing when it could not read this PC's configuration.
 
 `netdiag peer serve` answers only netdiag's own 16-byte requests, never a
 reply, never a privileged or its own source port, and at most 200 replies a
