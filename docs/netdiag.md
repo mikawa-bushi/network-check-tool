@@ -122,9 +122,9 @@ Japanese), `-v/--verbose`, `--log-file`. `python -m netdiag` works where the
 - `--all` shows not-applicable checks; `--reasoning` shows the engine's steps;
   `--no-host` checks devices only; `--jobs N` parallelises the host sweep.
 
-Exit codes. 3, 4, 5 and 130 mean the same for every command; `snapshot diff`
-uses 2 for "changed", and `soak` and `peer test` describe their 1 and 2 in
-their own sections:
+Exit codes. 3, 4, 5 and 130 mean the same for every command. `ping` follows
+the table (2: some replies lost). `snapshot diff` uses 2 for "changed", `soak`
+defines its own 1 and 2, and `peer test` its own 1; their sections say how:
 
 | code | meaning |
 | --- | --- |
@@ -335,7 +335,8 @@ other PC can reach it; `--host` limits it to one address. It refuses to start
 its request, so late or duplicated replies do not count as loss. With no reply
 at all it says whether nothing listens there or nothing answered, and exits 3
 instead of reporting 100 % loss; a throughput test that cannot connect also
-exits 3. A 0.6.0 `peer test` also works against a 0.5 `peer serve`; a 0.5
+exits 3. Otherwise it exits 0 for a loss below 5 % and 1 for 5 % or more, or
+when there is no route to the address. A 0.6.0 `peer test` also works against a 0.5 `peer serve`; a 0.5
 `peer test` gets no reply from a 0.6.0 `peer serve`, so upgrade the `test`
 end too.
 
