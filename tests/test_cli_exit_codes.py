@@ -24,7 +24,7 @@ def _raise(exc):
 def test_click_usage_error_exits_4(monkeypatch, capsys):
     assert _run_main(monkeypatch, ["check", "--no-such-option"]) == 4
     err = capsys.readouterr().err
-    assert "No such option" in err and "--help" in err
+    assert "No such option" in err and "--no-such-option" in err
 
 
 def test_click_usage_error_has_a_japanese_headline(monkeypatch, capsys):
