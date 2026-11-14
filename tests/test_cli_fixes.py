@@ -141,7 +141,7 @@ def test_report_never_overwrites_the_device_list_it_reads(run, tmp_path):
     before = ledger.read_bytes()
     code, _, err = run("check", "-f", str(ledger), "-o", str(ledger))
     assert code == 4 and "config" not in run.seen
-    assert "device list being read" in err
+    assert "is a file being read" in err
     assert ledger.read_bytes() == before
 
 

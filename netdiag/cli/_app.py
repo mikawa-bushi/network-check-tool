@@ -205,7 +205,8 @@ def output_path(output: Optional[str], inputs: Iterable[str] = ()) -> Optional[s
     """Check ``-o`` before anything is measured. ``None`` and ``-`` mean stdout.
 
     Raises InputError for a folder that does not exist, and for a path that is
-    one of *inputs*: a device list must never be overwritten by its report.
+    one of *inputs*: a device list or scenario must never be overwritten by
+    its report.
     """
     if output is None or output == "-":
         return None
@@ -213,10 +214,10 @@ def output_path(output: Optional[str], inputs: Iterable[str] = ()) -> Optional[s
     if path.exists() and any(os.path.samefile(path, src) for src in inputs):
         raise InputError(
             tr(
-                f"保存先 {output} は読み込む台帳そのものです。"
-                "台帳を上書きしないよう、レポートには別のファイル名を指定してください。",
-                f"{output} is the device list being read. Give the report "
-                "another file name so the list is not overwritten.",
+                f"保存先 {output} は読み込むファイル（台帳・シナリオ）そのものです。"
+                "上書きしないよう、レポートには別のファイル名を指定してください。",
+                f"{output} is a file being read (a device list or scenario). "
+                "Give the report another file name so it is not overwritten.",
             )
         )
     if not path.parent.is_dir():
