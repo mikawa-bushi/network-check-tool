@@ -116,12 +116,12 @@ def _masked_network(m, cidr):
 
 def test_ipv4_masking_keeps_16_and_24_relationships():
     m = Masker()
-    docker = _masked_network(m, "172.17.0.0/16")
+    net16 = _masked_network(m, "198.18.0.0/16")
     lan = _masked_network(m, "198.51.100.0/24")
-    gw = ipaddress.ip_address(m.mask(b"172.17.0.1").decode())
-    same16 = ipaddress.ip_address(m.mask(b"172.17.200.9").decode())
-    assert gw in docker and same16 in docker
-    assert not docker.overlaps(lan)
+    gw = ipaddress.ip_address(m.mask(b"198.18.0.1").decode())
+    same16 = ipaddress.ip_address(m.mask(b"198.18.200.9").decode())
+    assert gw in net16 and same16 in net16
+    assert not net16.overlaps(lan)
     assert m.mask(b"198.51.100.39").endswith(b".39")
 
 
