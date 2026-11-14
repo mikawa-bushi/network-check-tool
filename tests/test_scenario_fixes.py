@@ -11,6 +11,7 @@ import sys
 
 import pytest
 
+import netdiag.runner  # noqa: F401  (registers every probe before the registry is saved)
 from netdiag import netinfo
 from netdiag.cli import main
 from netdiag.core import CheckResult, Probe, Status
@@ -26,6 +27,8 @@ def _probe(pname, status):
         depends_on = []
 
         def check(self, ctx):
+            if status is None:
+                raise RuntimeError("probe crashed")
             target = ctx.get("target", "-")
             return CheckResult(
                 name=pname, status=status, summary=f"{pname} {target} {status.value}"
@@ -41,6 +44,7 @@ def fake_host(monkeypatch):
         ("echo", Status.OK),
         ("warny", Status.WARN),
         ("faily", Status.FAIL),
+        ("crashy", None),
     ):
         _REGISTRY[name] = _probe(name, status)
     monkeypatch.setattr(netinfo, "snapshot", lambda max_age=5.0: HostNetwork())
@@ -104,7 +108,9 @@ def test_label_is_shown_as_the_check_title(tmp_path, capsys):
     assert "Corporate proxy" in out
 
 
-@pytest.mark.parametrize("probe, exit_code", [("warny", 2), ("faily", 1), ("echo", 0)])
+@pytest.mark.parametrize(
+    "probe, exit_code", [("warny", 2), ("faily", 1), ("echo", 0), ("crashy", 3)]
+)
 def test_host_only_scenario_exits_like_check(tmp_path, capsys, probe, exit_code):
     sc = _write(tmp_path, "s.json", json.dumps({"checks": [probe]}))
     assert _run(capsys, sc)[0] == exit_code

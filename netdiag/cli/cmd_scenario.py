@@ -48,7 +48,7 @@ def scenario(path, fmt, output, reasoning, no_color):
     """
     from .. import report as report_mod
     from ..scenario import load_scenario
-    from ..scenario.run import run_scenario
+    from ..scenario.run import run_scenario, scenario_status
 
     sc = load_scenario(path)
     cfg = dict(DEFAULT_CONFIG)
@@ -82,4 +82,4 @@ def scenario(path, fmt, output, reasoning, no_color):
             unicode=True if output else None,
         )
     write_output(text, output, fmt)
-    sys.exit(rep.exit_code)
+    sys.exit(scenario_status(rep).exit_code)

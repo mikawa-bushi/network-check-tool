@@ -4,6 +4,7 @@ from __future__ import annotations
 
 from typing import Any, Callable, Dict, Optional
 
+from ..core import Status
 from .loader import Scenario, ScenarioPass
 
 
@@ -44,3 +45,12 @@ def run_scenario(
         rep.host = Engine(config=config).diagnose(results, reasoning)
     rep.settings["scenario"] = scenario.name
     return rep
+
+
+def scenario_status(rep) -> Status:
+    """The verdict: ``Diagnosis.status`` of this PC, then each device's status.
+
+    Unlike ``Diagnosis.healthy``, the host status is UNKNOWN when a wanted
+    check could not be measured, so a crashed check never exits 0.
+    """
+    return Status.worst([rep.host.status, *(d.status for d in rep.devices)])
