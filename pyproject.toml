@@ -8,7 +8,7 @@ license = "MIT"
 homepage = "https://github.com/mikawa-bushi/network-check-tool"
 repository = "https://github.com/mikawa-bushi/network-check-tool"
 documentation = "https://github.com/mikawa-bushi/network-check-tool/blob/main/docs/netdiag.md"
-keywords = ["network", "monitoring", "diagnostics", "troubleshooting", "ping", "netdiag", "plc", "factory", "ot", "industrial", "cli"]
+keywords = ["network", "diagnostics", "troubleshooting", "ping", "netdiag", "plc", "factory", "ot", "industrial", "cli"]
 classifiers = [
     "Development Status :: 4 - Beta",
     "Environment :: Console",
@@ -21,7 +21,6 @@ classifiers = [
     "Operating System :: POSIX :: Linux",
     "Operating System :: MacOS",
     "Topic :: System :: Networking",
-    "Topic :: System :: Networking :: Monitoring",
     "Topic :: System :: Systems Administration",
 ]
 packages = [

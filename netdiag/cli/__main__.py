@@ -1,4 +1,4 @@
-"""``python -m netdiag.cli`` (used by generated service units without a PATH entry)."""
+"""``python -m netdiag.cli``, for running netdiag where it is not on PATH."""
 
 from . import main
 

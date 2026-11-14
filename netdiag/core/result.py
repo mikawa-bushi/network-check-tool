@@ -3,7 +3,7 @@
 A probe never decides *why* something is broken; it only records *what* it
 observed. Interpretation is the job of :mod:`netdiag.diagnosis`. Keeping the two
 separate is what lets the same measurements feed the terminal report, the JSON
-output, the baseline learner and the diagnosis engine without coupling.
+output and the diagnosis engine without coupling.
 """
 
 from __future__ import annotations
@@ -88,8 +88,8 @@ _PRECEDENCE = (Status.FAIL, Status.UNKNOWN, Status.WARN, Status.OK)
 class CheckResult:
     """The result of running one probe.
 
-    ``metrics`` holds numeric, machine-comparable values (rtt_ms, loss_pct ...)
-    that baselining and change-point detection consume. ``detail`` holds richer
+    ``metrics`` holds numeric, machine-comparable values (rtt_ms, loss_pct ...).
+    ``detail`` holds richer
     structured evidence for the report. ``raw_command`` is the equivalent manual
     command, surfaced by ``netdiag explain`` so users learn to diagnose by hand.
     ``summary`` is human text in the active display language; ``code`` is the
