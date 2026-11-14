@@ -10,11 +10,12 @@ devices while everything *looks* configured.
 from __future__ import annotations
 
 import ipaddress
+from itertools import combinations
 from typing import List
 
 from ..core import CheckResult, Context, Probe, register
 from ..i18n import Text, tr
-from ..netinfo import KIND_LOOPBACK
+from ..netinfo import KIND_LOOPBACK, HostNetwork, Route
 from ._common import oscmd
 
 # A mask broader than the private block itself is always a typo
@@ -24,6 +25,19 @@ _PRIVATE_MIN_PREFIX = [
     (ipaddress.ip_network("172.16.0.0/12"), 12),
     (ipaddress.ip_network("192.168.0.0/16"), 16),
 ]
+
+
+def _same_route(hn: HostNetwork, a: Route, b: Route) -> bool:
+    """Two next hops of one multipath (ECMP) default, which share the traffic.
+
+    Linux lists such a route once per next hop, each with the route's table and
+    metric. Windows and macOS keep separate defaults with equal metrics, so
+    there they stay rival gateways.
+    """
+    return hn.source.startswith("linux") and (a.table, a.metric) == (
+        b.table,
+        b.metric,
+    )
 
 
 @register
@@ -96,8 +110,10 @@ class IpConfigProbe(Probe):
                 seen.append((i, a))
 
         defaults = hn.default_routes()
-        gw_ifaces = {r.interface for r in defaults}
-        if len(gw_ifaces) > 1:
+        if any(
+            a.interface != b.interface and not _same_route(hn, a, b)
+            for a, b in combinations(defaults, 2)
+        ):
             best = hn.preferred_default_route()
             listing = ", ".join(f"{r.gateway} ({r.interface})" for r in defaults)
             warns.append(

@@ -17,12 +17,7 @@ from ..measure import system_ping
 
 
 def _ping_family(host: str, v6: bool, count: int = 2) -> Optional[bool]:
-    """Ping ``host`` over one IP family. True=reachable, False=down, None=untested.
-
-    ``None`` covers "this family cannot be used here at all" — e.g. ping prints
-    "Network is unreachable" because the PC has no IPv6 route — which means a
-    single-stack network, not a broken one.
-    """
+    """Ping ``host`` over one IP family. True=reachable, False=no reply, None=untested."""
     st = system_ping(host, count=count, family=6 if v6 else 4)
     if st.error or (not st.raw and not st.received):
         return None  # ping could not run for this family
@@ -51,16 +46,16 @@ def _tcp_family(
         return False
 
 
-def _family_ok(host: str, v6: bool, count: int) -> Optional[bool]:
-    ping_ok = _ping_family(host, v6=v6, count=count)
-    if ping_ok:
+def _family_ok(host: str, v6: bool, count: int = 2) -> Optional[bool]:
+    """True/False, or None when this PC does not use the family (single stack).
+
+    Without a reply to ping, TCP decides. ping counts "Network is unreachable"
+    as lost replies, so only TCP's None says the PC has no route or address
+    for the family.
+    """
+    if _ping_family(host, v6=v6, count=count):
         return True
-    tcp_ok = _tcp_family(host, socket.AF_INET6 if v6 else socket.AF_INET)
-    if tcp_ok:
-        return True
-    if ping_ok is None and tcp_ok is None:
-        return None
-    return False
+    return _tcp_family(host, socket.AF_INET6 if v6 else socket.AF_INET)
 
 
 def _has_family(host: str, family: int) -> bool:
@@ -91,12 +86,12 @@ class DualStackProbe(Probe):
 
     def check(self, ctx: Context) -> CheckResult:
         host = ctx.get("dns_name", "example.com")
-        # Two samples per family keep this cheap; honour an explicit count.
-        count = int(ctx.get("count") or 2)
+        # Two pings per family keep this cheap; --count is for the gateway and
+        # the devices, and would cost a second per ping with ping.exe here.
         has4 = _has_family(host, socket.AF_INET)
         has6 = _has_family(host, socket.AF_INET6)
-        v4 = _family_ok(host, v6=False, count=count) if has4 else None
-        v6 = _family_ok(host, v6=True, count=count) if has6 else None
+        v4 = _family_ok(host, v6=False) if has4 else None
+        v6 = _family_ok(host, v6=True) if has6 else None
         detail = {
             "host": host,
             "ipv4_ok": v4,

@@ -22,13 +22,20 @@ def _primary_ip() -> Optional[str]:
     return source_ip_for(_RFC5737_OFF_LAN)
 
 
+def _apipa_only(i: Interface) -> bool:
+    return not i.usable_ipv4 and any(a.is_link_local for a in i.ipv4)
+
+
+def speed_text(mbps: float) -> str:
+    return f"{mbps / 1000:g} Gbps" if mbps >= 1000 else f"{mbps:g} Mbps"
+
+
 def describe_interface(i: Interface) -> str:
     """``イーサネット 192.168.3.10/24 (1 Gbps 全二重)`` style label."""
     addrs = ",".join(a.cidr for a in i.usable_ipv4) or tr("IPなし", "no IPv4")
     extra: List[str] = []
     if i.speed_mbps:
-        sp = i.speed_mbps
-        extra.append(f"{sp / 1000:g} Gbps" if sp >= 1000 else f"{sp:g} Mbps")
+        extra.append(speed_text(i.speed_mbps))
     if i.duplex:
         extra.append(
             tr("全二重", "full-duplex")
@@ -92,18 +99,36 @@ class InterfaceProbe(Probe):
             )
 
         usable = hn.lan_interfaces()
-        if usable:
-            physical = [i for i in usable if i.kind != KIND_VIRTUAL] or usable
+        physical = [i for i in ifaces if i.kind != KIND_VIRTUAL]
+        working = [i for i in usable if i.kind != KIND_VIRTUAL]
+        # A virtual adapter (VM host-only, WSL, VPN) keeps its address with
+        # every cable unplugged, so it only counts on a PC without physical
+        # adapters, or when a linked physical adapter without an IPv4 address
+        # may be its bridge or virtual-switch port.
+        if not physical or any(i.up and not i.ipv4 for i in physical):
+            working += [i for i in usable if i.kind == KIND_VIRTUAL]
+        apipa = [i for i in physical or ifaces if i.up and _apipa_only(i)]
+        if working:
+            names = ", ".join(describe_interface(i) for i in working)
+            metrics = {"has_ip": 1.0, "interface_count": float(len(working))}
+            if apipa:
+                stuck = ", ".join(i.name for i in apipa)
+                return CheckResult.warn(
+                    self.name,
+                    tr(
+                        f"{names} は使用可能ですが、{stuck} は 169.254.x.x（自動割当）のみ — DHCPサーバーが無いネットワークです。固定IPの設定が必要です",
+                        f"{names} works, but {stuck} only has a 169.254.x.x (APIPA) address — no DHCP server answered; set a static IP",
+                    ),
+                    metrics=metrics,
+                    detail=detail,
+                    code="interface.apipa",
+                )
             return CheckResult.ok(
-                self.name,
-                ", ".join(describe_interface(i) for i in physical),
-                metrics={"has_ip": 1.0, "interface_count": float(len(usable))},
-                detail=detail,
-                code="interface.ok",
+                self.name, names, metrics=metrics, detail=detail, code="interface.ok"
             )
 
+        ifaces = physical or ifaces
         up = [i for i in ifaces if i.up]
-        apipa = [i for i in up if any(a.is_link_local for a in i.ipv4)]
         dup = [i for i in ifaces if any("duplicate" in a.flags for a in i.ipv4)]
         if dup:
             names = ", ".join(
@@ -147,12 +172,19 @@ class InterfaceProbe(Probe):
                 detail=detail,
                 code="interface.no_ipv4",
             )
+        summary = tr(
+            "リンクしているアダプタがありません（LANケーブル未接続 / アダプタ無効 / Wi-Fi未接続）",
+            "no interface is UP with an IPv4 address (cable unplugged, adapter disabled or Wi-Fi not connected)",
+        )
+        if usable:
+            virtual = ", ".join(i.name for i in usable)
+            summary += tr(
+                f"。{virtual} は仮想アダプタのため数えません",
+                f"; {virtual} is virtual and does not count",
+            )
         return CheckResult.fail(
             self.name,
-            tr(
-                "リンクしているアダプタがありません（LANケーブル未接続 / アダプタ無効 / Wi-Fi未接続）",
-                "no interface is UP with an IPv4 address (cable unplugged, adapter disabled or Wi-Fi not connected)",
-            ),
+            summary,
             metrics={"has_ip": 0.0},
             detail=detail,
             code="interface.no_link",

@@ -16,12 +16,13 @@ import threading
 import time
 from typing import List, Optional
 
-from ..core import CheckResult, Context, Probe, register
+from ..core import CheckResult, Context, Probe, Status, register
 from ..i18n import Text, tr
-from ..measure.dns import DnsAnswer, query
+from ..measure.dns import DnsAnswer, DnsReplyError, query
 from ._common import fmt_ms, oscmd
 
 SLOW_MS = 1000.0
+_ANSWERED = ("NOERROR", "NXDOMAIN")  # SERVFAIL, REFUSED ... mean a broken server
 
 
 def configured_resolvers() -> List[str]:
@@ -56,6 +57,19 @@ def _resolve(name: str, timeout: float = 3.0) -> Optional[List[str]]:
     return result[0]
 
 
+def _ask(name: str, server: str, timeout: float) -> DnsAnswer:
+    """Query one server; a garbled reply makes that server bad, not the whole check."""
+    try:
+        return query(name, server, timeout=timeout)
+    except DnsReplyError as e:
+        return DnsAnswer(server=server, name=name, error=f"bad reply: {e}")
+
+
+def _answers(a: DnsAnswer) -> bool:
+    """The server resolved the query: an address, or a definite "no such name"."""
+    return a.error is None and a.rcode in _ANSWERED
+
+
 def _server_line(a: DnsAnswer) -> str:
     if a.ok:
         return f"{a.server} {fmt_ms(a.elapsed_ms)}"
@@ -82,6 +96,15 @@ class DnsProbe(Probe):
     )
     manual_commands = ["nslookup example.com", "nslookup example.com <dns-server>"]
 
+    def path_dependencies(self, ctx: Context) -> List[str]:
+        """Resolvers all on this PC's LAN are asked without leaving it."""
+        resolver = ctx.get("_resolver")
+        servers = [resolver] if resolver else configured_resolvers()
+        hn = ctx.network()
+        if servers and all(hn.decide_route(s).arp for s in servers):
+            return []
+        return list(self.depends_on)
+
     def check(self, ctx: Context) -> CheckResult:
         name = ctx.get("dns_name", "example.com")
         timeout = float(ctx.get("dns_timeout", 3.0))
@@ -90,7 +113,7 @@ class DnsProbe(Probe):
         if resolver:
             # A scenario asked for a specific resolver: query exactly that server
             # and never silently fall back to the system configuration.
-            a = query(name, resolver, timeout=timeout)
+            a = _ask(name, resolver, timeout)
             detail = {
                 "resolver": resolver,
                 "query": name,
@@ -117,7 +140,7 @@ class DnsProbe(Probe):
         start = time.perf_counter()
         addrs = _resolve(name, timeout=timeout)
         elapsed = (time.perf_counter() - start) * 1000.0
-        per_server = [query(name, s, timeout=min(timeout, 2.0)) for s in resolvers[:4]]
+        per_server = [_ask(name, s, min(timeout, 2.0)) for s in resolvers[:4]]
         detail = {
             "resolvers": resolvers,
             "query": name,
@@ -141,15 +164,25 @@ class DnsProbe(Probe):
                 detail=detail,
                 code="dns.failed" if resolvers else "dns.no_resolver",
             )
-        dead = [a for a in per_server if a.error]
-        if dead and len(dead) < len(per_server):
+        lines = ", ".join(_server_line(a) for a in per_server)
+        dead = [a for a in per_server if not _answers(a)]
+        if dead and len(dead) == len(per_server):
+            return CheckResult.fail(
+                self.name,
+                tr(
+                    f"{name} はキャッシュ/hostsからは解決できますが、DNSサーバーが1台も応答しません: {lines}",
+                    f"{name} resolves only from the cache or hosts file; no DNS server answers: {lines}",
+                ),
+                metrics={"resolved": 1.0, "resolve_ms": elapsed},
+                detail=detail,
+                code="dns.all_servers_down",
+            )
+        if dead:
             return CheckResult.warn(
                 self.name,
                 tr(
-                    f"{name} は解決できますが応答しないDNSサーバーがあります: "
-                    + ", ".join(_server_line(a) for a in per_server),
-                    f"{name} resolves but a DNS server is not answering: "
-                    + ", ".join(_server_line(a) for a in per_server),
+                    f"{name} は解決できますが応答しないDNSサーバーがあります: {lines}",
+                    f"{name} resolves but a DNS server is not answering: {lines}",
                 ),
                 metrics={"resolved": 1.0, "resolve_ms": elapsed},
                 detail=detail,
@@ -182,21 +215,57 @@ class DnsProbe(Probe):
         )
 
     def advice(self, result, results=None):
-        servers = ""
-        if result is not None:
-            servers = ", ".join(result.detail.get("resolvers") or []) or str(
-                result.detail.get("resolver") or ""
+        code = result.code if result is not None else ""
+        detail = result.detail if result is not None else {}
+        name = detail.get("query") or "example.com"
+        servers = list(detail.get("resolvers") or [])
+        if detail.get("resolver"):
+            servers = [detail["resolver"]]
+        bad = [
+            s["server"]
+            for s in detail.get("servers") or []
+            if s.get("error") or s.get("rcode") not in _ANSWERED
+        ]
+        server = (bad or servers or [tr("<DNSサーバー>", "<resolver-ip>")])[0]
+        external = (results or {}).get("external")
+        reachable = external is not None and external.status == Status.OK
+        if code == "dns.no_resolver":
+            means = tr(
+                "DNSサーバーが設定されていないため、名前を解決できません。",
+                "No DNS server is configured, so names cannot be resolved.",
             )
-        servers = servers or tr("<DNSサーバー>", "<resolver-ip>")
-        return (
-            tr(
+        elif code == "dns.server_down":
+            means = tr(
+                f"名前は解決できますが、DNSサーバー {', '.join(bad)} が正しく応答しません。そのサーバーに当たると名前解決が遅れたり失敗したりします。",
+                f"Names resolve, but the DNS server {', '.join(bad)} does not answer "
+                f"properly; lookups that hit it are slow or fail.",
+            )
+        elif code == "dns.all_servers_down":
+            means = tr(
+                "DNSサーバーが1台も応答しません。キャッシュやhostsにある名前しか解決できません。",
+                "No DNS server answers; only names in the cache or hosts file resolve.",
+            )
+        elif code == "dns.slow":
+            means = tr(
+                "名前解決はできますが遅く、接続のたびに待たされます。",
+                "Names resolve, but slowly, which delays every new connection.",
+            )
+        elif reachable:
+            means = tr(
                 "通信はできていますが名前解決ができません — DNSサーバーの問題です。",
                 "Connectivity is fine but names don't resolve — a DNS/resolver fault.",
-            ),
+            )
+        else:
+            means = tr(
+                "名前解決ができません — DNSサーバーかその経路の問題です。",
+                "Names don't resolve — a fault in the DNS server or the path to it.",
+            )
+        return (
+            means,
             [
                 tr(
-                    f"DNSサーバーに直接問い合わせる: nslookup example.com {servers.split(',')[0]}",
-                    f"Test the resolver directly: nslookup example.com {servers.split(',')[0]}",
+                    f"DNSサーバーに直接問い合わせる: nslookup {name} {server}",
+                    f"Test the resolver directly: nslookup {name} {server}",
                 ),
                 tr(
                     "設備ネットワークではIPアドレスで直接指定すると確実です",
