@@ -9,7 +9,7 @@
 
 モード:
   scripts/check_ai_traces.py <file>...   # pre-commit: 渡された staged ファイルを検査
-  scripts/check_ai_traces.py --pre-push  # push されるコミット(push 先に未到達)を検査
+  scripts/check_ai_traces.py --pre-push  # 全ブランチ・タグ・HEAD の push 先未到達コミットを検査
   scripts/check_ai_traces.py --all       # 全追跡ファイル + 全コミット履歴を一括監査
 
 いずれも痕跡を見つけたら一覧を表示して終了コード 1 を返す。
@@ -177,19 +177,28 @@ def scan_commits(shas: list[str]) -> list[Finding]:
 
 
 def _pushed_revs() -> list[str]:
-    """これから push されるコミットを選ぶ ``git rev-list`` 引数。
+    """push され得るコミットを選ぶ ``git rev-list`` 引数。
 
-    pre-commit の pre-push ステージは push する先頭コミットを PRE_COMMIT_TO_REF
-    （root コミットを含む push では PRE_COMMIT_LOCAL_BRANCH）に、push 先を
-    PRE_COMMIT_REMOTE_NAME に入れる。今いるブランチではなくそれを検査し、除外は
-    push 先に既にあるコミットだけにする（別リモートにしかない履歴も検査する）。
-    手で実行した場合は HEAD を origin と比べる。
+    pre-commit の pre-push ステージが渡すのは最初の ref だけ（PRE_COMMIT_TO_REF、
+    root コミットを含む push では PRE_COMMIT_LOCAL_BRANCH）。
+    ``git push origin main feature`` や ``--all`` の 2 本目以降は見えないので、
+    HEAD と全ローカルブランチ・タグも検査する。除外は push 先（PRE_COMMIT_REMOTE_NAME、
+    手で実行した場合は origin）に既にあるコミットだけ。そのため未 push の不正コミットが
+    どこかのブランチに残っている間は、無関係な push も止まる。
     """
     env = os.environ
-    tip = env.get("PRE_COMMIT_TO_REF") or env.get("PRE_COMMIT_LOCAL_BRANCH") or "HEAD"
+    first = env.get("PRE_COMMIT_TO_REF") or env.get("PRE_COMMIT_LOCAL_BRANCH")
     remote = env.get("PRE_COMMIT_REMOTE_NAME") or "origin"
     on_remote = env.get("PRE_COMMIT_FROM_REF")
-    return [tip, "--not", f"--remotes={remote}", *([on_remote] if on_remote else [])]
+    return [
+        *([first] if first else []),
+        "HEAD",
+        "--branches",
+        "--tags",
+        "--not",
+        f"--remotes={remote}",
+        *([on_remote] if on_remote else []),
+    ]
 
 
 def _outgoing_shas() -> list[str]:

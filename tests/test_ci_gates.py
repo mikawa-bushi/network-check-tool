@@ -1,6 +1,7 @@
 """The gates that guard CI and pushes: scripts/expect_verdict.sh and the pre-push checks."""
 
 import os
+import shlex
 import shutil
 import subprocess
 import sys
@@ -126,6 +127,16 @@ class Repo:
             encoding="utf-8",
         )
 
+    def push(self, *args: str) -> subprocess.CompletedProcess:
+        return subprocess.run(
+            ["git", "push", *args],
+            cwd=self.work,
+            env=self.env,
+            capture_output=True,
+            text=True,
+            encoding="utf-8",
+        )
+
     def new_branch_push_env(self, branch: str, remote: str = "origin") -> dict:
         """What pre-commit exports for `git push <remote> <branch>` of a new branch."""
         tip = self.git("rev-parse", branch)
@@ -173,26 +184,47 @@ def test_push_gates_check_history_that_is_only_on_another_remote(tmp_path):
     assert "real.name@corp.example" in identity.stderr
 
 
+def test_push_gates_block_any_push_while_a_local_branch_has_a_bad_commit(tmp_path):
+    repo = Repo(tmp_path)
+    repo.git("push", "-q", "origin", "main")
+    repo.git("switch", "-q", "-c", "feature")
+    repo.commit("fix", OK_ID, path="a.txt")
+    repo.git("switch", "-q", "main")
+    repo.commit("local only", CORP_ID, path=".demotool/cfg")
+    push = repo.new_branch_push_env("feature")
+
+    identity = repo.gate(IDENTITY_GATE, **push)
+    assert identity.returncode == 1
+    assert "real.name@corp.example" in identity.stderr
+    traces = repo.gate(TRACES_GATE, MONITOR_AI_TRACE_EXTRA="demotool", **push)
+    assert traces.returncode == 1
+    assert ".demotool/cfg" in traces.stderr
+
+
 def test_push_gates_pass_a_clean_push_of_another_branch(tmp_path):
     repo = Repo(tmp_path)
     repo.git("push", "-q", "origin", "main")
     repo.git("switch", "-q", "-c", "feature")
     repo.commit("fix", OK_ID, path="a.txt")
     repo.git("switch", "-q", "main")
-    repo.commit("local only", CORP_ID)
+    repo.commit("local only", OK_ID, path="b.txt")
     push = repo.new_branch_push_env("feature")
 
     assert repo.gate(IDENTITY_GATE, **push).returncode == 0
     assert repo.gate(TRACES_GATE, **push).returncode == 0
 
 
-def test_push_gates_run_by_hand_check_head_against_origin(tmp_path):
+def test_push_gates_run_by_hand_check_every_local_branch_against_origin(tmp_path):
     repo = Repo(tmp_path)
     repo.commit("wip", CORP_ID)
     assert repo.gate(IDENTITY_GATE).returncode == 1
     repo.git("push", "-q", "origin", "main")
     assert repo.gate(IDENTITY_GATE).returncode == 0
     assert repo.gate(TRACES_GATE).returncode == 0
+    repo.git("switch", "-q", "-c", "other")
+    repo.commit("other", CORP_ID)
+    repo.git("switch", "-q", "main")
+    assert repo.gate(IDENTITY_GATE).returncode == 1
 
 
 PRE_PUSH_CONFIG = """\
@@ -201,7 +233,14 @@ repos:
     hooks:
       - id: check-commit-identity
         name: identity
-        entry: {python} scripts/check_commit_identity.py
+        entry: {identity}
+        language: system
+        stages: [pre-push]
+        pass_filenames: false
+        always_run: true
+      - id: check-ai-traces-commits
+        name: traces
+        entry: {traces}
         language: system
         stages: [pre-push]
         pass_filenames: false
@@ -209,15 +248,21 @@ repos:
 """
 
 
-@pytest.mark.skipif(sys.platform == "win32", reason="the hook entry is POSIX")
-def test_real_pre_commit_blocks_a_push_of_another_branch(tmp_path):
+@pytest.fixture
+def hooked_repo(tmp_path) -> Repo:
+    """A repo whose `git push` runs both gates through real pre-commit, main pushed."""
     pytest.importorskip("pre_commit")
     repo = Repo(tmp_path)
     (repo.work / ".pre-commit-config.yaml").write_text(
-        PRE_PUSH_CONFIG.format(python=sys.executable), encoding="utf-8"
+        PRE_PUSH_CONFIG.format(
+            identity=shlex.join([sys.executable, *IDENTITY_GATE]),
+            traces=shlex.join([sys.executable, *TRACES_GATE]),
+        ),
+        encoding="utf-8",
     )
     repo.commit("hooks", OK_ID)
     repo.env["PRE_COMMIT_HOME"] = str(tmp_path / "pre-commit-home")
+    repo.env["MONITOR_AI_TRACE_EXTRA"] = "demotool"
     subprocess.run(
         [sys.executable, "-m", "pre_commit", "install", "-t", "pre-push"],
         cwd=repo.work,
@@ -226,17 +271,122 @@ def test_real_pre_commit_blocks_a_push_of_another_branch(tmp_path):
         capture_output=True,
     )
     repo.git("push", "-q", "origin", "main")
-    repo.git("switch", "-q", "-c", "feature")
-    repo.commit("wip", CORP_ID)
-    repo.git("switch", "-q", "main")
+    return repo
 
-    push = subprocess.run(
-        ["git", "push", "origin", "feature"],
-        cwd=repo.work,
-        env=repo.env,
-        capture_output=True,
-        text=True,
-    )
+
+def _bad(repo: Repo, name: str) -> None:
+    """A commit both gates must stop: a corporate email and an AI-tool path."""
+    repo.commit(name, CORP_ID, path=f".demotool/{name}")
+
+
+def _other_branch(repo: Repo) -> list:
+    repo.git("switch", "-q", "-c", "feature")
+    _bad(repo, "wip")
+    repo.git("switch", "-q", "main")
+    return ["origin", "feature"]
+
+
+def _bad_branch_checked_out_and_pushed_second(repo: Repo) -> list:
+    repo.git("switch", "-q", "-c", "good")
+    repo.commit("good", OK_ID, path="good.txt")
+    repo.git("switch", "-q", "-c", "bad", "main")
+    _bad(repo, "bad")
+    return ["origin", "good", "bad"]
+
+
+def _bad_branch_checked_out_and_pushed_after_main(repo: Repo) -> list:
+    repo.commit("more", OK_ID, path="more.txt")
+    repo.git("switch", "-q", "-c", "feature")
+    _bad(repo, "wip")
+    return ["origin", "main", "feature"]
+
+
+def _push_all_with_one_bad_branch(repo: Repo) -> list:
+    repo.git("switch", "-q", "-c", "zfeat")
+    _bad(repo, "wip")
+    repo.git("switch", "-q", "-c", "afeat", "main")
+    repo.commit("fix", OK_ID, path="a.txt")
+    repo.git("switch", "-q", "main")
+    return ["--all", "origin"]
+
+
+def _detached_head_pushed_after_main(repo: Repo) -> list:
+    repo.commit("more", OK_ID, path="more.txt")
+    repo.git("switch", "-q", "--detach")
+    _bad(repo, "wip")
+    return ["origin", "main", "HEAD:refs/heads/x"]
+
+
+def _tag_pushed_after_main(repo: Repo) -> list:
+    repo.commit("more", OK_ID, path="more.txt")
+    repo.git("switch", "-q", "--detach")
+    _bad(repo, "wip")
+    repo.git("tag", "v1")
+    repo.git("switch", "-q", "main")
+    return ["origin", "main", "v1"]
+
+
+def _clean_branch_while_main_has_a_bad_commit(repo: Repo) -> list:
+    repo.git("switch", "-q", "-c", "feature")
+    repo.commit("fix", OK_ID, path="a.txt")
+    repo.git("switch", "-q", "main")
+    _bad(repo, "local-only")
+    return ["origin", "feature"]
+
+
+def _clean_multi_ref(repo: Repo) -> list:
+    repo.commit("more", OK_ID, path="more.txt")
+    repo.git("switch", "-q", "-c", "feature")
+    repo.commit("fix", OK_ID, path="a.txt")
+    return ["origin", "main", "feature"]
+
+
+def _clean_push_all(repo: Repo) -> list:
+    repo.git("switch", "-q", "-c", "zfeat")
+    repo.commit("z", OK_ID, path="z.txt")
+    repo.git("switch", "-q", "-c", "afeat", "main")
+    repo.commit("a", OK_ID, path="a.txt")
+    repo.git("switch", "-q", "main")
+    return ["--all", "origin"]
+
+
+def _case_id(make_push) -> str:
+    return make_push.__name__.lstrip("_")
+
+
+@pytest.mark.skipif(sys.platform == "win32", reason="the hook entry is POSIX")
+@pytest.mark.parametrize(
+    "make_push",
+    [
+        _other_branch,
+        _bad_branch_checked_out_and_pushed_second,
+        _bad_branch_checked_out_and_pushed_after_main,
+        _push_all_with_one_bad_branch,
+        _detached_head_pushed_after_main,
+        _tag_pushed_after_main,
+        _clean_branch_while_main_has_a_bad_commit,
+    ],
+    ids=_case_id,
+)
+def test_real_push_is_refused_while_any_local_ref_has_a_bad_commit(
+    hooked_repo, make_push
+):
+    remote_before = hooked_repo.git("ls-remote", "origin")
+    push = hooked_repo.push(*make_push(hooked_repo))
+
     assert push.returncode != 0
     assert "real.name@corp.example" in push.stdout + push.stderr
-    assert repo.git("ls-remote", "origin", "refs/heads/feature") == ""
+    assert ".demotool/" in push.stdout + push.stderr
+    assert hooked_repo.git("ls-remote", "origin") == remote_before
+
+
+@pytest.mark.skipif(sys.platform == "win32", reason="the hook entry is POSIX")
+@pytest.mark.parametrize("make_push", [_clean_multi_ref, _clean_push_all], ids=_case_id)
+def test_real_clean_push_sends_every_branch(hooked_repo, make_push):
+    push = hooked_repo.push(*make_push(hooked_repo))
+
+    assert push.returncode == 0, push.stdout + push.stderr
+    heads = hooked_repo.git(
+        "for-each-ref", "--format=%(objectname)\t%(refname)", "refs/heads"
+    )
+    assert hooked_repo.git("ls-remote", "--heads", "origin") == heads
