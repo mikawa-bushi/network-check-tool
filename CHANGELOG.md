@@ -30,10 +30,19 @@ releases.
 - The pre-push gates (`scripts/check_commit_identity.py` and
   `scripts/check_ai_traces.py`) check every commit a push could send that the
   remote lacks: the first pushed ref, HEAD, every local branch and every tag.
-- `publish.yml` runs the test workflow, then the tag check and build, then
-  the PyPI upload. `bin/publish.sh` is gone.
-- The CI job that committed Black's formatting is gone. CI checks Black and
-  ruff, and ruff 0.15.17 is a dev dependency.
+- `publish.yml` runs the test workflow, which also builds the sdist and wheel.
+  It then checks that the tag names the version of that wheel, and uploads
+  exactly those files to PyPI. `bin/publish.sh` is gone.
+- The CI job that committed Black's formatting is gone, and so is
+  `black-formatter.yml`. A lint job in the test workflow checks Black and ruff
+  at the versions the pre-commit hooks use. ruff 0.15.17 is a dev dependency.
+- CI runs once per commit: on pull requests, and on pushes to main. Before, it
+  ran twice for each commit of a pull request.
+- Every pull request builds the sdist and wheel, checks them with
+  `twine check --strict`, and installs the wheel on Python 3.11 without the
+  source tree.
+- The GitHub actions are on their Node.js 24 releases. CI installs Poetry
+  2.5.1, the version that wrote `poetry.lock`, instead of the latest one.
 
 ### Removed
 - Windows: the exe (`packaging/windows`), its build workflow
