@@ -1,7 +1,8 @@
 name: Publish to PyPI
 
-# A v* tag releases netdiag: the full test suite runs first, then the tag must
-# name the package version. Only then do the sdist and wheel go to PyPI.
+# A v* tag releases netdiag. The test workflow runs the full suite and builds
+# the sdist and wheel. Then the tag must name the version of that wheel, and
+# exactly those files go to PyPI.
 on:
   push:
     tags:
@@ -14,36 +15,8 @@ jobs:
   tests:
     uses: ./.github/workflows/tests.yml
 
-  build:
-    needs: tests
-    runs-on: ubuntu-latest
-    steps:
-    - name: Checkout code
-      uses: actions/checkout@v4
-
-    - name: Set up Python
-      uses: actions/setup-python@v5
-      with:
-        python-version: '3.12'
-
-    - name: Check the tag matches the package version
-      run: |
-        version=$(python -c "import tomllib; print(tomllib.load(open('pyproject.toml', 'rb'))['tool']['poetry']['version'])")
-        test "$GITHUB_REF_NAME" = "v$version" || { echo "tag $GITHUB_REF_NAME, package version $version"; exit 1; }
-
-    - name: Build the sdist and wheel
-      run: |
-        python -m pip install --upgrade build
-        python -m build
-
-    - name: Upload dist
-      uses: actions/upload-artifact@v4
-      with:
-        name: dist
-        path: dist/
-
   publish:
-    needs: build
+    needs: tests
     runs-on: ubuntu-latest
     environment:
       name: pypi
@@ -53,10 +26,15 @@ jobs:
 
     steps:
     - name: Download dist
-      uses: actions/download-artifact@v4
+      uses: actions/download-artifact@v8
       with:
         name: dist
         path: dist/
+
+    - name: Check the tag matches the package version
+      run: |
+        wheel="dist/network_check_tool-${GITHUB_REF_NAME#v}-py3-none-any.whl"
+        test -f "$wheel" || { echo "tag $GITHUB_REF_NAME does not match the built package:"; ls dist; exit 1; }
 
     - name: Publish
       uses: pypa/gh-action-pypi-publish@7245906fb61fa33a13554f9d5fb856fe61758086  # v1.14.3
