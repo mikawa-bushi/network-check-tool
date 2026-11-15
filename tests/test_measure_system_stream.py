@@ -1,8 +1,8 @@
 """Streaming through the OS ``ping`` (soaks of IPv6 devices, or of IPv4 ones
 on a host without unprivileged ICMP sockets).
 
-A scripted stand-in for ``ping`` plays back reconstructed iputils, BSD and
-Japanese ping.exe output line by line, with the timing a real ping has.
+A scripted stand-in for ``ping`` plays back reconstructed iputils and BSD
+output line by line, with the timing a real ping has.
 """
 
 import json
@@ -12,7 +12,6 @@ import time
 
 import pytest
 
-from netdiag.core import util
 from netdiag.core.util import CommandResult
 from netdiag.measure import icmp as icmpmod
 
@@ -59,8 +58,7 @@ def fake_ping(tmp_path, monkeypatch):
     monkeypatch.setattr(icmpmod, "_RUN_SECONDS", 1.0, raising=False)
     monkeypatch.setattr(icmpmod, "build_ping_args", lambda *a, **k: argv)
 
-    def play(*runs, windows=False):
-        monkeypatch.setattr(icmpmod, "is_windows", lambda: windows)
+    def play(*runs):
         plan.write_text(json.dumps(list(runs)), encoding="utf-8")
         return tmp_path / "runs.exited"
 
@@ -160,35 +158,6 @@ def test_ping_cut_short_by_ctrl_c_does_not_count_unsent_requests_as_lost(
     assert all(sent_at <= stopped for sent_at, *_ in samples)
 
 
-def test_japanese_ping_exe_lines_stream_in_order_as_they_print(fake_ping, monkeypatch):
-    # Reconstructed Japanese Windows ping.exe output, cp932 with CRLF, read as
-    # on a Japanese Windows PC, whose console code page is 932.
-    monkeypatch.setattr(util, "_fallback_encodings", lambda: ["cp932"])
-    lines = [
-        "",
-        f"{HOST} に ping を送信しています 32 バイトのデータ:",
-        f"{HOST} からの応答: バイト数 =32 時間 <1ms TTL=64",
-        "要求がタイムアウトしました。",
-        f"{HOST} からの応答: バイト数 =32 時間 =3ms TTL=64",
-        "",
-        f"{HOST} の ping 統計:",
-        "    パケット数: 送信 = 3、受信 = 2、損失 = 1 (33% の損失)、",
-    ]
-    delays = [0.0, 0.0, 0.05, 0.3, 0.05, 0.05, 0.0, 0.0]
-    exited = fake_ping(
-        {
-            "steps": [list(s) for s in zip(delays, lines)],
-            "encoding": "cp932",
-            "newline": "\r\n",
-        },
-        windows=True,
-    )
-    samples, _total, _ = stream(5.0, until=exited.exists)
-    assert [s[1] for s in samples[:3]] == [0.5, None, 3.0]
-    assert samples[1][2] == "要求がタイムアウトしました。"
-    assert all(0 <= arrived - sent_at < 0.6 for sent_at, _r, _e, arrived in samples)
-
-
 def test_stream_ends_early_with_the_reason_when_ping_cannot_run(fake_ping, monkeypatch):
     fake_ping(iputils(5))
     monkeypatch.setattr(
@@ -202,7 +171,6 @@ def test_stream_ends_early_with_the_reason_when_ping_cannot_run(fake_ping, monke
 
 
 def test_batch_ping_without_a_route_is_all_lost_not_cannot_measure(monkeypatch):
-    monkeypatch.setattr(icmpmod, "is_windows", lambda: False)
     monkeypatch.setattr(icmpmod, "have", lambda cmd: True)
     no_route = CommandResult(
         False, 2, "", "ping: connect: Network is unreachable\n", True

@@ -32,7 +32,7 @@ from .inventory import Device
 from .measure import ping_many
 from .measure.icmp import addresses_for
 from .netinfo import model as nm
-from .probes._common import default_ping_count, oscmd
+from .probes._common import default_ping_count
 from .probes.device import DeviceEvidence
 from .probes.tcp import format_target, parse_tcp_targets
 
@@ -244,7 +244,7 @@ class LinkErrorsProbe(Probe):
                     "動力線・インバータからケーブルを離す、シールドケーブルにする",
                     "Route the cable away from power lines/inverters; use shielded cable",
                 ),
-                oscmd("ip -s link show <iface>", "Get-NetAdapterStatistics"),
+                "ip -s link show <iface>",
             ],
         )
 
@@ -282,7 +282,7 @@ def run_check(
     netinfo.clear_cache()
     hn = netinfo.snapshot()
     cfg["_netinfo"] = hn
-    # The snapshot already carries counters (sysfs / Get-NetAdapterStatistics),
+    # The snapshot already carries counters (sysfs / netstat -ibn),
     # so the "before" side costs nothing extra.
     counters_before = {i.name: i.stats for i in hn.interfaces if i.stats is not None}
     if not counters_before:
@@ -397,8 +397,8 @@ def _check_devices(
         stats = ping_many(targets, count=count, interval=interval, timeout=timeout)
         window = time.monotonic() - t0
     neigh_after = {n.ip: n for n in netinfo.neighbors()} if targets else {}
-    # Silent devices on an ARP link: ask for their ARP answer directly (on
-    # Windows, SendARP returns a definite "nobody answered"), in parallel.
+    # Silent devices on an ARP link: wait for their ARP entry to settle, in
+    # parallel.
     silent = [
         ip
         for ip in targets
@@ -533,7 +533,7 @@ def _no_sign_of_life(
 def _absent_or_none(ip: str, hn: netinfo.HostNetwork, table: Dict[str, Any]):
     """No ARP entry after pinging an address on an ARP link means no answer.
 
-    (Windows' ``arp -a`` and macOS list only resolved entries; Linux keeps a
+    (macOS lists only resolved entries; Linux keeps a
     FAILED/INCOMPLETE entry, which the table lookup already returns.) A tunnel
     or point-to-point link has no ARP, so a missing entry there says nothing.
     """

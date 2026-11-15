@@ -11,7 +11,7 @@ from netdiag.cli import cli
 from netdiag.collect import Captured, Masker, plan, run_collect
 from netdiag.netinfo.model import KIND_ETHERNET, Address, HostNetwork, Interface, Route
 
-WIN_ARP_JA = (
+SHIFT_JIS_TABLE = (
     "インターフェイス: 192.168.1.14 --- 0xd\r\n"
     "  インターネット アドレス 物理アドレス           種類\r\n"
     "  192.168.1.1           cc-1a-fa-c0-a0-6e     動的\r\n"
@@ -41,7 +41,7 @@ def test_mac_keeps_vendor_prefix_and_is_consistent():
 
 def test_shift_jis_text_survives_masking():
     m = Masker()
-    out = m.mask(WIN_ARP_JA)
+    out = m.mask(SHIFT_JIS_TABLE)
     text = out.decode("cp932")
     assert "インターフェイス" in text and "動的" in text and "静的" in text
     assert "192.168" not in text and "cc-1a-fa-" in text and "c0-a0-6e" not in text
@@ -62,14 +62,14 @@ def test_ipv6_ssid_host_user_and_domains():
 
 
 def test_plan_covers_each_os():
-    win = {c.name for c in plan("windows", "192.168.1.1", ["192.168.3.39"])}
+    lin = {c.name for c in plan("linux", "192.168.1.1", ["192.168.3.39"])}
     assert {
-        "ps_collect.json",
-        "arp_a.txt",
-        "route_print.txt",
+        "ip_neigh.json",
+        "ip_route.json",
         "ping_gateway.txt",
+        "tracepath_gateway.txt",
         "ping_target_0.txt",
-    } <= win
+    } <= lin
     lin = {c.name for c in plan("linux", None, [], ping=False)}
     assert "ip_addr.json" in lin and "ping_group_range.txt" in lin
     assert not any(
@@ -94,7 +94,7 @@ def _fake_env(monkeypatch):
     )
     monkeypatch.setattr(netinfo, "collect", lambda: hn)
     monkeypatch.setattr(netinfo, "snapshot", lambda max_age=5.0: hn)
-    monkeypatch.setattr(collect_mod, "os_name", lambda: "windows")
+    monkeypatch.setattr(collect_mod, "os_name", lambda: "linux")
 
     import netdiag.measure as measure
     import netdiag.runner as runner
@@ -127,29 +127,27 @@ def test_run_collect_writes_raw_bytes_and_interpretation(monkeypatch, tmp_path):
 
     def runner(cmd):
         seen.append(cmd.name)
-        if cmd.name == "arp_a.txt":
-            return Captured(cmd.name, cmd.args, 0, WIN_ARP_JA)
-        if cmd.name == "netsh_wlan.txt":
+        if cmd.name == "ip_neigh.txt":
+            return Captured(cmd.name, cmd.args, 0, SHIFT_JIS_TABLE)
+        if cmd.name == "iw_dev.txt":
             return Captured(cmd.name, cmd.args, None, found=False)
-        return Captured(cmd.name, cmd.args, 0, b"ok 192.168.3.39\r\n", b"")
+        return Captured(cmd.name, cmd.args, 0, b"ok 192.168.3.39\n", b"")
 
     out = tmp_path / "c.zip"
     res = run_collect(out, mask=True, targets=["192.168.3.39"], runner=runner)
-    assert "netsh_wlan.txt" in res.missing
+    assert "iw_dev.txt" in res.missing
     z = zipfile.ZipFile(out)
     names = z.namelist()
     assert (
         "netdiag-collect/README.txt" in names
         and "netdiag-collect/netdiag/check.json" in names
     )
-    arp = z.read("netdiag-collect/commands/arp_a.txt.out")
+    arp = z.read("netdiag-collect/commands/ip_neigh.txt.out")
     assert arp.decode("cp932").startswith(
         "インターフェイス: 10."
     )  # raw cp932 bytes, masked
     manifest = json.loads(z.read("netdiag-collect/manifest.json"))
-    assert manifest["masked"] is True and manifest["os"] == "windows"
-    ps = next(c for c in manifest["commands"] if c["name"] == "ps_collect.json")
-    assert ps["args"][-1] == "<script>"  # the long script is not repeated
+    assert manifest["masked"] is True and manifest["os"] == "linux"
     ping = json.loads(z.read("netdiag-collect/netdiag/ping.json"))
     assert all(not k.startswith("192.168.") for k in ping)
     assert "ping_target_0.txt" in seen
@@ -164,7 +162,7 @@ def test_no_mask_keeps_values(monkeypatch, tmp_path):
         runner=lambda cmd: Captured(cmd.name, cmd.args, 0, b"192.168.3.39"),
     )
     z = zipfile.ZipFile(out)
-    assert z.read("netdiag-collect/commands/arp_a.txt.out") == b"192.168.3.39"
+    assert z.read("netdiag-collect/commands/ip_neigh.txt.out") == b"192.168.3.39"
 
 
 def test_collect_command(monkeypatch, tmp_path):

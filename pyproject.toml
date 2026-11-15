@@ -17,7 +17,6 @@ classifiers = [
     "Intended Audience :: Developers",
     "Natural Language :: Japanese",
     "Natural Language :: English",
-    "Operating System :: Microsoft :: Windows",
     "Operating System :: POSIX :: Linux",
     "Operating System :: MacOS",
     "Topic :: System :: Networking",

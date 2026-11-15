@@ -4,7 +4,9 @@
 answers *"is it reachable?"*, netdiag answers **"what is broken, why, and what
 should I check next?"** — for this PC and for every device on the line (PLCs,
 HMIs, robot controllers, sensors, gateways). It runs offline, unprivileged, on
-Windows, Linux and macOS, with the standard library and `click` only.
+Linux and macOS, with the standard library and `click` only. From 0.6.0 it does
+not run on Windows: it prints one sentence and exits 4. On Windows, use 0.5.0
+(`pip install "network-check-tool==0.5.0"`).
 
 It is installed with `pip install network-check-tool`. For a task-oriented
 introduction (in Japanese) see the [README](../README.md).
@@ -23,16 +25,13 @@ introduction (in Japanese) see the [README](../README.md).
 
 - **`netinfo/`** collects this host's network configuration once per run into
   one OS-neutral model (`HostNetwork`: interfaces, addresses with flags such as
-  *duplicate*, routes, ARP, resolvers). Linux uses `ip -j` + sysfs, Windows one
-  PowerShell call with `ConvertTo-Json` (falling back to `route print`/`arp -a`,
-  parsed language-independently), macOS `ifconfig`/`netstat`/`arp`/`scutil`.
+  *duplicate*, routes, ARP, resolvers). Linux uses `ip -j` + sysfs, macOS
+  `ifconfig`/`netstat`/`arp`/`scutil`.
 - **`measure/`** holds the measurement primitives every probe shares:
   - `icmp.py` — an fping-style pinger on an unprivileged ICMP datagram socket
     (one thread, many targets, paced at ≤200 packets/s, microsecond timing,
     duplicate-reply detection), falling back to the system `ping`, whose output
-    is parsed per reply line in any language (Japanese/English Windows,
-    iputils, BusyBox, macOS). Windows' own statistics count "destination host
-    unreachable" replies as received; netdiag does not.
+    is parsed per reply line (iputils, BusyBox, macOS).
   - `tcp.py` — TCP connect checks with an honest three-way verdict.
   - `dns.py` — a minimal UDP DNS client to query each resolver directly.
   - `stats.py` — Wilson 95 % interval for loss, percentiles, jitter.
@@ -64,9 +63,9 @@ introduction (in Japanese) see the [README](../README.md).
 | `ipconfig` | L3 | Duplicate IP flagged by the OS, the same subnet on two NICs, default gateways on several NICs, masks broader than the private block |
 | `gateway` | L3 | Default gateway reachability with full ping statistics; "no gateway" is *not applicable* on a closed network |
 | `neighbor` | L2 | ARP table: duplicate IPs, unresolved/failed gateway MAC |
-| `firewall` | L4 | Local drop/reject rules (nftables/iptables) or Windows Firewall profiles |
+| `firewall` | L4 | Local drop/reject rules (nftables/iptables, Linux) |
 | `system`, `clock` | SYSTEM | Memory/CPU/conntrack exhaustion; NTP synchronisation |
-| `wifi` | L1 | Signal, SSID, rate (`iw` on Linux, `netsh wlan` on Windows, any language) |
+| `wifi` | L1 | Signal, SSID, rate (`iw`, Linux) |
 | `tcp`, `http`, `tls` | L4/L7 | Only when `--tcp` / `--http-url` are given |
 | `external`, `dns`, `dualstack` | L3/L7 | Only with `--internet` (or `--external-ip` / `--dns-name`) |
 | `traceroute`, `icmp` | L3 | Opt-in (`--only traceroute`); `icmp` backs ad-hoc pings |
@@ -98,7 +97,7 @@ from before proves nothing — the device may have died seconds ago.
 | `netdiag collect [--target IP] [--no-mask] [--no-ping]` | Zip the raw output of the OS commands netdiag parses (masked) for bug reports |
 | `netdiag explain [PROBE]` | With no `PROBE`, every check with its layer; with one, what it does, the manual commands, and the next steps |
 | `netdiag scenario FILE` | A YAML/JSON/TOML scenario: `checks` (host probes), `devices` (device list), `config`; runs and exits like `check` |
-| `netdiag snapshot save/list/diff [NAME]` | Save the network configuration while it works; diff later ("what changed?"). Windows, macOS and Linux |
+| `netdiag snapshot save/list/diff [NAME]` | Save the network configuration while it works; diff later ("what changed?"). macOS and Linux |
 | `netdiag peer serve` / `peer test ADDR` | Two-host LAN quality (loss/jitter/throughput) for closed networks; the `test` end must be 0.6.0 or later |
 
 Global options: `--lang ja|en` (default: `NETDIAG_LANG`, then the locale, else
@@ -173,12 +172,12 @@ with bounded memory, so it can run for a shift:
   outage already gives 1. The heatmap draws such time grey.
 - **This PC**: NIC error counters that grew, and on Linux link drops
   (`carrier_changes`), are put on the same timeline (per `--bucket`). On
-  Windows/macOS a drop of the PC's own link shows up as an *all devices*
-  incident, which already points at this PC's side.
+  macOS a drop of the PC's own link shows up as an *all devices* incident,
+  which already points at this PC's side.
 - **Time**: the run is timed on a steady clock that keeps counting while the
-  PC sleeps, so a clock change (NTP, w32time) neither ends nor stretches it.
-  Windows' steady clock may stop during sleep, so there a forward clock step
-  of more than 30 s is counted as sleep: time not measured. Times shown
+  PC sleeps (CLOCK_BOOTTIME on Linux, CLOCK_MONOTONIC on macOS), so a clock
+  change (NTP) neither ends nor stretches it, and time asleep is time not
+  measured. Times shown
   follow the PC clock at the start; the report notes a clock change. A run
   over midnight shows dates.
 - **Live**: outage start/end lines on stderr as they happen; one line per
@@ -200,25 +199,24 @@ still reports and exits with its verdict.
 
 ## Field data (`netdiag collect`)
 
-`netdiag collect` runs the commands netdiag itself parses on this OS (Windows:
-the PowerShell collector, `ipconfig /all`, `route print`, `arp -a`, `netsh`,
-pings to the gateway, an unused TEST-NET address, an unknown host and loopback;
-Linux/macOS: `ip -j`, `/sys/class/net`, `ifconfig`, `netstat`, `ping`…) and
-stores the **raw bytes** (no decoding, so cp932 output stays inspectable) next
-to netdiag's own interpretation (`netinfo.json`, `check.json`, `ping.json`).
+`netdiag collect` runs the commands netdiag itself parses on this OS (Linux:
+`ip -j`, `/sys/class/net`, `iw`, `tracepath`; macOS: `ifconfig`, `netstat`,
+`scutil`; both: pings to the gateway, an unused TEST-NET address and an
+unknown host) and stores the **raw bytes** (no decoding) next to netdiag's
+own interpretation (`netinfo.json`, `check.json`, `ping.json`).
 
 Masking is on by default and preserves structure: IPv4 addresses are mapped
 so that /16 and /24 relationships and the last octet survive (each /16 gets
 its own /16 in the private ranges, from `10.100.x.x` on, and `.0` and `.255`
 stay; netmasks, loopback, link-local and public resolvers are kept). Coarser
 prefixes such as a `/8` route are not kept. MACs keep the vendor (OUI) half,
-in every form: `aa-bb-…`, `aa:bb:…`, the space-separated list in
-`route print`, the MAC inside a DHCPv6 DUID or an interface name (`enx…`,
+in every form: `aa-bb-…`, `aa:bb:…`, the MAC inside a DHCPv6 DUID or an
+interface name (`enx…`,
 `wlx…`), and a MAC written without separators once it appears in any other
 form. The same adapter gets the same masked MAC in every file.
-IPv6 keeps the prefix type. Host names, user names, SSIDs (netsh SSID and
-Profile lines, `iw`, the Wi-Fi check's results) and internal domains (DNS
-suffixes and search domains from `ipconfig`, `resolv.conf` and `scutil`, plus
+IPv6 keeps the prefix type. Host names, user names, SSIDs (`iw`, the Wi-Fi
+check's results) and internal domains (search domains from `resolv.conf` and
+`scutil`, plus
 any name with three or more labels) are replaced in every file of the zip.
 `--no-mask` keeps everything (internal use only). An output path that cannot
 be written exits 4.
@@ -226,22 +224,10 @@ be written exits 4.
 ## Ping back-ends
 
 `netdiag.measure.icmp` picks, per run: an unprivileged ICMP socket (Linux with
-`net.ipv4.ping_group_range`, macOS), the Windows ICMP API (`IcmpSendEcho` via
-ctypes — no admin rights, sub-millisecond timing with `perf_counter`, duplicate
-replies counted), else the OS `ping` command (≈1 request/s on Windows; netdiag
-adjusts `--duration` accordingly). `NETDIAG_PING_METHOD=socket|win|system`
-forces one. On Windows, ARP presence is also asked directly with `SendARP`
-instead of reading `arp -a`.
-
-## Windows exe
-
-`netdiag.exe` (built by `.github/workflows/windows-exe.yml` with PyInstaller,
-attached to `v*` releases) bundles Python. Started with no arguments it checks
-this PC; with a single device-list path (what Windows passes on drag & drop) it
-checks those devices. Either way it prints the result, saves an HTML report
-(next to the exe / the list, falling back to the home folder) and opens it,
-then waits for Enter so the console window stays. Any other arguments run the
-normal CLI. Set `NETDIAG_NO_OPEN=1` to skip opening the browser.
+`net.ipv4.ping_group_range`, macOS), else the OS `ping` command (at most one
+request per 0.2 s unprivileged; netdiag adjusts `--duration` accordingly).
+IPv6 always goes through the OS `ping`. `NETDIAG_PING_METHOD=socket|system`
+forces one.
 
 ## Device lists and scenarios
 
@@ -313,7 +299,7 @@ those of `check`.
 `netdiag snapshot save NAME` records this PC's adapters (state, speed,
 duplex, MTU, MAC), IPv4 addresses and IPv6 prefixes, routes, DNS servers
 (the real upstream servers under systemd-resolved), ARP entries, the hosts
-file and, on Windows, the firewall profiles; on Linux also IPv6 routes, a few
+file; on Linux also IPv6 routes, a few
 network sysctls and the listening TCP addresses. `snapshot diff NAME` compares
 them as sets of stable lines: counters, lease times, ARP states, IPv6 privacy
 addresses, Wi-Fi rates and line order never count as a change, and an ARP
@@ -360,15 +346,14 @@ narrative. Use `netdiag.i18n.Text(ja, en)` / `tr(ja, en)` for bilingual text.
 ```
 netdiag/
 ├── core/          CheckResult (+ stable code), Status, Probe (scope/default/advice), registry, safe subprocess
-├── netinfo/       model.py + linux.py / windows.py / macos.py collectors, snapshot cache
-├── measure/       icmp.py (socket / Windows API / system ping, streaming), winicmp.py, tcp.py, dns.py, stats.py
+├── netinfo/       model.py + linux.py / macos.py collectors, snapshot cache
+├── measure/       icmp.py (socket / system ping, streaming), tcp.py, dns.py, stats.py
 ├── probes/        interface, link, ipconfig, gateway, neighbor, icmp/external, dns, dualstack,
 │                  tcp, firewall, http, tls, system/clock, wifi, traceroute, device (route/reach/ports)
 ├── diagnosis/     engine (dep-graph, transitive gating), rules (advice)
 ├── runner.py      run_check(), live NIC-error / link-flap probe
 ├── soak.py        long-run recorder: outages, incidents, NIC events (report/soak.py renders it)
 ├── collect.py     raw command capture + structure-preserving masking
-├── launcher.py    netdiag.exe: double-click / drag & drop
 ├── inventory.py   device lists (CSV/YAML/JSON/TOML), port presets
 ├── scan.py        subnet discovery
 ├── oui.py         MAC vendor lookup from an OUI database already on the system

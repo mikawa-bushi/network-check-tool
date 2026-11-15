@@ -1,7 +1,7 @@
 """What the command line promises: options, output files, messages, exit codes.
 
 The measurement layer is replaced by a fake; every test drives the real
-``netdiag.cli.main`` entry point, the same one the console script and the exe use.
+``netdiag.cli.main`` entry point, the same one the console script uses.
 """
 
 import csv
@@ -13,7 +13,6 @@ import re
 import subprocess
 import sys
 from pathlib import Path
-from types import SimpleNamespace
 
 import pytest
 
@@ -94,10 +93,10 @@ def test_unusable_http_url_is_a_usage_error(run, url):
 # ------------------------------------------------------------ report output
 
 
-def _windows_redirected(run, *args):
-    """Run with stdout as Python sets it up on Japanese Windows when redirected
-    to a file (the ANSI code page, newline translation); return its bytes."""
-    stream = io.TextIOWrapper(io.BytesIO(), encoding="cp932", newline="\r\n")
+def _redirected(run, *args):
+    """Run with stdout as Python sets it up under LANG=ja_JP.eucJP when
+    redirected to a file; return its bytes."""
+    stream = io.TextIOWrapper(io.BytesIO(), encoding="euc_jp")
     real, sys.stdout = sys.stdout, stream
     try:
         assert run(*args)[0] == 0
@@ -111,12 +110,12 @@ def _windows_redirected(run, *args):
 def test_machine_formats_reach_redirected_stdout_as_the_file_bytes(run, tmp_path, fmt):
     saved = tmp_path / f"r.{fmt}"
     assert run("check", "-o", str(saved))[0] == 0
-    piped = _windows_redirected(run, "check", "--format", fmt)
+    piped = _redirected(run, "check", "--format", fmt)
     assert piped.rstrip(b"\r\n") == saved.read_bytes().rstrip(b"\r\n")
 
 
 def test_csv_on_redirected_stdout_has_one_line_end_per_row(run):
-    data = _windows_redirected(run, "check", "--format", "csv")
+    data = _redirected(run, "check", "--format", "csv")
     assert data.startswith(b"\xef\xbb\xbf") and b"\r\r\n" not in data
     rows = list(csv.reader(io.StringIO(data.decode("utf-8-sig"), newline="")))
     assert [] not in rows and len(rows) == 2
@@ -268,7 +267,7 @@ def test_usage_error_after_lang_is_in_that_language(run, monkeypatch):
     assert code == 4 and err.startswith("指定に誤りがあります")
 
 
-# ------------------------------------------------- Windows console (simulated)
+# ---------------------------------------------- interactive console (simulated)
 
 
 class _Console(io.TextIOWrapper):
@@ -277,54 +276,6 @@ class _Console(io.TextIOWrapper):
 
     def fileno(self):
         return 1
-
-
-class _Kernel32:
-    """GetConsoleMode/SetConsoleMode of a console that may refuse VT mode."""
-
-    def __init__(self, vt_supported):
-        self.vt_supported = vt_supported
-        self.mode = 0x0003
-
-    def GetConsoleMode(self, handle, mode_ref):
-        mode_ref._obj.value = self.mode
-        return 1
-
-    def SetConsoleMode(self, handle, mode):
-        if not self.vt_supported:
-            return 0
-        self.mode = mode
-        return 1
-
-
-def _check_on_windows_console(run, monkeypatch, vt_supported):
-    import ctypes
-
-    from netdiag.cli import _app
-
-    kernel32 = _Kernel32(vt_supported)
-    monkeypatch.setattr(_app, "_WINDOWS", True, raising=False)
-    monkeypatch.setattr(ctypes, "windll", SimpleNamespace(kernel32=kernel32), False)
-    monkeypatch.setitem(sys.modules, "msvcrt", SimpleNamespace(get_osfhandle=id))
-    console = _Console(io.BytesIO(), encoding="utf-8")
-    real, sys.stdout = sys.stdout, console
-    try:
-        assert run("check")[0] == 0
-        console.flush()
-        return console.buffer.getvalue().decode("utf-8"), kernel32
-    finally:
-        sys.stdout = real
-
-
-def test_windows_console_is_switched_to_vt_mode_before_colour(run, monkeypatch):
-    out, kernel32 = _check_on_windows_console(run, monkeypatch, vt_supported=True)
-    assert kernel32.mode & 0x0004
-    assert "\x1b[" in out
-
-
-def test_windows_console_without_vt_mode_gets_no_escape_codes(run, monkeypatch):
-    out, _ = _check_on_windows_console(run, monkeypatch, vt_supported=False)
-    assert "Result:" in out and "\x1b" not in out
 
 
 # ------------------------------------------------------------- next steps

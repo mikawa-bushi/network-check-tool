@@ -1,6 +1,6 @@
 """OS-neutral model of this host's network configuration.
 
-Every platform collector (Linux ``ip -j``/sysfs, Windows PowerShell, macOS
+Every platform collector (Linux ``ip -j``/sysfs, macOS
 ``ifconfig``/``netstat``) fills the same dataclasses, so probes reason about
 interfaces, routes and ARP entries without branching on the OS.
 """
@@ -9,7 +9,7 @@ from __future__ import annotations
 
 import ipaddress
 from dataclasses import asdict, dataclass, field
-from typing import Any, Callable, Dict, List, Optional, Tuple
+from typing import Callable, Dict, List, Optional, Tuple
 
 # Normalised neighbour (ARP) states. Only REACHABLE/PERMANENT prove the device
 # answered ARP recently; STALE/DELAY/PROBE are inconclusive (old cache entries);
@@ -38,8 +38,8 @@ NO_ARP_FLAGS = frozenset({"NOARP", "POINTOPOINT"})
 def normalize_mac(mac: Optional[str]) -> Optional[str]:
     """``AA-BB-CC-D-E-F`` / ``aa:bb:cc:dd:ee:ff`` -> ``aa:bb:cc:0d:0e:0f``.
 
-    macOS drops leading zeros and Windows uses dashes; normalising lets MACs
-    from different tools (and runs) be compared directly.
+    macOS drops leading zeros and device lists often use dashes; normalising
+    lets MACs from different tools (and runs) be compared directly.
     """
     if not mac:
         return None
@@ -277,11 +277,8 @@ class HostNetwork:
     resolvers: List[str] = field(default_factory=list)
     source: str = ""
     errors: List[str] = field(default_factory=list)
-    # Platform-specific facts gathered in the same collection pass (e.g. the
-    # Windows firewall profiles), so probes need no extra PowerShell start.
-    extras: Dict[str, Any] = field(default_factory=dict)
     # Linux policy-routing lookups in priority order. Empty: one table holds
-    # every route (Windows, macOS, Linux without ``ip rule``).
+    # every route (macOS, Linux without ``ip rule``).
     rules: List[RouteRule] = field(default_factory=list)
 
     # -- queries ---------------------------------------------------------------

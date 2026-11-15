@@ -94,7 +94,6 @@ class TcpProbe(Probe):
         "but TCP refused/filtered points at a firewall or a dead service.",
     )
     manual_commands = [
-        "Test-NetConnection <host> -Port <port>",
         "nc -vz <host> <port>",
     ]
 

@@ -1,7 +1,7 @@
 """Collect the raw command output netdiag depends on, for field verification.
 
-netdiag's Windows support rests on parsing localised tools (``ping``,
-``arp``, ``route``, PowerShell). ``netdiag collect`` runs exactly those
+netdiag rests on parsing the output of OS tools (``ping``, ``ip``,
+``arp``, ``route``). ``netdiag collect`` runs exactly those
 commands on a real shop-floor PC and stores their **raw bytes** (before any
 decoding) plus netdiag's own interpretation in one zip. A developer can turn
 the result into test fixtures, and a mismatch between raw output and
@@ -70,10 +70,6 @@ _MAC_RE = re.compile(
     + rb"\2".join([_HEX] * 5)
     + rb"(?![0-9A-Fa-f:]|-[0-9A-Fa-f])"
 )
-# ``route print`` lists each adapter as ``12...00 15 5d 01 02 03 ......Name``.
-_MAC_SPACED_RE = re.compile(
-    rb"(?<=\.\.\.)" + _HEX + rb"( )" + rb"\2".join([_HEX] * 5) + rb"(?= \.)"
-)
 # Twelve hex digits with no separator: a MAC inside an interface name
 # (systemd's ``enx``/``wlx``/``wwx``/``slx`` + MAC) or a version-1 GUID.
 _MAC_COMPACT_RE = re.compile(rb"(?<![0-9A-Fa-f])([0-9A-Fa-f]{12})(?![0-9A-Fa-f])")
@@ -96,34 +92,12 @@ _DOMAIN_SHAPE = re.compile(
 )
 
 
-def _line_values(key: str) -> bytes:
-    """``key`` in UTF-8 or cp932, then ``:`` and the value to the end of the line."""
-    keys = {re.escape(key.encode(enc)) for enc in ("utf-8", "cp932")}
-    return (
-        rb"(?m)^[ \t]*(?:"
-        + b"|".join(sorted(keys))
-        + rb")[ \t]*:[ \t]*(\S[^\r\n]*?)[ \t]*\r?$"
-    )
-
-
-# Where SSIDs appear: netsh (``SSID :``, ``Profile :``), iw (``ssid X``,
-# ``SSID: X``).
+# Where SSIDs appear in iw output (``SSID: X``, ``ssid X``).
 _SSID_RES = [
-    re.compile(_line_values("SSID")),
-    re.compile(_line_values("Profile")),
-    re.compile(_line_values("プロファイル")),
+    re.compile(rb"(?m)^[ \t]*SSID[ \t]*:[ \t]*(\S[^\r\n]*?)[ \t]*\r?$"),
     re.compile(rb"(?m)^[ \t]*ssid[ \t]+(\S[^\r\n]*?)[ \t]*\r?$"),
 ]
-# Where internal domains appear: ipconfig DNS suffix lines (and the indented
-# lines that continue the search list), resolv.conf, ``scutil --dns``.
-_SUFFIX_KEY_RE = re.compile(
-    rb"(?i)^[^:\r\n]*(?:dns suffix|"
-    + "サフィックス".encode("cp932")
-    + b"|"
-    + "サフィックス".encode()
-    + rb")[^:\r\n]*:[ \t]*(\S*)"
-)
-_CONTINUATION_RE = re.compile(rb"^[ \t]{8,}(\S+)[ \t]*$")
+# Where internal domains appear: resolv.conf, ``scutil --dns``.
 _RESOLV_RE = re.compile(rb"(?m)^(?:search|domain)[ \t]+([^\r\n#]+)")
 _SCUTIL_RE = re.compile(
     rb"(?m)^[ \t]*(?:search domain\[\d+\]|domain)[ \t]*:[ \t]*(\S+)"
@@ -205,7 +179,6 @@ class Masker:
         """Remember the MACs, SSIDs and internal domains that *data* names."""
         _HEX_RUN_RE.sub(self._hex_run, data)
         _MAC_RE.sub(self._mac, data)
-        _MAC_SPACED_RE.sub(self._mac, data)
         for rx in _SSID_RES:
             for m in rx.finditer(data):
                 self._learn_ssid(decode_output(m.group(1)))
@@ -214,18 +187,6 @@ class Masker:
                 self._learn_domain(token)
         for m in _SCUTIL_RE.finditer(data):
             self._learn_domain(m.group(1))
-        in_suffix = False
-        for line in data.splitlines():
-            m = _SUFFIX_KEY_RE.match(line)
-            if m:
-                self._learn_domain(m.group(1))
-                in_suffix = True
-                continue
-            cont = _CONTINUATION_RE.match(line) if in_suffix else None
-            if cont:
-                self._learn_domain(cont.group(1))
-            else:
-                in_suffix = False
 
     def learn_object(self, obj: Any) -> None:
         """Learn from parsed data: ``ssid`` fields and raw tool text inside it."""
@@ -331,7 +292,7 @@ class Masker:
         if (
             low.decode("ascii", "ignore") in KEEP_DOMAINS
             or tld in _NOT_TLDS
-            or len(tld) > 6  # dotted identifiers (Microsoft.PowerShell.Commands ...)
+            or len(tld) > 6  # dotted identifiers (org.freedesktop.NetworkManager ...)
         ):
             return name
         if re.fullmatch(rb"[\d.]+", name):
@@ -358,7 +319,6 @@ class Masker:
         data = _IPV6_RE.sub(self._ipv6, data)
         data = _HEX_RUN_RE.sub(self._hex_run, data)
         data = _MAC_RE.sub(self._mac, data)
-        data = _MAC_SPACED_RE.sub(self._mac, data)
         data = _MAC_COMPACT_RE.sub(self._mac_compact, data)
         data = _IPV4_RE.sub(self._ipv4, data)
         data = _DOMAIN_RE.sub(self._domain, data)
@@ -405,24 +365,7 @@ def plan(
 
     gw = gateway or TEST_NET
     cmds: List[Command] = []
-    if os_kind == "windows":
-        from .netinfo.windows import COLLECT_SCRIPT, NEIGH_SCRIPT, powershell_args
-
-        cmds += [
-            Command("ps_collect.json", powershell_args(COLLECT_SCRIPT), 60),
-            Command("ps_neighbors.json", powershell_args(NEIGH_SCRIPT), 60),
-            Command("ipconfig_all.txt", ["ipconfig", "/all"]),
-            Command("route_print.txt", ["route", "print", "-4"]),
-            Command("arp_a.txt", ["arp", "-a"]),
-            Command("netsh_wlan.txt", ["netsh", "wlan", "show", "interfaces"]),
-            Command(
-                "netsh_firewall.txt",
-                ["netsh", "advfirewall", "show", "allprofiles", "state"],
-            ),
-            Command("w32tm_status.txt", ["w32tm", "/query", "/status"]),
-            Command("chcp.txt", ["cmd", "/c", "chcp"]),
-        ]
-    elif os_kind == "macos":
+    if os_kind == "macos":
         cmds += [
             Command("ifconfig.txt", ["ifconfig", "-a"]),
             Command("netstat_rn.txt", ["netstat", "-rn", "-f", "inet"]),
@@ -460,14 +403,7 @@ def plan(
         ping_cmd("ping_testnet.txt", TEST_NET, 2, timeout=0.5),
         ping_cmd("ping_unknown_host.txt", UNKNOWN_HOST, 1),
     ]
-    if os_kind == "windows":
-        cmds += [
-            ping_cmd("ping_loopback.txt", "127.0.0.1", 2),
-            Command(
-                "tracert_gateway.txt", ["tracert", "-d", "-h", "3", "-w", "500", gw], 40
-            ),
-        ]
-    elif os_kind != "macos":
+    if os_kind != "macos":
         cmds.append(
             Command("tracepath_gateway.txt", ["tracepath", "-n", "-m", "3", gw], 40)
         )
@@ -620,9 +556,7 @@ def run_collect(
         "commands": [
             {
                 "name": c.name,
-                "args": (
-                    c.args[:-1] + ["<script>"] if c.name.startswith("ps_") else c.args
-                ),
+                "args": c.args,
                 "returncode": c.returncode,
                 "seconds": round(c.seconds, 3),
                 "found": c.found,

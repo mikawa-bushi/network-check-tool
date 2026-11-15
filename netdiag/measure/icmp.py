@@ -1,22 +1,14 @@
 """Precise, unprivileged ICMP echo measurement.
 
-Three back-ends, chosen automatically:
+Two back-ends, chosen automatically:
 
 * **ICMP datagram socket** (Linux, macOS): ``socket(AF_INET, SOCK_DGRAM,
   IPPROTO_ICMP)`` needs no root, gives microsecond timing, sub-second send
   intervals and detects duplicate replies (two devices answering for one IP).
   One socket and one thread serve many targets at once, like ``fping``, so
   checking 30 devices takes as long as checking one.
-* **Windows ICMP API** (``IcmpSendEcho``, see :mod:`.winicmp`): the same
-  freedom on Windows without administrator rights — free intervals,
-  sub-millisecond timing, duplicate answers, explicit "unreachable" statuses.
-* **System ``ping`` command** (fallback when neither is usable):
-  run in parallel per target and parsed *per reply line* in a language-neutral
-  way. Japanese Windows prints ``時間 <1ms`` and ``(25% の損失)``; English prints
-  ``time<1ms`` and ``(25% loss)`` — the parser relies only on the ``=``/``<``
-  and ``ms`` tokens. Counting reply lines also fixes the classic Windows gotcha
-  where "Destination host unreachable" replies are reported as *received* (0 %
-  loss) in ping's own statistics.
+* **System ``ping`` command** (fallback when the socket is not usable, and
+  for IPv6): run in parallel per target and parsed *per reply line*.
 
 All produce a :class:`PingStats` with per-reply RTTs, so every report shows the
 same statistics (loss with a 95 % upper bound, min/median/p95/max, jitter).
@@ -53,11 +45,9 @@ from typing import (
 
 from ..core.util import (
     _command_env,
-    _no_window_kwargs,
     decode_output,
     have,
     is_macos,
-    is_windows,
     run,
 )
 from .stats import RttSummary, loss_upper_bound_pct, summarize
@@ -65,8 +55,9 @@ from .stats import RttSummary, loss_upper_bound_pct, summarize
 DEFAULT_COUNT = 10
 DEFAULT_INTERVAL = 0.2  # seconds between echo requests to one target
 DEFAULT_TIMEOUT = 1.0  # seconds to wait for each reply
-DEFAULT_SIZE = 32  # payload bytes (Windows ping's default)
+DEFAULT_SIZE = 32  # payload bytes
 MAX_PPS = 200  # global send-rate ceiling across all targets (gentle on OT gear)
+SYSTEM_PING_CADENCE = 0.2  # shortest gap unprivileged iputils ping keeps
 
 _ECHO_REQUEST = 8
 _ECHO_REPLY = 0
@@ -85,7 +76,7 @@ class PingStats:
     rtts_ms: List[float] = field(default_factory=list)
     errors: Dict[str, int] = field(default_factory=dict)
     method: str = ""
-    resolution_ms: Optional[float] = None  # timer granularity (1.0 for Windows)
+    resolution_ms: Optional[float] = None  # timer granularity
     error: Optional[str] = None  # fatal: could not measure at all
     raw: str = ""
 
@@ -201,9 +192,9 @@ def ping_many(
 ) -> Dict[str, PingStats]:
     """Ping several targets concurrently; returns ``{target: PingStats}``.
 
-    ``method`` is ``auto`` (ICMP socket or the Windows ICMP API when available,
-    else the system ``ping``), ``socket``, ``win`` or ``system``. ``family``
-    4/6 forces an address family.
+    ``method`` is ``auto`` (ICMP socket when available, else the system
+    ``ping``), ``socket`` or ``system``. ``family`` 4/6 forces an address
+    family.
 
     Ctrl-C in the calling thread stops every pinger within about a second.
     A caller that pings from a worker thread passes *stop* and sets it.
@@ -271,8 +262,6 @@ def _choose(method: str, fam: Optional[int]) -> str:
         return "system"
     if method in ("auto", "socket") and icmp_socket_available():
         return "socket"
-    if method in ("auto", "win") and win_icmp_available():
-        return "win"
     return "system"
 
 
@@ -290,7 +279,7 @@ def _run(
 ) -> Dict[str, PingStats]:
     stop = stop or threading.Event()
     out: Dict[str, PingStats] = {}
-    jobs: Dict[str, Dict[str, str]] = {"socket": {}, "win": {}}
+    jobs: Dict[str, Dict[str, str]] = {"socket": {}}
     system_jobs: List[Tuple[str, Optional[int]]] = []
     backends = {}
     for t in dict.fromkeys(targets):  # de-duplicate, keep order
@@ -324,10 +313,6 @@ def _run(
     runners = []
     if jobs["socket"]:
         runners.append(_SocketPinger(jobs["socket"], **common).run)
-    if jobs["win"]:
-        from .winicmp import WinIcmpPinger
-
-        runners.append(WinIcmpPinger(jobs["win"], **common).run)
     if system_jobs:
         runners.append(
             lambda: _system_many(
@@ -348,7 +333,7 @@ def run_together(
     """Run *fns* side by side, at most *limit* at once (0: all), in order.
 
     The caller waits in short slices. An untimed wait would hold Ctrl-C until
-    every ping had finished, and on Windows it cannot be interrupted at all.
+    every ping had finished.
     On Ctrl-C it sets *stop*, which every pinger watches, gives them a moment
     to wind down and re-raises. A failure inside a function is re-raised here.
     """
@@ -395,37 +380,20 @@ def icmp_socket_available() -> bool:
     if _socket_ok is None:
         with _socket_lock:
             if _socket_ok is None:
-                if is_windows():  # needs a raw socket (admin) on Windows
+                try:
+                    s = socket.socket(
+                        socket.AF_INET, socket.SOCK_DGRAM, socket.IPPROTO_ICMP
+                    )
+                    s.close()
+                    _socket_ok = True
+                except (OSError, AttributeError):
                     _socket_ok = False
-                else:
-                    try:
-                        s = socket.socket(
-                            socket.AF_INET, socket.SOCK_DGRAM, socket.IPPROTO_ICMP
-                        )
-                        s.close()
-                        _socket_ok = True
-                    except (OSError, AttributeError):
-                        _socket_ok = False
     return _socket_ok
-
-
-def win_icmp_available() -> bool:
-    """Is the Windows ICMP API (IcmpSendEcho, no admin needed) usable?"""
-    if not is_windows():
-        return False
-    from .winicmp import get_api
-
-    return get_api() is not None
 
 
 def precise_ping_available() -> bool:
     """Sub-millisecond timing and free send intervals on this host (IPv4)?"""
     return _choose("auto", None) != "system"
-
-
-def system_ping_cadence() -> float:
-    """Shortest gap the OS ``ping`` keeps: ping.exe ~1 s, iputils 0.2 s unprivileged."""
-    return 1.0 if is_windows() else 0.2
 
 
 # --------------------------------------------------------------------------
@@ -719,7 +687,7 @@ def _stream_system(
         target=target,
         address=target if _literal_family(target) else None,
         method="system-ping",
-        resolution_ms=1.0 if is_windows() else 0.001,
+        resolution_ms=0.001,
     )
     n = max(5, int(_RUN_SECONDS / _cadence(interval, family, _ping_os())))
     commands = _ping_commands(target, n, interval, timeout, size, family)
@@ -752,9 +720,8 @@ class _StreamRun:
 
     Request ``i`` is due at ``anchor + i * cadence`` (perf time); each reply
     re-anchors that estimate from its own round trip. A reply goes to
-    ``on_sample`` as soon as ping prints it. On POSIX a request still
-    unanswered ``timeout`` after it was due is reported lost, as on the
-    socket back-end; ping.exe prints one line per request, which settles it.
+    ``on_sample`` as soon as ping prints it. A request still unanswered
+    ``timeout`` after it was due is reported lost, as on the socket back-end.
     Requests due after *stop* was set are never reported.
     """
 
@@ -770,11 +737,9 @@ class _StreamRun:
     ) -> None:
         self.target, self.n, self.cadence, self.timeout = target, n, cadence, timeout
         self.total, self.on_sample, self.stop = total, on_sample, stop
-        self.windows = is_windows()
         self.lines: List[str] = []
         self.settled: set[int] = set()
-        self.base: Optional[int] = None  # POSIX icmp_seq of request 0
-        self.win_index: Optional[int] = None  # next ping.exe request line
+        self.base: Optional[int] = None  # icmp_seq of request 0
         self.reason: Optional[str] = None  # latest error ping printed
         self.stopped_at: Optional[float] = None
         self.ran_out = False  # ping exited on its own
@@ -796,7 +761,6 @@ class _StreamRun:
                 stdout=subprocess.PIPE,
                 stderr=subprocess.STDOUT,
                 env=_command_env(),
-                **_no_window_kwargs(),
             )
         except FileNotFoundError:
             self.lines.append(f"{args[0]} command not available")
@@ -837,8 +801,7 @@ class _StreamRun:
         self._finish()
 
     def _should_end(self, now: float, budget: float) -> bool:
-        if not self.windows:
-            self._expire(now)
+        self._expire(now)
         if self.stopped_at is None and self.stop.is_set():
             self.stopped_at = now
         if now - self.started > budget:
@@ -859,9 +822,6 @@ class _StreamRun:
 
     def _line(self, at: float, line: str) -> None:
         self.lines.append(line)
-        if self.windows:
-            self._windows_line(at, line.strip())
-            return
         if self.base is None and line.startswith("PING"):
             self.base = _seq_base(line)
             return
@@ -883,22 +843,6 @@ class _StreamRun:
                 self._settle(i, self._due(i), None, self.reason)
         elif line.startswith("ping: "):
             self.reason = line[len("ping: ") :].strip()
-
-    def _windows_line(self, at: float, line: str) -> None:
-        if self.win_index is None:
-            if line:  # the "Pinging x with 32 bytes of data:" header
-                self.win_index = 0
-            return
-        if not line or self.win_index >= self.n:
-            self.win_index = self.n  # past the request lines: statistics follow
-            return
-        i = self.win_index
-        self.win_index += 1
-        rtt = _win_reply_rtt(line)
-        if rtt is None:
-            self._settle(i, min(self._due(i), at), None, line)
-        else:
-            self._reply(i, at, rtt)
 
     def _reply(self, i: int, at: float, rtt: float) -> None:
         sent = at - rtt / 1000.0
@@ -942,8 +886,8 @@ class _StreamRun:
         """Settle what ping's exit decided; keep what it cut short unreported."""
         end = time.perf_counter()
         text = "\n".join(self.lines)
-        self.measured = _measured(text, self.windows)
-        m = (_WIN_SENT_RE if self.windows else _POSIX_SUMMARY_RE).search(text)
+        self.measured = _measured(text)
+        m = _POSIX_SUMMARY_RE.search(text)
         sent = int(m.group(1)) if m else None
         complete = self.ran_out and sent is not None and sent >= self.n
         self.cut_short = not complete
@@ -993,15 +937,10 @@ def _seq_base(text: str) -> int:
 def per_request_results(st: PingStats, count: int) -> List[Optional[float]]:
     """Per-request RTT (None = lost) recovered from system ping output.
 
-    POSIX output numbers each reply (``icmp_seq=N``); Windows prints exactly
-    one line per request, in order. Used to place losses on a timeline.
+    ping numbers each reply (``icmp_seq=N``). Used to place losses on a
+    timeline.
     """
     text = st.raw or ""
-    if is_windows():
-        blocks = _paragraphs(text)
-        region = blocks[0][1:] if blocks else []
-        out = [_win_reply_rtt(line) for line in region[:count]]
-        return out + [None] * (count - len(out))
     by_seq: Dict[int, float] = {}
     for line in text.splitlines():
         m_seq, rtt = _SEQ_RE.search(line), _posix_reply_rtt(line)
@@ -1028,11 +967,6 @@ def build_ping_args(
     os_name = os_name or _ping_os()
     pace = _fmt_interval(_cadence(interval, family, os_name))
     fam = ["-4"] if family == 4 else (["-6"] if family == 6 else [])
-    if os_name == "windows":
-        args = ["ping", *fam, "-n", str(count), "-w", str(int(timeout * 1000))]
-        if size:
-            args += ["-l", str(size)]
-        return [*args, host]
     if os_name == "macos" and family == 6:
         # KAME ping6: -W takes no value, and -i below 1 s needs root.
         args = ["ping6", "-n", "-c", str(count), "-i", pace]
@@ -1050,13 +984,11 @@ def build_ping_args(
 
 
 def _ping_os() -> str:
-    return "windows" if is_windows() else "macos" if is_macos() else "linux"
+    return "macos" if is_macos() else "linux"
 
 
 def _cadence(interval: float, family: Optional[int], os_name: str) -> float:
     """Seconds between the requests of one ``ping`` run."""
-    if os_name == "windows":
-        return 1.0  # ping.exe has no interval option
     if os_name == "macos":
         return max(interval, 1.0 if family == 6 else 0.1)
     return max(interval, 0.2)
@@ -1102,8 +1034,6 @@ def _ping_commands(
         _cadence(interval, family, os_name),
         10.0 if os_name == "macos" and family == 6 else 0.0,
     )
-    if os_name == "windows":
-        return [full]
     prog = "ping6" if family == 6 and have("ping6") else "ping"
     plain = _PingCommand([prog, "-c", str(count), host], 1.0, 10.0)
     if os_name == "macos":
@@ -1126,12 +1056,11 @@ def system_ping(
     family: Optional[int] = None,
 ) -> PingStats:
     """Ping via the OS ``ping`` command and parse the output."""
-    windows = is_windows()
     stats = PingStats(
         target=host,
         address=host if _literal_family(host) else None,
         method="system-ping",
-        resolution_ms=1.0 if windows else 0.001,
+        resolution_ms=0.001,
     )
     if not have("ping"):
         stats.error = "ping command not available"
@@ -1140,18 +1069,16 @@ def system_ping(
     for cmd in _ping_commands(host, count, interval, timeout, size, family):
         res = run(cmd.args, timeout=cmd.budget(count, timeout))
         text = res.stdout or res.stderr
-        if windows or not _looks_like_usage_error(text):
+        if not _looks_like_usage_error(text):
             break
     stats.raw = text
-    parsed = (
-        parse_windows_ping(text, count) if windows else parse_posix_ping(text, count)
-    )
+    parsed = parse_posix_ping(text, count)
     stats.sent, stats.received, stats.duplicates, stats.rtts_ms, errs = parsed
     for msg, c in errs.items():
         stats.errors[msg] = stats.errors.get(msg, 0) + c
     if stats.sent == 0 and not stats.received:
         stats.sent = count
-    if not stats.received and not _measured(text, windows):
+    if not stats.received and not _measured(text):
         reason = _network_failure(text)
         if reason:
             stats.errors = {reason: stats.sent}
@@ -1188,11 +1115,8 @@ def _first_line(text: str) -> str:
     return next((ln.strip() for ln in text.splitlines() if ln.strip()), "")[:200]
 
 
-def _measured(text: str, windows: bool) -> bool:
+def _measured(text: str) -> bool:
     """Did ping actually send requests (as opposed to failing up front)?"""
-    if windows:
-        blocks = _paragraphs(text)
-        return bool(blocks) and len(blocks[0]) > 1
     return _POSIX_SUMMARY_RE.search(text) is not None or "bytes from" in text
 
 
@@ -1260,76 +1184,6 @@ def parse_posix_ping(
         if m.group(3):
             dups = int(m.group(3))
     return sent, received, dups, rtts, errors
-
-
-_WIN_RTT_RE = re.compile(r"[=<]\s*(\d+)\s*ms", re.IGNORECASE)
-_WIN_LIST_SEP = (",", "、", "，")
-_WIN_SENT_RE = re.compile(r"(?:Sent|送信)\s*=\s*(\d+)", re.IGNORECASE)
-
-
-def _paragraphs(text: str) -> List[List[str]]:
-    """Blank-line separated blocks of stripped lines."""
-    blocks: List[List[str]] = []
-    cur: List[str] = []
-    for line in text.splitlines():
-        if line.strip():
-            cur.append(line.strip())
-        elif cur:
-            blocks.append(cur)
-            cur = []
-    if cur:
-        blocks.append(cur)
-    return blocks
-
-
-def _win_reply_rtt(line: str) -> Optional[float]:
-    """RTT of a ping.exe reply line in any language, None for anything else.
-
-    A reply carries exactly one ``=N ms``/``<N ms`` token and no list separator
-    (the statistics lines are comma/読点 separated). ``<1ms`` becomes 0.5 ms.
-    """
-    tokens = _WIN_RTT_RE.findall(line)
-    if len(tokens) != 1 or any(sep in line for sep in _WIN_LIST_SEP):
-        return None
-    m = _WIN_RTT_RE.search(line)
-    value = float(m.group(1))
-    if "<" in m.group(0):
-        value = max(0.0, value - 0.5)
-    return value
-
-
-def parse_windows_ping(
-    text: str, count: int
-) -> Tuple[int, int, int, List[float], Dict[str, int]]:
-    """Parse Windows ``ping.exe`` output in any display language.
-
-    The per-request lines sit in the first paragraph after the "Pinging ..."
-    header. A line is a successful reply iff it carries exactly one
-    ``=N ms``/``<N ms`` token and no list separator (the statistics lines are
-    comma/読点 separated). Everything else in that paragraph — timeouts,
-    "destination host unreachable", "TTL expired" — is a lost request, whatever
-    language it is written in. ``<1ms`` is recorded as 0.5 ms (1 ms resolution).
-    """
-    blocks = _paragraphs(text)
-    region: List[str] = blocks[0][1:] if blocks else []
-    rtts: List[float] = []
-    errors: Dict[str, int] = {}
-    if blocks and len(blocks[0]) == 1 and len(blocks) == 1:
-        # A lone line is a pre-flight error (unknown host, bad option ...).
-        errors[blocks[0][0]] = 1
-        return count, 0, 0, rtts, errors
-    for line in region:
-        rtt = _win_reply_rtt(line)
-        if rtt is not None:
-            rtts.append(rtt)
-        else:
-            errors[line] = errors.get(line, 0) + 1
-
-    sent = len(region) or count
-    m = _WIN_SENT_RE.search(text)
-    if m:
-        sent = int(m.group(1))
-    return sent, len(rtts), 0, rtts, errors
 
 
 # --------------------------------------------------------------------------

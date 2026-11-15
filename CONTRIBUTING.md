@@ -30,7 +30,7 @@ CI runs on Python 3.11 and 3.14; please keep the code 3.11-compatible.
 
 ```
 netdiag/
-├── netinfo/     this host's NICs, routes, ARP, DNS — linux / windows / macos collectors
+├── netinfo/     this host's NICs, routes, ARP, DNS — linux / macos collectors
 ├── measure/     precise ping (ICMP socket or system ping), TCP ports, DNS client, statistics
 ├── probes/      one question per probe; device.py = per-device route → reach → ports
 ├── diagnosis/   dependency-graph engine: lowest failing layer = root cause
@@ -46,9 +46,9 @@ netdiag/
 - **Never crash on a missing tool or permission.** A probe that cannot run
   returns `SKIP` with a reason; "could not measure" must never read as "device
   down".
-- **Language-independent parsing.** Windows tools print localised text
-  (Japanese, English, …). Parse numbers, IPs and MACs, or use
-  `ConvertTo-Json`, never the wording. Add fixtures for both languages.
+- **Stable tool output.** netdiag runs OS tools in the C locale, so their
+  output is English. Parse numbers, IPs and MACs, or JSON (`ip -j`), rather
+  than free wording. netdiag runs on Linux and macOS only.
 - **Human text in both languages.** Use `tr(ja, en)` at run time and
   `Text(ja, en)` for class attributes. Machine output (JSON keys, result
   `code`, metric names) stays English.
@@ -73,5 +73,4 @@ Bug reports are most useful with the output of `netdiag check --format json`
 
 Set the version in `pyproject.toml` (the only place it is written), merge that
 change, then push the tag `v<version>`. `publish.yml` runs the full test suite,
-checks that the tag names the package version, publishes to PyPI and
-attaches the Windows exe zip to the tag's GitHub release.
+checks that the tag names the package version, then publishes to PyPI.

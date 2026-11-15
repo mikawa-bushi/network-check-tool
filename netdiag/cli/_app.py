@@ -176,20 +176,16 @@ def _split_csv(value: Optional[str]) -> Optional[List[str]]:
 def _report_bytes(text: str, fmt: str) -> bytes:
     """A report as it goes into a file or a pipe: always UTF-8.
 
-    CSV gets a BOM so Excel reads Japanese, and keeps its own CRLF rows. Only
-    the text report takes the platform's line ends, for old Notepad.
+    CSV gets a BOM so Excel reads Japanese, and keeps its own CRLF rows.
     """
     if fmt == "csv":
         return text.encode("utf-8-sig")
-    if fmt == "text":
-        text = text.replace("\n", os.linesep)
     return text.encode("utf-8")
 
 
 def _print_report(text: str, fmt: str) -> None:
     """Text goes to the console as text. html/json/csv go out as the same bytes
-    a file gets: redirected stdout on Windows would otherwise re-encode them to
-    the ANSI code page and turn CSV's CRLF into CR CR LF."""
+    a file gets, whatever the locale's encoding."""
     if fmt == "text":
         click.echo(text)
         return
@@ -298,39 +294,12 @@ def format_from_path(
     return default
 
 
-_WINDOWS = os.name == "nt"
-_ENABLE_VIRTUAL_TERMINAL_PROCESSING = 0x0004
-
-
-def _enable_vt(stream) -> bool:
-    """Switch a Windows console to VT mode; False where it cannot be (pre-Win10)."""
-    try:
-        import ctypes
-        import msvcrt
-
-        kernel32 = ctypes.windll.kernel32  # type: ignore[attr-defined]
-        handle = msvcrt.get_osfhandle(stream.fileno())  # type: ignore[attr-defined]
-        mode = ctypes.c_ulong()
-        if not kernel32.GetConsoleMode(handle, ctypes.byref(mode)):
-            return False
-        vt = _ENABLE_VIRTUAL_TERMINAL_PROCESSING
-        return bool(mode.value & vt or kernel32.SetConsoleMode(handle, mode.value | vt))
-    except (ImportError, AttributeError, OSError, ValueError):
-        return False
-
-
 def ansi_ok(stream) -> bool:
-    """True when *stream* is a terminal that renders ANSI escape codes.
-
-    A Windows 10 console prints them raw (``←[32m``) until VT processing is
-    switched on, and click no longer does that through colorama.
-    """
+    """True when *stream* is a terminal that renders ANSI escape codes."""
     try:
-        if not stream.isatty():
-            return False
+        return stream.isatty()
     except (AttributeError, ValueError):
         return False
-    return not _WINDOWS or _enable_vt(stream)
 
 
 def color_wanted(no_color: bool, err: bool = False) -> bool:
@@ -339,8 +308,8 @@ def color_wanted(no_color: bool, err: bool = False) -> bool:
 
 
 # Typographic characters netdiag prints, with stand-ins for encodings that
-# lack them (redirected output on Windows uses the ANSI code page, e.g. cp932,
-# which has no "—", "≤" or "✔"). The first candidate the encoding can
+# lack them (LANG=ja_JP.eucJP has no "—", "≤" or "✔", LANG=C has no
+# non-ASCII at all). The first candidate the encoding can
 # represent wins; anything else becomes "?". Never raise on output.
 _SUBSTITUTES = {
     "—": ("―", "-"),
@@ -396,18 +365,6 @@ def harden_streams() -> None:
                 reconfigure(errors="netdiag")
             except (ValueError, OSError):
                 pass
-
-
-def setup(
-    lang: Optional[str] = None, verbose: bool = False, log_file: Optional[str] = None
-) -> None:
-    """Per-run setup shared by the ``netdiag`` group and the exe launcher."""
-    from .. import probes, runner  # noqa: F401  (register the built-in probes)
-    from ..plugins import load_plugins
-
-    set_language(lang)
-    _setup_logging(verbose=verbose, log_file=log_file)
-    load_plugins()
 
 
 def _next_steps() -> str:
@@ -508,7 +465,12 @@ def cli(
     netdiag check -f devices.csv   台帳の全機器をまとめて診断
     netdiag scan                   同じネットワーク上の機器を一覧
     """
-    setup(lang, verbose, log_file)
+    from .. import probes, runner  # noqa: F401  (register the built-in probes)
+    from ..plugins import load_plugins
+
+    set_language(lang)
+    _setup_logging(verbose=verbose, log_file=log_file)
+    load_plugins()
     if ctx.invoked_subcommand is None:
         try:
             ctx.invoke(ctx.command.get_command(ctx, "check"))

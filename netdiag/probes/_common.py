@@ -16,18 +16,13 @@ LAN_RTT_P95_WARN_MS = 50.0
 WAN_RTT_WARN_MS = 150.0
 
 
-def oscmd(linux: str, windows: str, macos: Optional[str] = None) -> str:
+def oscmd(linux: str, macos: Optional[str] = None) -> str:
     """Pick the manual command that matches this OS (for runbook steps)."""
-    name = os_name()
-    if name == "windows":
-        return windows
-    if name == "macos":
-        return macos or linux
-    return linux
+    return macos or linux if os_name() == "macos" else linux
 
 
 def default_ping_count() -> int:
-    """10 fast samples with a precise pinger; 5 with ping.exe's 1 s cadence."""
+    """10 fast samples with a precise pinger; 5 with the system ``ping``."""
     return 10 if precise_ping_available() else 5
 
 

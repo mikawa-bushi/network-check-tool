@@ -25,8 +25,6 @@ import threading
 import time
 from typing import Optional, Tuple
 
-from ..core.util import is_windows
-
 logger = logging.getLogger(__name__)
 
 DEFAULT_PORT = 47600
@@ -75,14 +73,6 @@ class _RateLimit:
         return True
 
 
-def _exclusive(sock: socket.socket) -> None:
-    """Keep another program from binding the same port while we hold it."""
-    if is_windows():
-        flag = getattr(socket, "SO_EXCLUSIVEADDRUSE", None)
-        if flag is not None:
-            sock.setsockopt(socket.SOL_SOCKET, flag, 1)
-
-
 class PeerServer:
     def __init__(
         self,
@@ -107,12 +97,9 @@ class PeerServer:
         udp = socket.socket(socket.AF_INET, socket.SOCK_DGRAM)
         tcp = socket.socket(socket.AF_INET, socket.SOCK_STREAM)
         try:
-            _exclusive(udp)
             udp.bind((self.host, self.port))
-            if is_windows():
-                _exclusive(tcp)
-            else:  # restart quickly after a Ctrl-C (TIME_WAIT)
-                tcp.setsockopt(socket.SOL_SOCKET, socket.SO_REUSEADDR, 1)
+            # restart quickly after a Ctrl-C (TIME_WAIT)
+            tcp.setsockopt(socket.SOL_SOCKET, socket.SO_REUSEADDR, 1)
             tcp.bind((self.host, self.port))
             tcp.listen(16)
         except OSError:
@@ -128,10 +115,6 @@ class PeerServer:
             try:
                 data, addr = self._udp.recvfrom(2048)
             except socket.timeout:
-                continue
-            except (ConnectionResetError, ConnectionRefusedError):
-                # Windows reports an ICMP 'port unreachable' for an earlier
-                # reply on the next receive; the socket itself is fine.
                 continue
             except OSError as e:
                 if self._stop.is_set():

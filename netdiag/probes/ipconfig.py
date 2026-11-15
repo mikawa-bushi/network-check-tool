@@ -3,7 +3,7 @@
 Engineering laptops are the classic source of "it worked yesterday" problems:
 the office Wi-Fi and the machine's Ethernet both on 192.168.1.0/24, a default
 gateway typed into the equipment NIC, a mask of 255.0.0.0, or an address that
-Windows already flagged as a duplicate. Each of these breaks traffic to some
+the OS already flagged as a duplicate. Each of these breaks traffic to some
 devices while everything *looks* configured.
 """
 
@@ -31,8 +31,8 @@ def _same_route(hn: HostNetwork, a: Route, b: Route) -> bool:
     """Two next hops of one multipath (ECMP) default, which share the traffic.
 
     Linux lists such a route once per next hop, each with the route's table and
-    metric. Windows and macOS keep separate defaults with equal metrics, so
-    there they stay rival gateways.
+    metric. macOS keeps separate defaults with equal metrics, so there they
+    stay rival gateways.
     """
     return hn.source.startswith("linux") and (a.table, a.metric) == (
         b.table,
@@ -54,7 +54,7 @@ class IpConfigProbe(Probe):
         "設定ミスがあると一部の機器にだけ届かない状態になり、ケーブルや機器の故障と区別がつきにくくなります。",
         "Misconfiguration breaks traffic to *some* devices and is easily mistaken for a cable or device fault.",
     )
-    manual_commands = ["ipconfig /all", "route print -4", "ip -br addr ; ip route"]
+    manual_commands = ["ip -br addr ; ip route"]
 
     def check(self, ctx: Context) -> CheckResult:
         hn = ctx.network()
@@ -177,10 +177,7 @@ class IpConfigProbe(Probe):
                         "設備に接続するときは、社内LAN（Wi-Fi）を一時的に切断するか、設備側を別のサブネットにする",
                         "Disconnect the office LAN/Wi-Fi while working on the equipment, or use a different subnet",
                     ),
-                    oscmd(
-                        "ip route get " + tr("<機器IP>", "<device-ip>"),
-                        "route print -4",
-                    ),
+                    ("ip route get " + tr("<機器IP>", "<device-ip>")),
                 ],
             )
         if code == "ipconfig.multi_gateway":
@@ -194,7 +191,7 @@ class IpConfigProbe(Probe):
                         "設備側NICのIPv4設定から『デフォルトゲートウェイ』を削除する（別セグメントへは静的ルートで）",
                         "Remove the default gateway from the equipment-side NIC (use static routes for other segments)",
                     ),
-                    oscmd("ip route", "route print -4"),
+                    "ip route",
                 ],
             )
         if code == "ipconfig.broad_mask":
@@ -218,7 +215,6 @@ class IpConfigProbe(Probe):
             [
                 oscmd(
                     "ip -br addr; ip route",
-                    "ipconfig /all ; route print -4",
                     "ifconfig; netstat -rn",
                 )
             ],

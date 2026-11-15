@@ -1,4 +1,4 @@
-"""``python -m netdiag`` — handy on Windows when the Scripts folder is not on PATH."""
+"""``python -m netdiag``: runs netdiag when its script is not on PATH."""
 
 from .cli import main
 

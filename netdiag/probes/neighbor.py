@@ -108,12 +108,12 @@ class NeighborProbe(Probe):
                     "Look for a duplicate IP on the LAN (another device with the same address).",
                 ),
                 tr(
-                    f"ARP表を確認: {oscmd('ip neigh show', 'arp -a', 'arp -an')}",
-                    f"Inspect the ARP table: {oscmd('ip neigh show', 'arp -a', 'arp -an')}",
+                    f"ARP表を確認: {oscmd('ip neigh show', 'arp -an')}",
+                    f"Inspect the ARP table: {oscmd('ip neigh show', 'arp -an')}",
                 ),
                 tr(
-                    f"ARPを消して再解決: {oscmd('sudo ip neigh flush all', 'arp -d *（管理者）', 'sudo arp -a -d')}",
-                    f"Flush and re-resolve: {oscmd('sudo ip neigh flush all', 'arp -d * (admin)', 'sudo arp -a -d')}",
+                    f"ARPを消して再解決: {oscmd('sudo ip neigh flush all', 'sudo arp -a -d')}",
+                    f"Flush and re-resolve: {oscmd('sudo ip neigh flush all', 'sudo arp -a -d')}",
                 ),
             ],
         )

@@ -52,16 +52,15 @@ jobs:
       run: poetry run pytest
 
   # The same suite on every OS netdiag supports, followed by a live smoke run on
-  # the real runner network. Windows exercises the IcmpSendEcho/SendARP path and
-  # PowerShell parsing for real; the `collect` zip is kept as an artifact so the
-  # raw tool output of each OS can be inspected or turned into test fixtures.
+  # the real runner network. The `collect` zip is kept as an artifact so the raw
+  # tool output of each OS can be inspected or turned into test fixtures.
   os-matrix:
     name: ${{ matrix.os }} / Python ${{ matrix.python }}
     runs-on: ${{ matrix.os }}
     strategy:
       fail-fast: false
       matrix:
-        os: [ubuntu-latest, windows-latest, macos-latest]
+        os: [ubuntu-latest, macos-latest]
         python: ['3.14']
     defaults:
       run:

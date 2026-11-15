@@ -1,9 +1,7 @@
 """Parsers for traceroute and ping output (no real network / subprocess).
 
-The ping fixtures are verbatim formats of iputils (Linux, C locale), macOS,
-BusyBox and Windows ``ping.exe`` in **Japanese and English** — the parser must
-count replies the same way in every language, and must not trust Windows' own
-statistics, which count "destination host unreachable" replies as received.
+The ping fixtures are verbatim formats of iputils (Linux, C locale), macOS
+and BusyBox.
 """
 
 from netdiag.core.util import CommandResult
@@ -11,7 +9,6 @@ from netdiag.measure import icmp as pingmod
 from netdiag.measure.icmp import (
     build_ping_args,
     parse_posix_ping,
-    parse_windows_ping,
     system_ping,
 )
 from netdiag.probes import icmp
@@ -118,100 +115,10 @@ def test_busybox_dup_line_counted_even_without_plus_sign():
     assert rtts == [10.123]
 
 
-# ------------------------------------------------------------- windows ping
-
-WIN_JA = """
-192.168.2.102 に ping を送信しています 32 バイトのデータ:
-192.168.2.102 からの応答: バイト数 =32 時間 =4ms TTL=64
-192.168.2.102 からの応答: バイト数 =32 時間 <1ms TTL=64
-要求がタイムアウトしました。
-192.168.2.101 からの応答: 宛先ホストに到達できません。
-
-192.168.2.102 の ping 統計:
-    パケット数: 送信 = 4、受信 = 3、損失 = 1 (25% の損失)、
-ラウンド トリップの概算時間 (ミリ秒):
-    最小 = 0ms、最大 = 4ms、平均 = 2ms
-"""
-
-WIN_JA_UNREACHABLE_ONLY = """
-192.168.2.200 に ping を送信しています 32 バイトのデータ:
-192.168.2.101 からの応答: 宛先ホストに到達できません。
-192.168.2.101 からの応答: 宛先ホストに到達できません。
-192.168.2.101 からの応答: 宛先ホストに到達できません。
-192.168.2.101 からの応答: 宛先ホストに到達できません。
-
-192.168.2.200 の ping 統計:
-    パケット数: 送信 = 4、受信 = 4、損失 = 0 (0% の損失)、
-"""
-
-WIN_EN = """
-Pinging 192.168.1.1 with 32 bytes of data:
-Reply from 192.168.1.1: bytes=32 time=3ms TTL=64
-Reply from 192.168.1.1: bytes=32 time<1ms TTL=64
-Request timed out.
-Reply from 179.60.213.149: TTL expired in transit.
-
-Ping statistics for 192.168.1.1:
-    Packets: Sent = 4, Received = 3, Lost = 1 (25% loss),
-Approximate round trip times in milli-seconds:
-    Minimum = 0ms, Maximum = 3ms, Average = 1ms
-"""
-
-WIN_IPV6 = """
-Pinging google.com [2404:6800:4006:810::200e] with 32 bytes of data:
-Reply from 2404:6800:4006:810::200e: time=1ms
-Reply from 2404:6800:4006:810::200e: time<1ms
-
-Ping statistics for 2404:6800:4006:810::200e:
-    Packets: Sent = 2, Received = 2, Lost = 0 (0% loss),
-Approximate round trip times in milli-seconds:
-    Minimum = 0ms, Maximum = 1ms, Average = 0ms
-"""
-
-WIN_JA_UNKNOWN_HOST = "ping 要求ではホスト plc-x が見つかりませんでした。ホスト名を確認してもう一度実行してください。\n"
-
-
-def test_windows_japanese_replies_and_losses():
-    sent, received, _dups, rtts, errors = parse_windows_ping(WIN_JA, count=4)
-    assert (sent, received) == (4, 2)
-    assert rtts == [4.0, 0.5]  # "<1ms" -> 0.5 ms (1 ms resolution)
-    assert "要求がタイムアウトしました。" in errors
-    assert any("宛先ホストに到達できません" in e for e in errors)
-
-
-def test_windows_unreachable_replies_are_losses_not_success():
-    # ping.exe itself reports "受信 = 4、損失 = 0 (0% の損失)" here.
-    sent, received, _dups, rtts, _ = parse_windows_ping(
-        WIN_JA_UNREACHABLE_ONLY, count=4
-    )
-    assert (sent, received, rtts) == (4, 0, [])
-
-
-def test_windows_english_same_result_as_japanese():
-    sent, received, _dups, rtts, errors = parse_windows_ping(WIN_EN, count=4)
-    assert (sent, received) == (4, 2)
-    assert rtts == [3.0, 0.5]
-    assert "Request timed out." in errors
-
-
-def test_windows_ipv6_replies_without_ttl():
-    sent, received, _dups, rtts, _ = parse_windows_ping(WIN_IPV6, count=2)
-    assert (sent, received, rtts) == (2, 2, [1.0, 0.5])
-
-
-def test_windows_unknown_host_is_a_single_error_line():
-    sent, received, _dups, rtts, errors = parse_windows_ping(
-        WIN_JA_UNKNOWN_HOST, count=4
-    )
-    assert (sent, received, rtts) == (4, 0, [])
-    assert len(errors) == 1
-
-
 # ------------------------------------------------------------- system_ping
 
 
-def _canned(monkeypatch, stdout, windows=False):
-    monkeypatch.setattr(pingmod, "is_windows", lambda: windows)
+def _canned(monkeypatch, stdout):
     monkeypatch.setattr(pingmod, "have", lambda cmd: True)
     calls = []
 
@@ -233,13 +140,6 @@ def test_system_ping_success_statistics(monkeypatch):
     assert st.rtt.median == 0.484
 
 
-def test_system_ping_windows_japanese(monkeypatch):
-    _canned(monkeypatch, WIN_JA, windows=True)
-    st = system_ping("192.168.2.102", count=4)
-    assert (st.sent, st.received) == (4, 2)
-    assert st.resolution_ms == 1.0
-
-
 def test_system_ping_permission_error_is_not_a_down_device(monkeypatch):
     _canned(monkeypatch, "ping: permission denied (are you root?)\n")
     st = system_ping("192.168.1.1", count=3)
@@ -247,20 +147,10 @@ def test_system_ping_permission_error_is_not_a_down_device(monkeypatch):
     assert st.received == 0
 
 
-def test_system_ping_unknown_host_on_windows_is_an_error(monkeypatch):
-    _canned(monkeypatch, WIN_JA_UNKNOWN_HOST, windows=True)
-    st = system_ping("plc-x", count=4)
-    assert st.error and "plc-x" in st.error
-
-
 def test_build_ping_args_per_platform():
     linux = build_ping_args("h", count=5, timeout=1.0, interval=0.2, os_name="linux")
     assert linux[:3] == ["ping", "-n", "-c"] and "-W" in linux and linux[-1] == "h"
     assert linux[linux.index("-i") + 1] == "0.2"
-    win = build_ping_args(
-        "h", count=5, timeout=1.0, interval=0.2, family=4, os_name="windows"
-    )
-    assert win == ["ping", "-4", "-n", "5", "-w", "1000", "h"]
     mac = build_ping_args("h", count=5, timeout=1.0, interval=0.05, os_name="macos")
     assert mac[mac.index("-i") + 1] == "0.1"  # non-root floor on macOS
     assert mac[mac.index("-W") + 1] == "1000"  # milliseconds on macOS

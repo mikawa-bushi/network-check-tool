@@ -26,18 +26,19 @@ releases.
   installing 0.5.0, the last release that supports it.
 - The CI smoke runs pass only exit codes 0 to 3 and fail on a Python traceback
   (`scripts/expect_verdict.sh`). They also check results: loopback is OK, a
-  closed port fails, the soak got every reply, and the exe's drag-and-drop
-  report shows the dropped device as OK with the package version.
+  closed port fails, and the soak got every reply.
 - The pre-push gates (`scripts/check_commit_identity.py` and
   `scripts/check_ai_traces.py`) check every commit a push could send that the
   remote lacks: the first pushed ref, HEAD, every local branch and every tag.
-- `publish.yml` runs the test workflow, then the tag check, then the PyPI
-  upload and the exe build, and attaches the exe zip to the release.
-  `windows-exe.yml` no longer runs on tags. `bin/publish.sh` is gone.
+- `publish.yml` runs the test workflow, then the tag check and build, then
+  the PyPI upload. `bin/publish.sh` is gone.
 - The CI job that committed Black's formatting is gone. CI checks Black and
   ruff, and ruff 0.15.17 is a dev dependency.
 
 ### Removed
+- Windows: the exe (`packaging/windows`), its build workflow
+  (`windows-exe.yml`), the exe release step in `publish.yml` and the
+  `windows-latest` CI job. The package now declares Linux and macOS only.
 - `network-checker`, the ping-monitoring web dashboard, with its dependencies
   (flask, flask-sqlalchemy, flask-cors, plotly) and the `docker/` setup that ran
   it. `pip install network-check-tool` now installs `netdiag` only (click).

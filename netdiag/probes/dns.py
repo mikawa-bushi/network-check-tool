@@ -272,8 +272,8 @@ class DnsProbe(Probe):
                     "On equipment networks, addressing devices by IP avoids DNS entirely.",
                 ),
                 tr(
-                    f"DNS設定を確認: {oscmd('resolvectl status / cat /etc/resolv.conf', 'ipconfig /all', 'scutil --dns')}",
-                    f"Inspect the DNS settings: {oscmd('resolvectl status / cat /etc/resolv.conf', 'ipconfig /all', 'scutil --dns')}",
+                    f"DNS設定を確認: {oscmd('resolvectl status / cat /etc/resolv.conf', 'scutil --dns')}",
+                    f"Inspect the DNS settings: {oscmd('resolvectl status / cat /etc/resolv.conf', 'scutil --dns')}",
                 ),
             ],
         )

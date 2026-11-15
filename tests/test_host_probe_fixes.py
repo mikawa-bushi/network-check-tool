@@ -1,7 +1,7 @@
 """This PC's checks give the verdict the network deserves.
 
-The Windows netsh output and the firewall rulesets here are reconstructed
-samples, not captures from real machines.
+The firewall rulesets here are reconstructed samples, not captures from
+real machines.
 """
 
 import pytest
@@ -187,41 +187,10 @@ def test_unknown_link_speed_is_left_out():
 
 # -- wifi: engine-5 ------------------------------------------------------------
 
-NETSH_JA_DISCONNECTED = (
-    "\r\nシステムに 1 インターフェイスがあります:\r\n\r\n"
-    "    名前                   : Wi-Fi\r\n"
-    "    説明                   : Intel(R) Wi-Fi 6 AX201 160MHz\r\n"
-    "    物理アドレス           : 00:00:5e:00:53:aa\r\n"
-    "    状態                   : 切断\r\n"
-    "    無線の状態             : ハードウェア オン\r\n"
-    "                             ソフトウェア オン\r\n"
-).encode("cp932")
 
+def _idle_iw(monkeypatch):
+    """A Linux PC whose Wi-Fi adapter is not associated."""
 
-def _windows_netsh(monkeypatch, raw):
-    """A Japanese Windows PC: run() hands the probe netsh's cp932 output decoded."""
-    text = raw.decode("cp932")
-
-    def netsh(args, timeout=10):
-        if args == ["netsh", "wlan", "show", "interfaces"]:
-            return CommandResult(True, 0, text, "", True)
-        return CommandResult(False, 1, "", "", False)
-
-    monkeypatch.setattr(wifi, "is_windows", lambda: True)
-    monkeypatch.setattr(wifi, "is_linux", lambda: False)
-    monkeypatch.setattr(wifi, "have", lambda cmd: False)
-    monkeypatch.setattr(wifi, "run", netsh)
-
-
-def test_an_unused_wifi_adapter_does_not_warn_on_windows(monkeypatch):
-    _windows_netsh(monkeypatch, NETSH_JA_DISCONNECTED)
-    diag = run(line_pc(), ["wifi"])
-    res = by_name(diag)["wifi"]
-    assert (res.status, res.code) == (Status.SKIP, "wifi.not_associated")
-    assert res.summary == "Wi-Fi: not associated to any AP (Wi-Fi not in use)"
-
-
-def test_an_unused_wifi_adapter_does_not_warn_on_linux(monkeypatch):
     def iw(args, timeout=10):
         out = (
             "phy#0\n\tInterface wlp2s0\n"
@@ -230,10 +199,13 @@ def test_an_unused_wifi_adapter_does_not_warn_on_linux(monkeypatch):
         )
         return CommandResult(True, 0, out, "", True)
 
-    monkeypatch.setattr(wifi, "is_windows", lambda: False)
     monkeypatch.setattr(wifi, "is_linux", lambda: True)
     monkeypatch.setattr(wifi, "have", lambda cmd: cmd == "iw")
     monkeypatch.setattr(wifi, "run", iw)
+
+
+def test_an_unused_wifi_adapter_does_not_warn_on_linux(monkeypatch):
+    _idle_iw(monkeypatch)
     res = by_name(run(line_pc(), ["wifi"]))["wifi"]
     assert (res.status, res.code) == (Status.SKIP, "wifi.not_associated")
     assert res.summary == "wlp2s0: not associated to any AP (Wi-Fi not in use)"
@@ -366,7 +338,6 @@ NFT_NO_REPLIES = """table inet filter {
 
 
 def _firewall(monkeypatch, tool, text):
-    monkeypatch.setattr(firewall, "is_windows", lambda: False)
     monkeypatch.setattr(firewall, "is_linux", lambda: True)
     monkeypatch.setattr(firewall, "is_root", lambda: True)
     monkeypatch.setattr(firewall, "have", lambda cmd: cmd == tool)
@@ -557,9 +528,9 @@ def gw_arp(state, confirmed_age=None):
     ],
     ids=[
         "linux-confirmed-25s-before-the-test",
-        "windows-reachable-before-and-after",
+        "no-age-reachable-before-and-after",
         "linux-confirmed-during-the-test",
-        "windows-reachable-only-after",
+        "no-age-reachable-only-after",
     ],
 )
 def test_only_arp_confirmed_during_the_test_proves_a_silent_gateway(
@@ -791,7 +762,7 @@ def test_one_multipath_default_is_not_two_rival_gateways():
 
 @pytest.mark.parametrize(
     "metrics, source",
-    [((100, 600), "linux:ip-json"), ((25, 25), "windows:powershell")],
+    [((100, 600), "linux:ip-json"), ((25, 25), "macos")],
 )
 def test_defaults_on_two_nics_still_warn(metrics, source):
     routes = [
@@ -807,16 +778,16 @@ def test_defaults_on_two_nics_still_warn(metrics, source):
 
 def test_a_healthy_laptop_with_idle_wifi_and_vm_adapters_is_healthy(world, monkeypatch):
     world.answered = {GW}
-    world.table = [Neighbor(GW, GW_MAC, "reachable", "Ethernet")]
-    _windows_netsh(monkeypatch, NETSH_JA_DISCONNECTED)
+    world.table = [Neighbor(GW, GW_MAC, "reachable", "eth0")]
+    _idle_iw(monkeypatch)
     hn = HostNetwork(
         interfaces=[
-            nic("Ethernet", "192.0.2.10"),
-            nic("Wi-Fi", up=False, kind=KIND_WIFI),
-            nic("VMware Network Adapter VMnet8", "198.51.100.1", kind=KIND_VIRTUAL),
+            nic("eth0", "192.0.2.10"),
+            nic("wlp2s0", up=False, kind=KIND_WIFI),
+            nic("vmnet8", "198.51.100.1", kind=KIND_VIRTUAL),
         ],
-        routes=[Route("0.0.0.0/0", GW, "Ethernet", 25)],
-        source="windows:powershell",
+        routes=[Route("0.0.0.0/0", GW, "eth0", 100)],
+        source="linux:ip-json",
     )
     diag = run(
         hn,

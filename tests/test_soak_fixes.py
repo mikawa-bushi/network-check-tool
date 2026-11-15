@@ -425,9 +425,7 @@ def test_requests_after_the_stop_are_not_counted(monkeypatch, quiet_pc, tmp_path
 @pytest.mark.parametrize("step", [3600.0, -30.0])
 def test_a_clock_change_neither_ends_nor_stretches_the_run(monkeypatch, quiet_pc, step):
     import netdiag.measure as measure
-    import netdiag.soak as soak_mod
 
-    monkeypatch.setattr(soak_mod, "_STEADY_COUNTS_SLEEP", True)  # Linux, macOS
     real = time.time
     began = real()
     monkeypatch.setattr(
@@ -443,12 +441,9 @@ def test_a_clock_change_neither_ends_nor_stretches_the_run(monkeypatch, quiet_pc
     assert "clock was changed" in render_soak_text(rep)
 
 
-@pytest.mark.parametrize("steady_counts_sleep", [False, True])
-def test_hours_asleep_on_windows_are_not_measured_time(
-    monkeypatch, quiet_pc, steady_counts_sleep
-):
-    """Windows' steady clock (QPC) may or may not count sleep; either way the
-    hour asleep is time the devices were not measured, not an hour of no loss."""
+def test_hours_asleep_are_not_measured_time(monkeypatch, quiet_pc):
+    """The steady clock counts sleep, so an hour asleep is time the devices
+    were not measured, not an hour of no loss."""
     import netdiag.measure as measure
     import netdiag.soak as soak_mod
 
@@ -458,10 +453,8 @@ def test_hours_asleep_on_windows_are_not_measured_time(
     def asleep():
         return H if real_time() - began > 0.5 else 0.0
 
-    monkeypatch.setattr(soak_mod, "_STEADY_COUNTS_SLEEP", False)
     monkeypatch.setattr(time, "time", lambda: real_time() + asleep())
-    if steady_counts_sleep:
-        monkeypatch.setattr(soak_mod, "_monotonic", lambda: real_steady() + asleep())
+    monkeypatch.setattr(soak_mod, "_monotonic", lambda: real_steady() + asleep())
     monkeypatch.setattr(measure, "ping_stream", _stream())
     rep = run_soak([Device(name="PLC", host="192.0.2.1")], duration=H + 2, tick=0.01)
     assert real_time() - began < 6
@@ -469,21 +462,6 @@ def test_hours_asleep_on_windows_are_not_measured_time(
     assert H - 1 < end - start < H + 1
     assert rep.status == Status.UNKNOWN
     assert abs(rep.clock_step_s) < 1
-
-
-def test_a_clock_set_back_on_windows_is_still_a_clock_change(monkeypatch, quiet_pc):
-    import netdiag.measure as measure
-    import netdiag.soak as soak_mod
-
-    real = time.time
-    began = real()
-    monkeypatch.setattr(soak_mod, "_STEADY_COUNTS_SLEEP", False)
-    monkeypatch.setattr(
-        time, "time", lambda: real() - (30 if real() - began > 0.5 else 0)
-    )
-    monkeypatch.setattr(measure, "ping_stream", _stream())
-    rep = run_soak([Device(name="PLC", host="192.0.2.1")], duration=2.0, tick=0.01)
-    assert rep.status == Status.OK and abs(rep.clock_step_s + 30) < 1
 
 
 def test_late_loss_reports_do_not_land_in_closed_cells(monkeypatch, quiet_pc):
@@ -601,27 +579,6 @@ def test_a_device_down_from_the_start_gets_a_live_dropped_line(
     assert err.index("dropped") < err.index("PLC back")
 
 
-def test_live_lines_have_no_colour_codes_a_console_cannot_draw(
-    monkeypatch, quiet_pc, tmp_path
-):
-    import io
-
-    import netdiag.cli._app as app
-
-    class Console(io.StringIO):
-        def isatty(self):
-            return True
-
-    err = Console()
-    monkeypatch.setattr(sys, "stderr", err)
-    monkeypatch.setattr(app, "_WINDOWS", True)
-    monkeypatch.setattr(app, "_enable_vt", lambda stream: False)  # before Windows 10
-    stream = _stream(lost=lambda t, k: 5 <= k < 15)
-    args = ["192.0.2.1", "--duration", "2", "-o", str(tmp_path / "soak.json")]
-    assert _main(monkeypatch, args, stream) == 1
-    assert "dropped" in err.getvalue() and "\033[" not in err.getvalue()
-
-
 @pytest.mark.skipif(
     not hasattr(os, "geteuid") or os.geteuid() == 0, reason="needs file permissions"
 )
@@ -662,7 +619,6 @@ def test_live_line_names_the_cell_it_summarises(
     assert stamps and set(stamps) <= lossy
 
 
-@pytest.mark.skipif(sys.platform == "win32", reason="POSIX signals")
 def test_a_second_ctrl_c_does_not_lose_the_report(tmp_path):
     script = textwrap.dedent("""
         import sys, time

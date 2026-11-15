@@ -87,7 +87,7 @@ class DualStackProbe(Probe):
     def check(self, ctx: Context) -> CheckResult:
         host = ctx.get("dns_name", "example.com")
         # Two pings per family keep this cheap; --count is for the gateway and
-        # the devices, and would cost a second per ping with ping.exe here.
+        # the devices.
         has4 = _has_family(host, socket.AF_INET)
         has6 = _has_family(host, socket.AF_INET6)
         v4 = _family_ok(host, v6=False) if has4 else None

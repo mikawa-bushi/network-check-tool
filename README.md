@@ -15,7 +15,7 @@ netdiag check -f 台帳.csv          # このPC + 台帳の全機器を点検
 ```
 
 - **気軽に** — 管理者権限不要・設定ファイル不要・オフラインで動作。Excelで作ったCSVの台帳をそのまま読めます。
-  Windows / Linux / macOS 対応（日本語版Windowsの `ping` 表示もそのまま解析）。
+  Linux / macOS 対応。Windows では 0.5.0 を使ってください（`pip install "network-check-tool==0.5.0"`）。
 - **高精度** — 応答時間はマイクロ秒精度、損失率は「95%上限」付きで表示（10回中0件のロスでも
   「28%以下」としか言えない、という事実を正直に示します）。遅延は中央値・p95・最大・ジッタで評価。
 - **網羅的** — LANリンク品質（速度・全二重/半二重・CRCエラー）、IP設定の矛盾、ゲートウェイ、ARP、
@@ -30,25 +30,12 @@ netdiag check -f 台帳.csv          # このPC + 台帳の全機器を点検
 
 ## インストール
 
-### Windows: exe 版（Python 不要・インストール不要）
-
-[Releases](https://github.com/mikawa-bushi/network-check-tool/releases) の
-`netdiag-windows-x64-<版>.zip` を展開して使います（管理者権限不要）。
-
-- `netdiag.exe` を**ダブルクリック** → このPCを点検し、結果のHTMLレポートを exe の隣に保存してブラウザで開きます。
-- 台帳（Excelで保存したCSV）を `netdiag.exe` に**ドラッグ＆ドロップ** → 台帳の全機器を点検し、
-  台帳の隣に `<台帳名>_点検結果_日時.html` を保存して開きます。
-- コマンドプロンプトからは `netdiag.exe check -f 台帳.csv` など、下記の `netdiag` と同じように使えます。
-
-署名なしの exe のため、初回に SmartScreen の確認が出ることがあります（「詳細情報」→「実行」）。
-
-### pip（Windows / Linux / macOS）
+netdiag 0.6.0 以降は Linux と macOS で動きます。Windows では 0.5.0 を使ってください。
 
 ```bash
 pip install network-check-tool
-# Windows で netdiag にパスが通っていない場合:
-py -m pip install network-check-tool
-py -m netdiag
+# netdiag にパスが通っていない場合:
+python3 -m netdiag
 ```
 
 > パッケージ名は `network-check-tool` です（コマンド名は `netdiag`）。PyPI の `netdiag` は
@@ -154,7 +141,7 @@ HTMLレポートでは機器×時間のヒートマップで、途切れた時�
 netdiag collect --target 192.168.3.39     # → netdiag-collect-日時.zip
 ```
 
-netdiag が使うOSコマンド（ping・arp・route・PowerShell など）の**生の出力**と netdiag の解釈結果を
+netdiag が使うOSコマンド（ping・ip・arp・route など）の**生の出力**と netdiag の解釈結果を
 zip にまとめます。IPアドレス・MAC・PC名・ユーザー名・SSID・ドメインは既定で伏せます
 （サブネット構造とMACのメーカー部分は残すので解析に使えます）。送る前に中身を確認してください。
 
@@ -198,7 +185,7 @@ zip にまとめます。IPアドレス・MAC・PC名・ユーザー名・SSID�
 - **ARP（同じLAN内で機器が必ず応答する仕組み）**で、「電源断・配線不良・IP誤り（ARP応答なし）」と
   「機器は存在するがpingに応答しない設定（ARP応答あり）」を区別します。判定には**測定中に得た新しい
   ARP情報だけ**を使い、PCに残っている古い記録で「存在する」と誤判定しないようにしています。
-- **IP重複**は、1回のpingに複数の応答が返る・台帳のMACと違う機器が応答する・WindowsがIP競合を
+- **IP重複**は、1回のpingに複数の応答が返る・台帳のMACと違う機器が応答する・OSがIP競合を
   検出している、のいずれかで報告します。
 - ポートは「開」「閉（機器は生きているが待ち受けていない）」「無応答（ファイアウォール/機器停止）」を区別します。
   pingにもTCPにも全く応答が無い場合は、ポートの問題ではなく機器・経路の問題として報告します。
@@ -208,9 +195,8 @@ zip にまとめます。IPアドレス・MAC・PC名・ユーザー名・SSID�
 - pingの送信は全体で毎秒200回までに制限しています。
 - TCPポートは、台帳や `-p` で**指定したものだけ**に接続し、すぐ切断します（接続数に上限のあるPLCを考慮）。
   `netdiag scan` は ping と ARP だけを使い、指定しない限りポートには触れません。
-- 管理者権限は不要です。ping は Linux/macOS では権限不要のICMPソケット、Windows では
-  OS の ICMP API（`IcmpSendEcho`）で送信し、いずれも高分解能タイマーで 1ms 未満まで測ります。
-  どちらも使えない環境では OS の `ping` コマンドで測定します。
+- 管理者権限は不要です。ping は権限不要のICMPソケットで送信し、高分解能タイマーで 1ms 未満まで
+  測ります。使えない環境では OS の `ping` コマンドで測定します。
 
 ## netdiag コマンド一覧
 
@@ -243,7 +229,8 @@ zip にまとめます。IPアドレス・MAC・PC名・ユーザー名・SSID�
   the root cause and the next steps.
 - Device lists are plain CSV saved from Excel (Japanese or English headers, Shift_JIS/UTF-8/UTF-16),
   YAML, JSON or TOML; ports can be numbers or protocol names (`modbus`, `enip`, `opcua`, `s7` …).
-- Works offline and unprivileged on Windows (including Japanese-locale output), Linux and macOS;
+- Works offline and unprivileged on Linux and macOS. On Windows, use 0.5.0
+  (`pip install "network-check-tool==0.5.0"`);
   `netdiag` needs only the standard library and `click`. Closed networks are the default — add
   `--internet` to also check external reachability and DNS. Output in Japanese by default;
   `--lang en` or `NETDIAG_LANG=en` for English. Reports: text, JSON, self-contained HTML, CSV.
@@ -252,9 +239,6 @@ zip にまとめます。IPアドレス・MAC・PC名・ユーザー名・SSID�
   errors (and link drops on Linux) (HTML heatmap, CSV, JSON).
 - `netdiag collect` zips the raw output of every OS command netdiag relies on, with IPs, MACs,
   host/user names, SSIDs and domains masked, for bug reports.
-- Windows: a single `netdiag.exe` (no Python): double-click to check this PC, or drop a device
-  list on it to check the line; an HTML report opens in the browser. Precise pings use the
-  Windows ICMP API (no admin rights).
 - `netdiag scan` discovers devices on a subnet (ICMP + ARP only).
 - Install with `pip install network-check-tool`. The command is `netdiag`, but the
   `netdiag` package on PyPI is an unrelated project.
