@@ -337,7 +337,7 @@ def _heatmap(rep: SoakReport) -> str:
     n = max(0, math.ceil((rep.finished_at - first) / size))
     starts = sorted(
         {first + i * size for i in range(n)}
-        | {b.start for t in rep.tracks for b in t.buckets.values()}
+        | {s for t in rep.tracks for s in t.buckets}
     )
     if not starts:
         return ""
@@ -363,8 +363,7 @@ def _heatmap(rep: SoakReport) -> str:
         out.append(
             f'<text x="0" y="{y + 13}" class="lbl">{html.escape(truncate(t.name, 22))}</text>'
         )
-        by_start: Dict[float, Bucket] = {b.start: b for b in t.buckets.values()}
-        cells = [(s, by_start.get(s)) for s in starts]
+        cells = [(s, t.buckets.get(s)) for s in starts]
         # One rect per run of same-colour minutes: an overnight run of healthy
         # minutes stays one element instead of hundreds.
         i = 0
