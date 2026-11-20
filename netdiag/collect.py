@@ -22,6 +22,7 @@ from __future__ import annotations
 
 import getpass
 import json
+import locale
 import platform
 import re
 import socket
@@ -551,7 +552,7 @@ def run_collect(
         "platform": platform.platform(),
         "python": sys.version.split()[0],
         "language": get_language(),
-        "preferred_encoding": _preferred_encoding(),
+        "preferred_encoding": locale.getpreferredencoding(False),
         "masked": mask,
         "commands": [
             {
@@ -595,12 +596,6 @@ def _user() -> str:
         return getpass.getuser()
     except Exception:
         return ""
-
-
-def _preferred_encoding() -> str:
-    import locale
-
-    return locale.getpreferredencoding(False)
 
 
 def default_output() -> Path:

@@ -50,7 +50,6 @@ class InterfaceProbe(Probe):
     name = "interface"
     title = Text("ネットワークアダプタ", "Network interface")
     layer = "L2"
-    depends_on: List[str] = []
     what = Text(
         "LANケーブル/Wi-Fiがつながり、IPv4アドレスを持つアダプタがあるか確認します。",
         "Checks that a non-loopback interface is UP and holds an IPv4 address.",

@@ -25,12 +25,6 @@ from ._common import classify_latency, oscmd, ping_settings, ping_summary
 from .device import l2_evidence
 
 
-def default_gateway() -> Optional[str]:
-    """The preferred default gateway of this host (lowest metric), if any."""
-    best = netinfo.snapshot().preferred_default_route()
-    return best.gateway if best else None
-
-
 def _forwards(host: str) -> bool:
     """One TCP connection off the LAN succeeds, so the gateway forwards traffic."""
     return tcp_connect_once(host, 443, timeout=2.0)[0]
@@ -342,4 +336,4 @@ class GatewayProbe(Probe):
         )
 
 
-__all__: List[str] = ["GatewayProbe", "default_gateway"]
+__all__: List[str] = ["GatewayProbe"]

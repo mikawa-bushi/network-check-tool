@@ -20,43 +20,11 @@ _SSID_RE = re.compile(r"SSID:\s*(.+)")
 WEAK_DBM = -75
 
 
-def _wifi_interfaces() -> List[str]:
-    if not have("iw"):
-        return []
-    res = run(["iw", "dev"])
-    if not res.ok:
-        return []
-    return re.findall(r"Interface\s+(\S+)", res.stdout)
-
-
-def _no_link(name: str, idle: List[str]) -> CheckResult:
-    """No adapter is associated, so Wi-Fi is not this PC's path.
-
-    A PC that needs Wi-Fi and lost it has no usable adapter, which the
-    ``interface`` check reports as a failure.
-    """
-    if not idle:
-        return CheckResult.skip(
-            name, tr("Wi-Fi情報なし", "no Wi-Fi link info"), code="wifi.none"
-        )
-    names = ", ".join(idle)
-    return CheckResult.skip(
-        name,
-        tr(
-            f"{names}: アクセスポイント未接続（Wi-Fiは使用していません）",
-            f"{names}: not associated to any AP (Wi-Fi not in use)",
-        ),
-        metrics={"associated": 0.0},
-        code="wifi.not_associated",
-    )
-
-
 @register
 class WifiProbe(Probe):
     name = "wifi"
     title = Text("Wi-Fi接続", "Wi-Fi link")
     layer = "L1"
-    depends_on: List[str] = []
     what = Text(
         "無線LANの電波強度・SSID・リンク速度を確認します（無線接続時のみ）。",
         "Reads Wi-Fi signal strength, SSID and link rate (if on wireless).",
@@ -97,7 +65,8 @@ class WifiProbe(Probe):
                 ),
                 code="wifi.no_tool",
             )
-        ifaces = _wifi_interfaces()
+        dev = run(["iw", "dev"])
+        ifaces = re.findall(r"Interface\s+(\S+)", dev.stdout) if dev.ok else []
         if not ifaces:
             return CheckResult.skip(
                 self.name,
@@ -141,4 +110,18 @@ class WifiProbe(Probe):
                 worst = CheckResult.ok(
                     self.name, desc, metrics=metrics, detail=detail, code="wifi.ok"
                 )
-        return worst or _no_link(self.name, idle)
+        if worst is not None:
+            return worst
+        # No adapter is associated, so Wi-Fi is not this PC's path. A PC that
+        # needs Wi-Fi and lost it has no usable adapter, which the ``interface``
+        # check reports as a failure.
+        names = ", ".join(idle)
+        return CheckResult.skip(
+            self.name,
+            tr(
+                f"{names}: アクセスポイント未接続（Wi-Fiは使用していません）",
+                f"{names}: not associated to any AP (Wi-Fi not in use)",
+            ),
+            metrics={"associated": 0.0},
+            code="wifi.not_associated",
+        )

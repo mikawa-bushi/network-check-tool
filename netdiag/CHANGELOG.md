@@ -4,6 +4,16 @@ All notable changes to the `netdiag` package are documented in this file.
 
 ## [Unreleased]
 
+### Removed
+
+- The single-diagnosis renderers `netdiag.report.render_terminal`,
+  `render_json` and `render_html`. `render_check_text`, `render_check_json`
+  and `render_check_html` replace them. The wrappers
+  `netdiag.probes.icmp.ping`, `netdiag.probes.tcp.tcp_connect` and
+  `netdiag.probes.gateway.default_gateway` are gone too. Use
+  `netdiag.measure.ping`, `netdiag.measure.tcp_connect_once` and
+  `netdiag.netinfo.snapshot().preferred_default_route()`.
+
 ## [0.6.0] - 2026-11-16
 
 netdiag's verdicts now follow what it measured. A check that could not

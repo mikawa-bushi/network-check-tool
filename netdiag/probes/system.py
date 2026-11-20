@@ -19,7 +19,7 @@ from ..i18n import Text, tr
 def _loadavg() -> Optional[float]:
     try:
         return os.getloadavg()[0]
-    except (OSError, AttributeError):
+    except OSError:
         return None
 
 
@@ -60,7 +60,6 @@ class SystemProbe(Probe):
     name = "system"
     title = Text("PCのリソース", "Host resources")
     layer = "SYSTEM"
-    depends_on: List[str] = []
     what = Text(
         "CPU負荷・空きメモリ・コネクション追跡表の使用率を確認します。",
         "Checks CPU load, available memory, and connection-tracking table usage.",
@@ -173,7 +172,6 @@ class ClockProbe(Probe):
     name = "clock"
     title = Text("PCの時計", "System clock")
     layer = "SYSTEM"
-    depends_on: List[str] = []
     what = Text(
         "PCの時計がNTPで同期しているか確認します。",
         "Checks whether the system clock is synchronised (NTP).",

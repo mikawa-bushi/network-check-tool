@@ -24,19 +24,9 @@ from . import (  # noqa: F401  (imported to register the subcommands)
     cmd_snapshot,
     cmd_soak,
 )
-from ._app import (
-    DEFAULT_CONFIG,
-    _build_config,
-    _setup_logging,
-    _split_csv,
-    cli,
-    harden_streams,
-)
-from .cmd_check import check, ping
-from .cmd_collect import collect
-from .cmd_scan import scan
+from ._app import _setup_logging, cli, harden_streams
+from .cmd_check import check
 from .cmd_scenario import scenario
-from .cmd_soak import soak
 
 
 def main(args: Optional[List[str]] = None, prog_name: Optional[str] = None) -> NoReturn:
@@ -98,13 +88,6 @@ __all__ = [
     "cli",
     "main",
     "check",
-    "collect",
-    "ping",
-    "scan",
     "scenario",
-    "soak",
-    "DEFAULT_CONFIG",
-    "_build_config",
     "_setup_logging",
-    "_split_csv",
 ]

@@ -279,9 +279,7 @@ def save_report(text: str, output: str, fmt: str) -> None:
     )
 
 
-def format_from_path(
-    output: Optional[str], fmt: Optional[str], default: str = "text"
-) -> str:
+def format_from_path(output: Optional[str], fmt: Optional[str]) -> str:
     """``-o report.html`` implies ``--format html`` unless one was given."""
     if fmt:
         return fmt
@@ -291,7 +289,7 @@ def format_from_path(
             return "html"
         if suffix in ("json", "csv"):
             return suffix
-    return default
+    return "text"
 
 
 def ansi_ok(stream) -> bool:
@@ -305,6 +303,36 @@ def ansi_ok(stream) -> bool:
 def color_wanted(no_color: bool, err: bool = False) -> bool:
     """Colour for stdout (or stderr with *err*) unless --no-color."""
     return not no_color and ansi_ok(sys.stderr if err else sys.stdout)
+
+
+def write_check_report(
+    rep,
+    fmt: str,
+    output: Optional[str],
+    *,
+    show_all: bool,
+    reasoning: bool,
+    no_color: bool,
+    header: str = "",
+) -> None:
+    """Render a CheckReport in *fmt* and write it; *header* leads the text form."""
+    from .. import report as report_mod
+
+    if fmt == "json":
+        text = report_mod.render_check_json(rep)
+    elif fmt == "html":
+        text = report_mod.render_check_html(rep)
+    elif fmt == "csv":
+        text = report_mod.render_check_csv(rep)
+    else:
+        text = header + report_mod.render_check_text(
+            rep,
+            color=False if output else color_wanted(no_color),
+            verbose=reasoning,
+            show_all=show_all,
+            unicode=True if output else None,
+        )
+    write_output(text, output, fmt)
 
 
 # Typographic characters netdiag prints, with stand-ins for encodings that
@@ -406,14 +434,18 @@ def _next_steps() -> str:
 class Progress:
     """One overwriting status line on stderr (only on a terminal that renders ANSI)."""
 
-    def __init__(self, enabled: Optional[bool] = None) -> None:
-        self.enabled = ansi_ok(sys.stderr) if enabled is None else enabled
+    def __init__(self) -> None:
+        self.enabled = ansi_ok(sys.stderr)
         self._shown = False
 
     def __call__(self, message: str) -> None:
         if self.enabled:
             click.echo(f"\r\033[K… {message}", nl=False, err=True)
             self._shown = True
+
+    def checking(self, name: str) -> None:
+        """The engine's ``on_probe`` hook: name the check that starts next."""
+        self(tr(f"確認中: {name}", f"checking {name}"))
 
     def done(self) -> None:
         if self.enabled and self._shown:

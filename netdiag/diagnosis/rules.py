@@ -55,11 +55,3 @@ def explain_failure(
 def runbook_steps(cause: str) -> List[str]:
     """Generic next steps for a probe name (no run result available)."""
     return advice_for(None, cause=cause)[1]
-
-
-def _runbook(cause: str) -> Dict:
-    """``{"means", "steps"}`` for a probe name; ``{}`` when unknown."""
-    if get_probe(cause) is None:
-        return {}
-    means, steps = advice_for(None, cause=cause)
-    return {"means": means, "steps": steps}

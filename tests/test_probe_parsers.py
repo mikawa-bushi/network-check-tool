@@ -11,7 +11,6 @@ from netdiag.measure.icmp import (
     parse_posix_ping,
     system_ping,
 )
-from netdiag.probes import icmp
 from netdiag.probes.traceroute import _parse_hops
 
 # ---------------------------------------------------------------- traceroute
@@ -156,11 +155,10 @@ def test_build_ping_args_per_platform():
     assert mac[mac.index("-W") + 1] == "1000"  # milliseconds on macOS
 
 
-def test_icmp_ping_compat_wrapper(monkeypatch):
-    # The legacy (avg_rtt, loss_pct, raw) API is kept for external callers.
+def test_system_ping_method_reports_a_silent_host(monkeypatch):
     _canned(monkeypatch, IPUTILS_DOWN)
     monkeypatch.setenv("NETDIAG_PING_METHOD", "system")
-    rtt, loss, raw = icmp.ping("8.8.8.8", count=3, timeout=2.0)
-    assert rtt is None
-    assert loss == 100.0
-    assert raw == IPUTILS_DOWN
+    st = pingmod.ping("8.8.8.8", count=3, timeout=2.0)
+    assert st.rtt is None
+    assert st.loss_pct == 100.0
+    assert st.raw == IPUTILS_DOWN

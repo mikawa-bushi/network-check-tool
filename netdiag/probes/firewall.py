@@ -153,7 +153,6 @@ class FirewallProbe(Probe):
     name = "firewall"
     title = Text("このPCのファイアウォール", "Local firewall")
     layer = "L4"
-    depends_on: List[str] = []
     requires_root = True
     what = Text(
         "このPC自身のファイアウォール設定（遮断ルール）を確認します。",

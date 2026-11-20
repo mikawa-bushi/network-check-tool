@@ -5,7 +5,8 @@ import pytest
 from netdiag.core import CheckResult, Probe, Status
 from netdiag.core.probe import _REGISTRY
 from netdiag.diagnosis import Engine
-from netdiag.report import render_terminal
+from netdiag.report import render_check_text
+from netdiag.runner import CheckReport
 
 
 @pytest.fixture
@@ -83,7 +84,9 @@ def test_not_evaluated_names_the_check_that_failed(broken_internet):
     by = diag.results_by_name()
     assert by["dns"].summary == "not evaluated: upstream gw failed"
     assert by["port"].summary == "not evaluated: upstream gw failed"
-    assert "upstream dns failed" not in render_terminal(diag, color=False)
+    report = CheckReport(host=diag, hostname="pc", platform="test")
+    text = render_check_text(report, color=False, show_all=True)
+    assert "upstream dns failed" not in text
 
 
 def test_an_unmeasured_dependency_does_not_hide_its_dependents(registry):

@@ -47,12 +47,6 @@ def _json_default(o: Any) -> Any:
     return str(o)
 
 
-def render_json(diag: Diagnosis) -> str:
-    return json.dumps(
-        diagnosis_to_dict(diag), indent=2, ensure_ascii=False, default=_json_default
-    )
-
-
 def render_check_json(report) -> str:
     return json.dumps(
         report.to_dict(), indent=2, ensure_ascii=False, default=_json_default

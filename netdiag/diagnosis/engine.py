@@ -117,11 +117,7 @@ def _topo_order(names: List[str]) -> List[str]:
     happen) fall back to declaration order for the unresolved remainder.
     """
     selected = set(names)
-    deps: Dict[str, List[str]] = {}
-    for n in names:
-        cls = get_probe(n)
-        d = [x for x in (cls.depends_on if cls else []) if x in selected]
-        deps[n] = d
+    deps = {n: [x for x in get_probe(n).depends_on if x in selected] for n in names}
 
     ordered: List[str] = []
     placed = set()
@@ -148,7 +144,7 @@ def _dependency_tiers(order: List[str], names: List[str]) -> List[List[str]]:
 
     Dependencies are read from each probe's registered ``depends_on`` (via the
     global registry), restricted to names in ``names`` — not derived from the
-    arguments; an unregistered name is treated as having no dependencies.
+    arguments.
 
     A probe's tier (level) is ``0`` when it has no selected dependency, otherwise
     ``1 + max(level of its selected dependencies)``. Every dependency therefore
@@ -161,8 +157,7 @@ def _dependency_tiers(order: List[str], names: List[str]) -> List[List[str]]:
     selected = set(names)
     level: Dict[str, int] = {}
     for n in order:
-        cls = get_probe(n)
-        deps = [x for x in (cls.depends_on if cls else []) if x in selected]
+        deps = [x for x in get_probe(n).depends_on if x in selected]
         known = [level[d] for d in deps if d in level]
         level[n] = 1 + max(known) if known else 0
 
@@ -250,20 +245,17 @@ class Engine:
 
     def _evaluate_probe(
         self, name: str, ctx: Context
-    ) -> Tuple[Optional[CheckResult], Optional[str]]:
+    ) -> Tuple[CheckResult, Optional[str]]:
         """Evaluate one probe against ``ctx`` and return ``(result, reasoning)``.
 
         Applies the dependency gate (a probe whose hard dependency already FAILED
         is skipped as a consequence rather than re-measuring a symptom), otherwise
         runs the probe. ``reasoning`` is the verbose line for this probe, or
-        ``None`` when not in verbose mode. Returns ``(None, None)`` for an unknown
-        probe name. Reads ``ctx`` but never writes ``ctx.results`` — the caller
-        records the result, which lets a tier of independent probes be evaluated
-        concurrently and then committed together.
+        ``None`` when not in verbose mode. Reads ``ctx`` but never writes
+        ``ctx.results`` — the caller records the result, which lets a tier of
+        independent probes be evaluated concurrently and then committed together.
         """
-        cls: Optional[Type[Probe]] = get_probe(name)
-        if cls is None:
-            return None, None
+        cls = get_probe(name)
         probe = cls()
 
         # Only a failure on the path to this run's targets gates the probe: a
@@ -339,20 +331,18 @@ class Engine:
                     )
             for name in tier:
                 res, reason = tier_out[name]
-                if res is not None:
-                    ctx.results[name] = res
-                    collected[name] = (res, reason)
+                ctx.results[name] = res
+                collected[name] = (res, reason)
 
         # Emit in topological order regardless of completion order, so the
         # Diagnosis is identical to a serial run for any value of ``jobs``.
         results: List[CheckResult] = []
         reasoning: List[str] = []
         for name in order:
-            if name in collected:
-                res, reason = collected[name]
-                results.append(res)
-                if reason is not None:
-                    reasoning.append(reason)
+            res, reason = collected[name]
+            results.append(res)
+            if reason is not None:
+                reasoning.append(reason)
 
         return self.diagnose(results, reasoning)
 

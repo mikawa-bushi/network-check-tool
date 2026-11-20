@@ -28,7 +28,7 @@ from ._app import (
     format_from_path,
     log_file_apart_from,
     output_path,
-    write_output,
+    write_check_report,
 )
 
 
@@ -297,7 +297,6 @@ def check(
     jobs,
     no_host,
 ):
-    from .. import report as report_mod
     from ..runner import run_check
 
     fmt = format_from_path(output, fmt)
@@ -319,11 +318,6 @@ def check(
         cfg["count"] = max(1, int(duration / effective_interval(interval)))
 
     progress = Progress()
-    on_probe = (
-        (lambda name: progress(tr(f"確認中: {name}", f"checking {name}")))
-        if progress.enabled
-        else None
-    )
     try:
         rep = run_check(
             devices,
@@ -333,28 +327,14 @@ def check(
             jobs=jobs,
             include_host=not no_host,
             progress=progress,
-            on_probe=on_probe,
+            on_probe=progress.checking,
         )
     finally:
         progress.done()
     rep.settings["devices"] = len(devices)
-
-    if fmt == "json":
-        text = report_mod.render_check_json(rep)
-    elif fmt == "html":
-        text = report_mod.render_check_html(rep, show_all=True)
-    elif fmt == "csv":
-        text = report_mod.render_check_csv(rep)
-    else:
-        to_file = bool(output)
-        text = report_mod.render_check_text(
-            rep,
-            color=False if to_file else color_wanted(no_color),
-            verbose=reasoning,
-            show_all=show_all,
-            unicode=True if to_file else None,
-        )
-    write_output(text, output, fmt)
+    write_check_report(
+        rep, fmt, output, show_all=show_all, reasoning=reasoning, no_color=no_color
+    )
     sys.exit(rep.exit_code)
 
 

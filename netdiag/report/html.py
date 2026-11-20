@@ -13,9 +13,8 @@ from typing import List
 
 from .. import __version__
 from ..core import Status
-from ..diagnosis import Diagnosis
 from ..i18n import get_language, tr
-from .common import confidence_word, is_not_applicable, status_word
+from .common import confidence_word, status_word
 from .data import hypothesis_runbook
 from .text import device_cells
 
@@ -68,11 +67,9 @@ def _page(title: str, body: str, extra_css: str = "") -> str:
     )
 
 
-def _results_table(results, show_all: bool = True) -> str:
+def _results_table(results) -> str:
     rows = []
     for r in results:
-        if not show_all and is_not_applicable(r):
-            continue
         cls = r.status.value
         rows.append(
             f"<tr class='{cls}'><td class='st'>{_esc(r.status.symbol)}</td><td>{_esc(r.layer)}</td>"
@@ -96,11 +93,7 @@ def _hypothesis_html(subject: str, h, index: int) -> str:
     steps = "".join(f"<li>{_esc(s)}</li>" for s in hypothesis_runbook(h))
     ev = "".join(f"<li>{_esc(e)}</li>" for e in h.evidence)
     conf = tr("確信度", "confidence") + f": {confidence_word(h.confidence)}"
-    title = (
-        f"{index}. {subject} — {h.summary}"
-        if subject
-        else f"{index}. {h.cause} — {h.summary}"
-    )
+    title = f"{index}. {subject} — {h.summary}"
     return (
         f"<div class='hyp {h.confidence}'><h3>{_esc(title)} <span class='conf'>[{_esc(conf)}]</span></h3>"
         + (f"<ul class='ev'>{ev}</ul>" if ev else "")
@@ -119,29 +112,7 @@ def _hypothesis_html(subject: str, h, index: int) -> str:
     )
 
 
-def render_html(diag: Diagnosis) -> str:
-    """A single Diagnosis (host sweep / scenario) as a standalone page."""
-    status = diag.status
-    if status == Status.OK:
-        verdict = tr("異常は見つかりませんでした", "All checks passed")
-    elif diag.hypotheses:
-        verdict = tr(
-            f"推定原因 {len(diag.hypotheses)} 件",
-            f"{len(diag.hypotheses)} suspected cause(s)",
-        )
-    else:
-        verdict = status_word(status)
-    cls = status.value
-    hyps = "".join(_hypothesis_html("", h, i) for i, h in enumerate(diag.hypotheses, 1))
-    body = (
-        f"<h1>netdiag {tr('診断レポート', 'report')} — {_esc(verdict)}</h1>"
-        f"<div class='verdict {cls}'>{_esc(verdict)}</div>"
-        f"{_results_table(diag.results)}{hyps}"
-    )
-    return _page("netdiag report", body)
-
-
-def render_check_html(report, show_all: bool = True) -> str:
+def render_check_html(report) -> str:
     """A full :class:`netdiag.runner.CheckReport` as a standalone page."""
     status = report.status
     when = time.strftime("%Y-%m-%d %H:%M:%S", time.localtime(report.started_at))
@@ -228,7 +199,7 @@ def render_check_html(report, show_all: bool = True) -> str:
 
     if report.host_checked:
         parts.append(f"<h2>{tr('このPCのネットワーク', 'This PC')}</h2>")
-        parts.append(_results_table(report.host.results, show_all=show_all))
+        parts.append(_results_table(report.host.results))
     parts.append(
         f"<p class='foot'>{tr('測定条件', 'Settings')}: {_esc(settings)} — "
         + tr(

@@ -13,13 +13,7 @@ from ..i18n import Text, tr
 from ..inventory import InventoryError, normalize_host, parse_ports
 from ..measure import tcp_check_many
 from ..measure.icmp import _literal_family
-from ..measure.tcp import tcp_connect_once
 from ._common import fmt_ms
-
-
-def tcp_connect(host: str, port: int, timeout: float = 3.0) -> Tuple[bool, float, str]:
-    """Return (connected, elapsed_ms, reason) — kept for API compatibility."""
-    return tcp_connect_once(host, port, timeout)
 
 
 def parse_target(spec: str) -> List[Tuple[str, int]]:

@@ -77,7 +77,6 @@ class TracerouteProbe(Probe):
     title = Text("経路トレース", "Path trace")
     layer = "L3"
     depends_on = ["gateway"]
-    requires_root = False
     default = False  # slow and noisy against hosts that filter it: on demand only
     what = Text(
         "宛先までの経路を1ホップずつ調べ、どこで止まるかを確認します。",
