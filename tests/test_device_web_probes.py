@@ -245,7 +245,7 @@ def test_a_certificate_outside_its_dates_says_which_and_when(
     )
     with _server(server) as port:
         _diag, res = _run(["tls"], tls_target=f"https://127.0.0.1:{port}/")
-    assert res["tls"].code == code
+    assert res["tls"].code == code, res["tls"].summary
     assert words in res["tls"].summary
     if name == "expired":
         assert "days ago" in res["tls"].summary
