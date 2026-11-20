@@ -27,7 +27,6 @@ class LinkProbe(Probe):
     name = "link"
     title = Text("有線リンク品質", "Wired link quality")
     layer = "L1"
-    depends_on: List[str] = []
     what = Text(
         "有線LANのリンク速度・全二重/半二重・NICのエラーカウンタを確認します。",
         "Reads negotiated speed, duplex and NIC error counters of wired links.",

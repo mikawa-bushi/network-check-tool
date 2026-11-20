@@ -25,7 +25,6 @@ class WifiProbe(Probe):
     name = "wifi"
     title = Text("Wi-Fi接続", "Wi-Fi link")
     layer = "L1"
-    depends_on: List[str] = []
     what = Text(
         "無線LANの電波強度・SSID・リンク速度を確認します（無線接続時のみ）。",
         "Reads Wi-Fi signal strength, SSID and link rate (if on wireless).",

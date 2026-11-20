@@ -113,7 +113,6 @@ class RouteProbe(Probe):
     title = Text("経路（サブネット）", "Route / subnet")
     layer = "L3"
     scope = "target"
-    depends_on: List[str] = []
     what = Text(
         "機器のIPがこのPCのどのネットワークに属するか（直接つながるか、ゲートウェイ経由か）を判定します。",
         "Decides whether the device is in one of this PC's subnets or behind a gateway.",
