@@ -19,7 +19,7 @@ from ..i18n import Text, tr
 def _loadavg() -> Optional[float]:
     try:
         return os.getloadavg()[0]
-    except (OSError, AttributeError):
+    except OSError:
         return None
 
 
