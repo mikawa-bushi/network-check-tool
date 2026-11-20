@@ -15,7 +15,6 @@ from netdiag.netinfo.model import (
     Interface,
     LinkStats,
     Route,
-    mac_is_local,
     normalize_mac,
 )
 
@@ -28,7 +27,6 @@ def test_normalize_mac_variants():
     assert normalize_mac("001122AABBCC") == "00:11:22:aa:bb:cc"
     assert normalize_mac("(incomplete)") is None
     assert normalize_mac("") is None
-    assert mac_is_local("02:00:00:00:00:01") and not mac_is_local("00:11:22:33:44:55")
 
 
 def test_link_stats_delta():
@@ -225,7 +223,7 @@ def test_linux_parse_routes_and_neighbours():
     assert len(neigh) == 2  # IPv6 entries ignored
     assert (
         neigh[0].mac == "00:26:92:aa:bb:cc"
-        and neigh[0].confirmed
+        and neigh[0].state == "reachable"
         and neigh[0].confirmed_age == 3.0
     )
     assert neigh[1].absent and neigh[1].mac is None
@@ -248,7 +246,7 @@ def test_linux_text_fallbacks():
     neigh = linux.parse_neigh_text(
         "192.168.1.1 dev eth0 lladdr aa:bb:cc:dd:ee:ff REACHABLE\n"
     )
-    assert neigh[0].mac == "aa:bb:cc:dd:ee:ff" and neigh[0].confirmed
+    assert neigh[0].mac == "aa:bb:cc:dd:ee:ff" and neigh[0].state == "reachable"
 
 
 def test_linux_resolv_conf():

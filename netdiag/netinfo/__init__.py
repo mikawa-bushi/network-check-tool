@@ -28,7 +28,6 @@ from .model import (
     Route,
     RouteDecision,
     RouteRule,
-    mac_is_local,
     normalize_mac,
 )
 
@@ -53,7 +52,6 @@ __all__ = [
     "link_stats",
     "source_ip_for",
     "normalize_mac",
-    "mac_is_local",
 ]
 
 
