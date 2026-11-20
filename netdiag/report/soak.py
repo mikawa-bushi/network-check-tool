@@ -49,6 +49,11 @@ def _cell_text(seconds: float) -> str:
     return tr(f"{seconds:g}秒", f"{seconds:g} s")
 
 
+def cell_clock(bucket_s: float) -> str:
+    """Clock format for cell starts, with seconds unless cells are whole minutes."""
+    return "%H:%M" if bucket_s % 60 == 0 else "%H:%M:%S"
+
+
 def _span(rep: SoakReport) -> str:
     end = _when(rep.finished_at) if rep.multi_day else rep.at(rep.finished_at)
     return f"{_when(rep.started_at)} 〜 {end}"
@@ -260,7 +265,7 @@ def csv_rows(track: DeviceTrack, buckets: List[Bucket]) -> str:
     """CSV lines for some closed minutes of one device (for progressive files)."""
     buf = io.StringIO()
     w = csv.writer(buf, lineterminator="\r\n")
-    stamp = "%Y-%m-%d %H:%M" if track.bucket_s % 60 == 0 else "%Y-%m-%d %H:%M:%S"
+    stamp = "%Y-%m-%d " + cell_clock(track.bucket_s)
     for b in buckets:
         row = {
             **b.to_dict(),
@@ -343,7 +348,7 @@ def _heatmap(rep: SoakReport) -> str:
         f'<svg class="heat" viewBox="0 0 {width_px} {height_px}" width="{width_px}" '
         f'height="{height_px}" role="img" aria-label="{html.escape(_heat_title(rep))}">'
     ]
-    clock = "%H:%M:%S" if rep.bucket_s % 60 else "%H:%M"
+    clock = cell_clock(rep.bucket_s)
     if rep.multi_day:
         clock = "%m/%d " + clock
     step = max(1, len(starts) // 8)

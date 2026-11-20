@@ -191,6 +191,7 @@ def soak(
     from ..core import Status
     from ..report.common import Style
     from ..report.soak import (
+        cell_clock,
         csv_header,
         csv_rows,
         render_soak_csv,
@@ -230,7 +231,7 @@ def soak(
         # Written as the minutes complete, so a long run that is cut short (power,
         # crash) still leaves data; rewritten in full at the end.
         Path(progressive).write_text(csv_header(), encoding="utf-8-sig", newline="")
-    clock_fmt = "%H:%M" if bucket % 60 == 0 else "%H:%M:%S"
+    clock_fmt = cell_clock(bucket)
 
     def say(line: str) -> None:
         if not quiet:
