@@ -34,6 +34,8 @@ from dataclasses import asdict, dataclass, field
 from pathlib import Path
 from typing import Any, Dict, Iterable, List, NamedTuple, Optional, Sequence, Tuple
 
+import tomllib
+
 from .core.errors import InputError
 from .i18n import tr
 from .netinfo.model import normalize_mac
@@ -619,12 +621,6 @@ def parse_csv_text(text: str) -> List[Device]:
     return devices
 
 
-def _load_toml(text: str) -> Any:
-    import tomllib
-
-    return tomllib.loads(text)
-
-
 _YAML_TYPED_TAGS = {
     "tag:yaml.org,2002:int",
     "tag:yaml.org,2002:float",
@@ -745,10 +741,8 @@ def load_devices(path: str | Path) -> List[Device]:
         if suffix == ".json":
             return parse_structured(json.loads(text))
         if suffix == ".toml":
-            return parse_structured(_load_toml(text))
+            return parse_structured(tomllib.loads(text))
         return parse_csv_text(text)
-    except InventoryError as e:
-        raise InventoryError(f"{p.name}: {e}") from e
     except Exception as e:  # syntax errors from the respective parsers
         raise InventoryError(f"{p.name}: {e}") from e
 
