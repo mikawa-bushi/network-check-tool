@@ -4,6 +4,11 @@ All notable changes to this project are documented in this file.
 
 ## [Unreleased]
 
+### Removed
+- The single-diagnosis renderers `netdiag.report.render_terminal`,
+  `render_json` and `render_html`. `render_check_text`, `render_check_json`
+  and `render_check_html` replace them.
+
 ## [0.6.0] - 2026-11-16
 
 netdiag's own changes, including new exit codes and the removed `watch`

@@ -10,8 +10,7 @@ from __future__ import annotations
 import time
 from typing import List, NamedTuple, Optional
 
-from ..core import CheckResult, Status
-from ..diagnosis import Diagnosis
+from ..core import Status
 from ..i18n import is_ja, tr
 from .common import (
     Style,
@@ -55,14 +54,6 @@ def short_finding(code: str) -> str:
     return tr(*pair) if pair else ""
 
 
-# ------------------------------------------------------------- Diagnosis only
-
-
-def _result_line(r: CheckResult, st: Style, name_width: int = 11) -> str:
-    layer = f"[{r.layer}]".ljust(8)
-    return f"{st.status(r.status)} {layer} {r.name.ljust(name_width)} {r.summary}"
-
-
 def _hidden_note(st: Style, hidden: int) -> str:
     return st.dim(
         tr(
@@ -70,96 +61,6 @@ def _hidden_note(st: Style, hidden: int) -> str:
             f"  ({hidden} not-applicable checks hidden — use --all)",
         )
     )
-
-
-def _hypothesis_lines(diag: Diagnosis, st: Style, indent: str = "") -> List[str]:
-    lines: List[str] = []
-    for i, h in enumerate(diag.hypotheses, 1):
-        status = Status.FAIL if h.is_fault else Status.WARN
-        head = (
-            f"{i}. "
-            + tr("推定原因", "Likely cause")
-            + f": {h.cause} — {h.summary} ["
-            + tr("確信度", "confidence")
-            + f": {confidence_word(h.confidence)}]"
-        )
-        lines.append(indent + st.status(status, st.bold(head)))
-        for ev in h.evidence:
-            lines.append(f"{indent}     " + tr("根拠", "Evidence") + f": {ev}")
-        steps = hypothesis_runbook(h)
-        if steps:
-            lines.append(f"{indent}     " + tr("次の確認手順:", "Next steps:"))
-            for s in steps:
-                lines.append(f"{indent}       - {s}")
-        if h.consequences:
-            lines.append(
-                f"{indent}     "
-                + tr(
-                    "これに連動して失敗した項目 (原因ではなく結果): ",
-                    "Failed as a consequence (not causes): ",
-                )
-                + ", ".join(h.consequences)
-            )
-    return lines
-
-
-def render_terminal(
-    diag: Diagnosis,
-    color: bool = True,
-    verbose: bool = False,
-    show_all: bool = True,
-    unicode: Optional[bool] = None,
-) -> str:
-    """Render a single Diagnosis (host sweep, scenario)."""
-    st = Style(color=color, unicode=unicode)
-    lines: List[str] = []
-    hidden = 0
-    for r in diag.results:
-        if not show_all and is_not_applicable(r):
-            hidden += 1
-            continue
-        lines.append(_result_line(r, st))
-    if hidden:
-        lines.append(_hidden_note(st, hidden))
-
-    lines.append("")
-    status = diag.status
-    unmeasured = [r.name for r in diag.results if r.status == Status.UNKNOWN]
-    if status == Status.OK:
-        verdict = tr(
-            "診断: 異常は見つかりませんでした。", "Diagnosis: all checks passed."
-        )
-    elif unmeasured:
-        names = ", ".join(unmeasured)
-        verdict = tr(
-            f"診断: 測定できなかった項目があります（{names}）。",
-            f"Diagnosis: some checks could not be measured ({names}).",
-        )
-    elif status == Status.UNKNOWN:
-        verdict = tr("診断: 何も測定していません。", "Diagnosis: nothing was measured.")
-    elif not diag.hypotheses:
-        verdict = tr(
-            "診断: 失敗はありませんが警告があります。",
-            "Diagnosis: no failures, but warnings.",
-        )
-    else:
-        verdict = ""
-    if verdict:
-        lines.append(st.status(status, st.bold(verdict)))
-    if diag.hypotheses:
-        lines.append(
-            st.bold(f"{st.rule} " + tr("診断 (Diagnosis)", "Diagnosis") + f" {st.rule}")
-        )
-        lines.extend(_hypothesis_lines(diag, st))
-    if verbose and diag.reasoning:
-        lines.append("")
-        lines.append(st.bold(tr("推論過程:", "Reasoning:")))
-        for step in diag.reasoning:
-            lines.append(f"  {step}")
-    return "\n".join(lines)
-
-
-# ------------------------------------------------------------ full CheckReport
 
 
 def port_cell(dr, plain: bool = False) -> str:

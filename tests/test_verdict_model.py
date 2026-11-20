@@ -7,7 +7,8 @@ import pytest
 from netdiag.core import CheckResult, ExitCode, Probe, Status
 from netdiag.core.probe import _REGISTRY
 from netdiag.diagnosis import Engine
-from netdiag.report import render_json, render_terminal
+from netdiag.report import diagnosis_to_dict, render_check_text
+from netdiag.runner import CheckReport
 
 
 @pytest.fixture
@@ -97,14 +98,15 @@ def test_nothing_measured_is_unknown_not_passed(registry):
     _register(registry, _probe("a", Status.SKIP), _probe("b", Status.SKIP))
     diag = Engine().run()
     assert diag.status == Status.UNKNOWN
-    assert "all checks passed" not in render_terminal(diag, color=False)
-    assert json.loads(render_json(diag))["status"] == "unknown"
+    report = CheckReport(host=diag, hostname="pc", platform="test")
+    assert "no problems found" not in render_check_text(report, color=False)
+    assert diagnosis_to_dict(diag)["status"] == "unknown"
 
 
 def test_unknown_result_renders_in_every_format(registry):
     _register(registry, _probe("a"), _probe("b", raises=RuntimeError("boom")))
-    diag = Engine().run()
-    text = render_terminal(diag, color=False, unicode=True)
+    report = CheckReport(host=Engine().run(), hostname="pc", platform="test")
+    text = render_check_text(report, color=False, unicode=True)
     assert "? " in text and "boom" in text
-    ascii_text = render_terminal(diag, color=False, unicode=False)
+    ascii_text = render_check_text(report, color=False, unicode=False)
     assert "?? " in ascii_text
