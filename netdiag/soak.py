@@ -697,10 +697,7 @@ class SoakReport:
                 for t, o in i.members:
                     into.setdefault(id(t), []).append(o)
         if common:
-            times = ", ".join(
-                f"{self.at(i.start)}〜{self.at(i.end)}({fmt_secs(i.end - i.start)})"
-                for i in common[:5]
-            )
+            times = self._spans_text([(i.start, i.end) for i in common])
             nic = [
                 e for i in common for e in self._nic_near(i.start, i.end) if e.errors
             ]
