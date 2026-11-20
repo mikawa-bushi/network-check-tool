@@ -279,40 +279,38 @@ def _run(
 ) -> Dict[str, PingStats]:
     stop = stop or threading.Event()
     out: Dict[str, PingStats] = {}
-    jobs: Dict[str, Dict[str, str]] = {"socket": {}}
+    socket_targets: List[str] = []
     system_jobs: List[Tuple[str, Optional[int]]] = []
-    backends = {}
     for t in dict.fromkeys(targets):  # de-duplicate, keep order
         fam = family or _literal_family(t)
-        backends[t] = _choose(method, fam)
-        if backends[t] == "system":
+        if _choose(method, fam) == "system":
             system_jobs.append((t, fam))
+        else:
+            socket_targets.append(t)
     # Names resolve side by side: with DNS down, each would otherwise add its
     # full timeout before any echo is sent.
-    addrs = resolve_all(
-        [t for t, b in backends.items() if b != "system"], timeout=max(timeout, 2.0)
-    )
-    for t, backend in backends.items():
-        if backend == "system":
-            continue
-        addr = addrs[t]
+    socket_jobs: Dict[str, str] = {}
+    for t, addr in resolve_all(socket_targets, timeout=max(timeout, 2.0)).items():
         if addr is None:
-            out[t] = PingStats(target=t, method=backend, error="name resolution failed")
-            continue
-        jobs[backend][t] = addr
+            out[t] = PingStats(
+                target=t, method="socket", error="name resolution failed"
+            )
+        else:
+            socket_jobs[t] = addr
 
-    common = dict(
-        interval=interval,
-        timeout=timeout,
-        size=size,
-        max_pps=max_pps,
-        count=count,
-        on_sample=on_sample,
-        stop=stop,
-    )
     runners = []
-    if jobs["socket"]:
-        runners.append(_SocketPinger(jobs["socket"], **common).run)
+    if socket_jobs:
+        pinger = _SocketPinger(
+            socket_jobs,
+            interval=interval,
+            timeout=timeout,
+            size=size,
+            max_pps=max_pps,
+            count=count,
+            on_sample=on_sample,
+            stop=stop,
+        )
+        runners.append(pinger.run)
     if system_jobs:
         runners.append(
             lambda: _system_many(
