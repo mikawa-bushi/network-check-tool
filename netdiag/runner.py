@@ -32,7 +32,7 @@ from .inventory import Device
 from .measure import ping_many
 from .measure.icmp import addresses_for
 from .netinfo import model as nm
-from .probes._common import default_ping_count
+from .probes._common import default_ping_count, ping_settings
 from .probes.device import DeviceEvidence
 from .probes.tcp import format_target, parse_tcp_targets
 
@@ -381,20 +381,18 @@ def _check_devices(
     )
 
     neigh_before = {n.ip: n for n in netinfo.neighbors()}
-    count = int(cfg.get("count") or default_ping_count())
-    interval = float(cfg.get("interval") or 0.2)
-    timeout = float(cfg.get("ping_timeout") or 1.0)
+    ping = ping_settings(cfg.get)
     stats = {}
     window = 0.0
     if targets:
         say(
             tr(
-                f"{len(targets)} 台にping中（{count}回ずつ）…",
-                f"Pinging {len(targets)} device(s) ({count} each)…",
+                f"{len(targets)} 台にping中（{ping['count']}回ずつ）…",
+                f"Pinging {len(targets)} device(s) ({ping['count']} each)…",
             )
         )
         t0 = time.monotonic()
-        stats = ping_many(targets, count=count, interval=interval, timeout=timeout)
+        stats = ping_many(targets, **ping)
         window = time.monotonic() - t0
     neigh_after = {n.ip: n for n in netinfo.neighbors()} if targets else {}
     # Silent devices on an ARP link: wait for their ARP entry to settle, in
