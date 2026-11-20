@@ -586,8 +586,6 @@ class _SocketPinger:
         while True:
             try:
                 data, src = sock.recvfrom(65535)
-            except (BlockingIOError, InterruptedError):
-                return
             except OSError:
                 return
             t_recv = time.perf_counter()
