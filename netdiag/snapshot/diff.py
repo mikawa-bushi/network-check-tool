@@ -1,7 +1,7 @@
 """Diff two configuration snapshots and highlight what changed.
 
 A set diff of stable lines per source, framed for triage: the headline is
-*which subsystem changed* (routes, DNS, firewall...), because that maps
+*which subsystem changed* (routes, DNS...), because that maps
 directly to a class of failure. A source that one side could not read is
 reported as not compared, never as everything added or removed.
 """
@@ -60,13 +60,6 @@ SOURCES: Dict[str, SourceSpec] = {
         Text(
             "DNSサーバーが変わると名前解決ができなくなることがあります",
             "a changed resolver breaks name resolution",
-        ),
-    ),
-    "firewall": SourceSpec(
-        Text("ファイアウォール", "Firewall profiles"),
-        Text(
-            "受信の既定動作やプロファイルの有効・無効の変化",
-            "a profile was switched on/off or its default action changed",
         ),
     ),
     "hosts": SourceSpec(

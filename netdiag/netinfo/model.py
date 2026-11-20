@@ -65,7 +65,7 @@ class Address:
     ip: str
     prefixlen: int
     family: int = 4
-    flags: List[str] = field(default_factory=list)  # dhcp, manual, duplicate, ...
+    flags: List[str] = field(default_factory=list)  # dhcp, duplicate, tentative
 
     @property
     def interface(self) -> ipaddress.IPv4Interface:
