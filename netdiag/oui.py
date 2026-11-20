@@ -28,9 +28,6 @@ CANDIDATES: List[str] = [
     "/opt/homebrew/share/nmap/nmap-mac-prefixes",
     "/usr/share/wireshark/manuf",
     "/opt/homebrew/share/wireshark/manuf",
-    r"C:\Program Files (x86)\Nmap\nmap-mac-prefixes",
-    r"C:\Program Files\Nmap\nmap-mac-prefixes",
-    r"C:\Program Files\Wireshark\manuf",
 ]
 
 _IEEE_RE = re.compile(
