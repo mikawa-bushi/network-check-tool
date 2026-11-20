@@ -252,28 +252,19 @@ class RouteProbe(Probe):
         local = ", ".join(
             a.cidr for i in hn.lan_interfaces() for a in i.usable_ipv4
         ) or tr("なし", "none")
-        if dec.gateway and _default_route_only(hn, ip):
+        if dec.gateway:
             # The route to the internet, not one to this device. A routed
             # device answers through it and a device in another subnet on this
             # line does not; the device runner settles which (reconcile_device).
+            default_only = _default_route_only(hn, ip)
             return CheckResult.ok(
                 self.name,
                 tr(
                     f"別サブネット — ゲートウェイ {dec.gateway} 経由",
                     f"routed via gateway {dec.gateway}",
                 ),
-                detail={**detail, "local_networks": local},
-                code="route.via_default",
-            )
-        if dec.gateway:
-            return CheckResult.ok(
-                self.name,
-                tr(
-                    f"別サブネット — ゲートウェイ {dec.gateway} 経由",
-                    f"routed via gateway {dec.gateway}",
-                ),
-                detail=detail,
-                code="route.via_gateway",
+                detail={**detail, "local_networks": local} if default_only else detail,
+                code="route.via_default" if default_only else "route.via_gateway",
             )
         return CheckResult.fail(
             self.name,
