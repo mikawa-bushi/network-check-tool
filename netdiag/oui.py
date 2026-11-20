@@ -10,9 +10,9 @@ simply return None.
 
 from __future__ import annotations
 
+import functools
 import os
 import re
-import threading
 from pathlib import Path
 from typing import Dict, List, Optional
 
@@ -37,9 +37,6 @@ _HEX6_RE = re.compile(r"^([0-9A-Fa-f]{6})\s+(.+)$")
 _MANUF_RE = re.compile(
     r"^([0-9A-Fa-f]{2}):([0-9A-Fa-f]{2}):([0-9A-Fa-f]{2})\s+(\S+)(?:\s+(.+))?$"
 )
-
-_lock = threading.Lock()
-_table: Optional[Dict[str, str]] = None
 
 
 def parse_oui_text(text: str) -> Dict[str, str]:
@@ -81,22 +78,15 @@ def database_path() -> Optional[str]:
     return None
 
 
+@functools.lru_cache(maxsize=1)
 def _load() -> Dict[str, str]:
-    global _table
-    if _table is None:
-        with _lock:
-            if _table is None:
-                path = database_path()
-                table: Dict[str, str] = {}
-                if path:
-                    try:
-                        table = parse_oui_text(
-                            Path(path).read_text(encoding="utf-8", errors="replace")
-                        )
-                    except OSError:
-                        table = {}
-                _table = table
-    return _table
+    path = database_path()
+    if not path:
+        return {}
+    try:
+        return parse_oui_text(Path(path).read_text(encoding="utf-8", errors="replace"))
+    except OSError:
+        return {}
 
 
 # Blocks the IEEE sells in smaller parts (MA-M, MA-S): the table names the
@@ -117,6 +107,4 @@ def lookup(mac: Optional[str]) -> Optional[str]:
 
 def reset() -> None:
     """Forget the loaded table (tests / after changing NETDIAG_OUI_FILE)."""
-    global _table
-    with _lock:
-        _table = None
+    _load.cache_clear()
