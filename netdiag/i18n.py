@@ -22,7 +22,6 @@ import os
 import threading
 from typing import Iterable, List, Mapping, Optional, Union
 
-SUPPORTED = ("ja", "en")
 DEFAULT = "ja"
 
 _lock = threading.Lock()

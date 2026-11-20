@@ -9,6 +9,7 @@ cover systems without iproute2 at all (slim containers).
 
 from __future__ import annotations
 
+import fcntl
 import ipaddress
 import json
 import re
@@ -148,8 +149,6 @@ ATF_PERM = 0x4
 
 def _ioctl_ipv4(name: str) -> Optional[Address]:
     """The first IPv4 address of *name*: the ioctl returns only one."""
-    import fcntl  # Unix only; this module is imported on every OS by the tests
-
     req = struct.pack("256s", name.encode()[:15])
     with socket.socket(socket.AF_INET, socket.SOCK_DGRAM) as s:
         try:

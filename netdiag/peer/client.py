@@ -24,7 +24,6 @@ class PeerReport:
     received: int
     loss_pct: float
     rtts_ms: List[float]
-    throughput_mbps: Optional[float] = None
     error: Optional[str] = None
     # The peer host answered 'port unreachable': no responder listens there.
     refused: bool = False

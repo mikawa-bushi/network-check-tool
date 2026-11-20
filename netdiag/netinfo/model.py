@@ -23,7 +23,6 @@ NEIGH_INCOMPLETE = "incomplete"
 NEIGH_FAILED = "failed"
 NEIGH_UNKNOWN = "unknown"
 
-NEIGH_CONFIRMED = {NEIGH_REACHABLE, NEIGH_PERMANENT}
 NEIGH_ABSENT = {NEIGH_INCOMPLETE, NEIGH_FAILED}
 
 KIND_ETHERNET = "ethernet"
@@ -61,22 +60,12 @@ def mac_is_null(mac: Optional[str]) -> bool:
     return not mac or mac in ("00:00:00:00:00:00", "ff:ff:ff:ff:ff:ff")
 
 
-def mac_is_local(mac: Optional[str]) -> bool:
-    """Locally administered (random / virtual) MAC: bit 1 of the first octet."""
-    if not mac:
-        return False
-    try:
-        return bool(int(mac.split(":")[0], 16) & 0x02)
-    except ValueError:
-        return False
-
-
 @dataclass
 class Address:
     ip: str
     prefixlen: int
     family: int = 4
-    flags: List[str] = field(default_factory=list)  # dhcp, manual, duplicate, ...
+    flags: List[str] = field(default_factory=list)  # dhcp, duplicate, tentative
 
     @property
     def interface(self) -> ipaddress.IPv4Interface:
@@ -230,10 +219,6 @@ class Neighbor:
     state: str = NEIGH_UNKNOWN
     interface: Optional[str] = None
     confirmed_age: Optional[float] = None  # seconds since last ARP confirmation (Linux)
-
-    @property
-    def confirmed(self) -> bool:
-        return self.state in NEIGH_CONFIRMED and not mac_is_null(self.mac)
 
     @property
     def absent(self) -> bool:

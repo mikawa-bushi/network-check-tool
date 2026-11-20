@@ -28,7 +28,6 @@ from .model import (
     Route,
     RouteDecision,
     RouteRule,
-    mac_is_local,
     normalize_mac,
 )
 
@@ -53,7 +52,6 @@ __all__ = [
     "link_stats",
     "source_ip_for",
     "normalize_mac",
-    "mac_is_local",
 ]
 
 
@@ -78,7 +76,7 @@ _cache: Dict[str, object] = {}
 SNAPSHOT_TTL = 5.0
 
 
-def snapshot(max_age: float = SNAPSHOT_TTL) -> HostNetwork:
+def snapshot() -> HostNetwork:
     """A recent snapshot shared by all probes of one run (cached briefly).
 
     Several probes asking within a few seconds share one collection.
@@ -86,7 +84,7 @@ def snapshot(max_age: float = SNAPSHOT_TTL) -> HostNetwork:
     with _cache_lock:
         hn = _cache.get("hn")
         ts = _cache.get("ts", 0.0)
-        if hn is None or time.monotonic() - ts > max_age:  # type: ignore[operator]
+        if hn is None or time.monotonic() - ts > SNAPSHOT_TTL:  # type: ignore[operator]
             hn = collect()
             _cache["hn"], _cache["ts"] = hn, time.monotonic()
         return hn  # type: ignore[return-value]

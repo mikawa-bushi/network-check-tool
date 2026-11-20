@@ -1,9 +1,9 @@
 """Capture the host's network configuration into one comparable document.
 
 The premise: most 'it suddenly broke' incidents are caused by a config change
-(a VPN client rewriting the default route, resolv.conf overwritten, a new
-firewall rule). Save a snapshot while things work, diff against it when they
-don't, and the culprit change is usually right there.
+(a VPN client rewriting the default route, resolv.conf overwritten). Save a
+snapshot while things work, diff against it when they don't, and the culprit
+change is usually right there.
 
 Each source is a set of stable lines: configuration only, never a counter, a
 lease time or a cache state, so two captures of an unchanged PC are equal.
@@ -69,7 +69,7 @@ def _address_lines(hn: HostNetwork) -> List[str]:
                 # the configuration.
                 out.append(f"{i.name} {a.network}")
                 continue
-            flags = [f for f in a.flags if f in ("dhcp", "manual", "duplicate")]
+            flags = [f for f in a.flags if f in ("dhcp", "duplicate")]
             out.append(" ".join([i.name, a.cidr, *flags]))
     return out
 
