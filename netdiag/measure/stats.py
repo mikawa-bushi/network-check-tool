@@ -44,27 +44,6 @@ def loss_upper_bound_pct(lost: int, sent: int) -> Optional[float]:
     return wilson_interval(lost, sent)[1] * 100.0
 
 
-def samples_for_loss_bound(target_pct: float) -> int:
-    """Loss-free samples needed before the 95 % upper bound drops below target.
-
-    Used to tell the user how long to measure, e.g. ~380 pings to show loss
-    < 1 % with 95 % confidence.
-    """
-    if target_pct <= 0:
-        raise ValueError("target_pct must be positive")
-    n = 1
-    while loss_upper_bound_pct(0, n) > target_pct:
-        n = n * 2 if n < 64 else n + max(1, n // 8)
-    lo, hi = n // 2 if n > 1 else 1, n
-    while lo < hi:  # tighten to the smallest n
-        mid = (lo + hi) // 2
-        if loss_upper_bound_pct(0, mid) <= target_pct:
-            hi = mid
-        else:
-            lo = mid + 1
-    return lo
-
-
 def percentile(values: Sequence[float], pct: float) -> Optional[float]:
     """Linear-interpolated percentile (``pct`` in 0..100); None for no data."""
     data = sorted(v for v in values if v is not None)
