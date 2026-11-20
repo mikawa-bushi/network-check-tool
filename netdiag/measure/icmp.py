@@ -823,7 +823,9 @@ class _StreamRun:
     def _line(self, at: float, line: str) -> None:
         self.lines.append(line)
         if self.base is None and line.startswith("PING"):
-            self.base = _seq_base(line)
+            # iputils numbers requests from 1 ("PING h (a) 56(84) bytes of data."),
+            # macOS, BSD, BusyBox and inetutils from 0 ("PING h (a): 56 data bytes").
+            self.base = 1 if _IPUTILS_HEADER_RE.match(line) else 0
             return
         m = _SEQ_RE.search(line)
         i = int(m.group(1)) - (1 if self.base is None else self.base) if m else None
@@ -922,32 +924,6 @@ def _pump(stream, lines: "queue.Queue[Tuple[float, Optional[str]]]") -> None:
 
 _SEQ_RE = re.compile(r"(?:icmp_seq|seq)=(\d+)")
 _IPUTILS_HEADER_RE = re.compile(r"PING \S+ ?\([^)]*\) \d")
-
-
-def _seq_base(text: str) -> int:
-    """``icmp_seq`` of a run's first request, read from ping's header line.
-
-    iputils counts from 1 (``PING h (a) 56(84) bytes of data.``); macOS, BSD,
-    BusyBox and GNU inetutils count from 0 (``PING h (a): 56 data bytes``).
-    """
-    header = next((ln for ln in text.splitlines() if ln.startswith("PING")), "")
-    return 0 if header and not _IPUTILS_HEADER_RE.match(header) else 1
-
-
-def per_request_results(st: PingStats, count: int) -> List[Optional[float]]:
-    """Per-request RTT (None = lost) recovered from system ping output.
-
-    ping numbers each reply (``icmp_seq=N``). Used to place losses on a
-    timeline.
-    """
-    text = st.raw or ""
-    by_seq: Dict[int, float] = {}
-    for line in text.splitlines():
-        m_seq, rtt = _SEQ_RE.search(line), _posix_reply_rtt(line)
-        if m_seq and rtt is not None:
-            by_seq.setdefault(int(m_seq.group(1)), rtt)
-    base = _seq_base(text)
-    return [by_seq.get(base + i) for i in range(count)]
 
 
 # --------------------------------------------------------------------------
