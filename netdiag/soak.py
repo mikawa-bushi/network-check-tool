@@ -1220,11 +1220,12 @@ def run_soak(
                 nic_events.extend(events)
                 # Every sample sent before the watermark was drained above, so
                 # minutes ending there are complete.
+                closed = []
                 for t in tracks:
-                    closed = t.close_until(watermark)
-                    if closed:
-                        on_event("bucket", {"track": t, "buckets": closed})
-                on_event("tick", {"ts": now, "nic": events})
+                    buckets = t.close_until(watermark)
+                    if buckets:
+                        closed.append((t, buckets))
+                on_event("tick", {"closed": closed, "nic": events})
                 next_tick += bucket
                 if next_tick <= now:  # woke from a stall: one tick, not a backlog
                     next_tick = now + bucket

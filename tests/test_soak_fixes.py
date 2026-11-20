@@ -488,9 +488,10 @@ def test_late_loss_reports_do_not_land_in_closed_cells(monkeypatch, quiet_pc):
     at_close = {}
 
     def on_event(kind, data):
-        if kind == "bucket":
-            for b in data["buckets"]:
-                at_close[b.start] = (b.sent, b.lost)
+        if kind == "tick":
+            for _track, buckets in data["closed"]:
+                for b in buckets:
+                    at_close[b.start] = (b.sent, b.lost)
 
     monkeypatch.setattr(measure, "ping_stream", stream)
     rep = run_soak(

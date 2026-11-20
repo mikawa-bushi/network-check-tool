@@ -237,9 +237,7 @@ def soak(
         if not quiet:
             click.echo(line, err=True)
 
-    closed: List = []
-
-    def append_csv() -> None:
+    def append_csv(closed) -> None:
         nonlocal progressive
         try:
             with open(progressive, "a", encoding="utf-8", newline="") as fh:
@@ -279,18 +277,16 @@ def soak(
                     f" {t.name} ({t.device.host}) is not measured: name resolution failed",
                 )
             )
-        elif kind == "bucket":
-            closed.append((data["track"], data["buckets"]))
         elif kind == "tick":
+            closed = data["closed"]
             if progressive and closed:
-                append_csv()
+                append_csv(closed)
             by_start: Dict[float, List[str]] = {}
             for track, buckets in closed:
                 for b in buckets:
                     lossy = by_start.setdefault(b.start, [])
                     if b.lost:
                         lossy.append(f"{track.name} {b.loss_pct:.1f}%")
-            closed.clear()
             for start in sorted(by_start):  # report only cells that are complete
                 lossy = by_start[start]
                 stamp = time.strftime(clock_fmt, time.localtime(start))
