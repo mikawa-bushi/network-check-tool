@@ -6,17 +6,15 @@ import sys
 
 import click
 
-from ..i18n import tr
 from ._app import (
     DEFAULT_CONFIG,
     H,
     Progress,
     cli,
-    color_wanted,
     format_from_path,
     log_file_apart_from,
     output_path,
-    write_output,
+    write_check_report,
 )
 
 
@@ -54,7 +52,6 @@ def scenario(path, fmt, output, show_all, reasoning, no_color):
     devices: を含むシナリオは、そのラインの機器も一緒に診断します。
     終了コードは check と同じです。
     """
-    from .. import report as report_mod
     from ..scenario import load_scenario
     from ..scenario.run import run_scenario
 
@@ -67,30 +64,17 @@ def scenario(path, fmt, output, show_all, reasoning, no_color):
     output = output_path(output, inputs=[path])
 
     progress = Progress()
-    on_probe = (
-        (lambda name: progress(tr(f"確認中: {name}", f"checking {name}")))
-        if progress.enabled
-        else None
-    )
     try:
-        rep = run_scenario(sc, cfg, progress=progress, on_probe=on_probe)
+        rep = run_scenario(sc, cfg, progress=progress, on_probe=progress.checking)
     finally:
         progress.done()
-
-    if fmt == "json":
-        text = report_mod.render_check_json(rep)
-    elif fmt == "html":
-        text = report_mod.render_check_html(rep)
-    elif fmt == "csv":
-        text = report_mod.render_check_csv(rep)
-    else:
-        text = f"# {sc.name}\n" + (sc.description + "\n" if sc.description else "")
-        text += report_mod.render_check_text(
-            rep,
-            color=False if output else color_wanted(no_color),
-            verbose=reasoning,
-            show_all=show_all,
-            unicode=True if output else None,
-        )
-    write_output(text, output, fmt)
+    write_check_report(
+        rep,
+        fmt,
+        output,
+        show_all=show_all,
+        reasoning=reasoning,
+        no_color=no_color,
+        header=f"# {sc.name}\n" + (sc.description + "\n" if sc.description else ""),
+    )
     sys.exit(rep.exit_code)
