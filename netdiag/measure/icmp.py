@@ -340,25 +340,14 @@ def run_together(
     return results
 
 
-_socket_ok: Optional[bool] = None
-_socket_lock = threading.Lock()
-
-
+@functools.cache
 def icmp_socket_available() -> bool:
     """Can this process open an unprivileged ICMP datagram socket? (cached)"""
-    global _socket_ok
-    if _socket_ok is None:
-        with _socket_lock:
-            if _socket_ok is None:
-                try:
-                    s = socket.socket(
-                        socket.AF_INET, socket.SOCK_DGRAM, socket.IPPROTO_ICMP
-                    )
-                    s.close()
-                    _socket_ok = True
-                except (OSError, AttributeError):
-                    _socket_ok = False
-    return _socket_ok
+    try:
+        socket.socket(socket.AF_INET, socket.SOCK_DGRAM, socket.IPPROTO_ICMP).close()
+    except (OSError, AttributeError):
+        return False
+    return True
 
 
 def precise_ping_available() -> bool:
