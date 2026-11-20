@@ -161,21 +161,11 @@ def ping(
     count: int = DEFAULT_COUNT,
     interval: float = DEFAULT_INTERVAL,
     timeout: float = DEFAULT_TIMEOUT,
-    size: int = DEFAULT_SIZE,
     family: Optional[int] = None,
-    method: str = "auto",
-    stop: Optional[threading.Event] = None,
 ) -> PingStats:
     """Ping one target. See :func:`ping_many`."""
     return ping_many(
-        [target],
-        count=count,
-        interval=interval,
-        timeout=timeout,
-        size=size,
-        family=family,
-        method=method,
-        stop=stop,
+        [target], count=count, interval=interval, timeout=timeout, family=family
     )[target]
 
 
@@ -184,31 +174,22 @@ def ping_many(
     count: int = DEFAULT_COUNT,
     interval: float = DEFAULT_INTERVAL,
     timeout: float = DEFAULT_TIMEOUT,
-    size: int = DEFAULT_SIZE,
     family: Optional[int] = None,
-    method: str = "auto",
-    max_pps: float = MAX_PPS,
-    stop: Optional[threading.Event] = None,
 ) -> Dict[str, PingStats]:
     """Ping several targets concurrently; returns ``{target: PingStats}``.
 
-    ``method`` is ``auto`` (ICMP socket when available, else the system
-    ``ping``), ``socket`` or ``system``. ``family`` 4/6 forces an address
-    family.
+    Uses the ICMP socket when available, else the system ``ping``
+    (``NETDIAG_PING_METHOD=socket|system`` overrides). ``family`` 4/6 forces
+    an address family.
 
     Ctrl-C in the calling thread stops every pinger within about a second.
-    A caller that pings from a worker thread passes *stop* and sets it.
     """
     return _run(
         targets,
         count=max(1, int(count)),
         interval=interval,
         timeout=timeout,
-        size=size,
         family=family,
-        method=method,
-        max_pps=max_pps,
-        stop=stop,
     )
 
 
@@ -221,9 +202,6 @@ def ping_stream(
     stop: threading.Event,
     interval: float = DEFAULT_INTERVAL,
     timeout: float = DEFAULT_TIMEOUT,
-    size: int = DEFAULT_SIZE,
-    method: str = "auto",
-    max_pps: float = MAX_PPS,
 ) -> Dict[str, PingStats]:
     """Ping continuously until *stop* is set, reporting every request.
 
@@ -247,17 +225,14 @@ def ping_stream(
         count=None,
         interval=interval,
         timeout=timeout,
-        size=size,
         family=None,
-        method=method,
-        max_pps=max_pps,
         on_sample=on_sample,
         stop=stop,
     )
 
 
-def _choose(method: str, fam: Optional[int]) -> str:
-    method = os.environ.get("NETDIAG_PING_METHOD", "") or method
+def _choose(fam: Optional[int]) -> str:
+    method = os.environ.get("NETDIAG_PING_METHOD", "") or "auto"
     if method == "system" or fam == 6:
         return "system"
     if method in ("auto", "socket") and icmp_socket_available():
@@ -270,10 +245,7 @@ def _run(
     count: Optional[int],
     interval: float,
     timeout: float,
-    size: int,
     family: Optional[int],
-    method: str,
-    max_pps: float,
     on_sample: Optional[SampleFn] = None,
     stop: Optional[threading.Event] = None,
 ) -> Dict[str, PingStats]:
@@ -283,7 +255,7 @@ def _run(
     system_jobs: List[Tuple[str, Optional[int]]] = []
     for t in dict.fromkeys(targets):  # de-duplicate, keep order
         fam = family or _literal_family(t)
-        if _choose(method, fam) == "system":
+        if _choose(fam) == "system":
             system_jobs.append((t, fam))
         else:
             socket_targets.append(t)
@@ -304,8 +276,8 @@ def _run(
             socket_jobs,
             interval=interval,
             timeout=timeout,
-            size=size,
-            max_pps=max_pps,
+            size=DEFAULT_SIZE,
+            max_pps=MAX_PPS,
             count=count,
             on_sample=on_sample,
             stop=stop,
@@ -314,7 +286,7 @@ def _run(
     if system_jobs:
         runners.append(
             lambda: _system_many(
-                system_jobs, count, interval, timeout, size, on_sample, stop
+                system_jobs, count, interval, timeout, DEFAULT_SIZE, on_sample, stop
             )
         )
     for res in run_together(runners, stop):
@@ -391,7 +363,7 @@ def icmp_socket_available() -> bool:
 
 def precise_ping_available() -> bool:
     """Sub-millisecond timing and free send intervals on this host (IPv4)?"""
-    return _choose("auto", None) != "system"
+    return _choose(None) != "system"
 
 
 # --------------------------------------------------------------------------
@@ -517,12 +489,12 @@ class _SocketPinger:
                     and (total is None or self.next_k < total)
                     and next_at <= now
                 ):
-                    self._send(sock, self.next_k, n)
+                    self._send(sock, self.next_k)
                     self.next_k += 1
                     last_send = now
                     now = time.perf_counter()
                     next_at = max(t0 + self.next_k * step, last_send + self.min_gap)
-                self._expire(now, n)
+                self._expire(now)
                 done_sending = stopping or (total is not None and self.next_k >= total)
                 if done_sending and not self.outstanding:
                     break
@@ -532,7 +504,7 @@ class _SocketPinger:
                     oldest = min(v[0] for v in self.outstanding.values())
                     wait = max(0.0, oldest + self.timeout - now)
                 for _key, _ev in sel.select(timeout=min(wait, 0.05)):
-                    self._drain(sock, n)
+                    self._drain(sock)
         finally:
             sel.close()
             sock.close()
@@ -556,8 +528,8 @@ class _SocketPinger:
             if self.on_sample is not None:
                 self.on_sample(t, wall, rtt, err)
 
-    def _send(self, sock, k: int, n: int) -> None:
-        j = k % n
+    def _send(self, sock, k: int) -> None:
+        j = k % len(self.addrs)
         pkt = build_echo_request(self.ident, k, self._payload(k))
         err = None
         try:
@@ -570,17 +542,18 @@ class _SocketPinger:
         for t in self.by_addr[self.addrs[j]]:
             self.stats[t].sent += 1
 
-    def _expire(self, now: float, n: int) -> None:
+    def _expire(self, now: float) -> None:
         for k, (sent_p, sent_w, err) in list(self.outstanding.items()):
             if now - sent_p > self.timeout:
                 del self.outstanding[k]
-                self._emit(k % n, sent_w, None, err)
+                self._emit(k % len(self.addrs), sent_w, None, err)
         horizon = now - 2 * self.timeout
         for k, t in list(self.answered.items()):
             if t < horizon:
                 del self.answered[k]
 
-    def _drain(self, sock, n: int) -> None:
+    def _drain(self, sock) -> None:
+        n = len(self.addrs)
         while True:
             try:
                 data, src = sock.recvfrom(65535)

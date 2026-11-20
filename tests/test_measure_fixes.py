@@ -169,11 +169,10 @@ def _stall_once(seconds, samples):
 @pytest.mark.skipif(
     not icmpmod.icmp_socket_available(), reason="no unprivileged ICMP socket"
 )
-def test_socket_pinger_resumes_its_pace_after_a_stall():
+def test_socket_pinger_resumes_its_pace_after_a_stall(monkeypatch):
+    monkeypatch.setenv("NETDIAG_PING_METHOD", "socket")
     sent, on_sample, stop = _stall_once(1.0, samples=15)
-    icmpmod.ping_stream(
-        ["127.0.0.1"], on_sample, stop, interval=0.05, timeout=0.5, method="socket"
-    )
+    icmpmod.ping_stream(["127.0.0.1"], on_sample, stop, interval=0.05, timeout=0.5)
     assert len(sent) >= 15
     assert _densest(sent, 0.03) <= _MOST_IN_30_MS  # was 20 at once after the stall
 
