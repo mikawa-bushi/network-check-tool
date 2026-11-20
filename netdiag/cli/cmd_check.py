@@ -342,7 +342,7 @@ def check(
     if fmt == "json":
         text = report_mod.render_check_json(rep)
     elif fmt == "html":
-        text = report_mod.render_check_html(rep, show_all=True)
+        text = report_mod.render_check_html(rep)
     elif fmt == "csv":
         text = report_mod.render_check_csv(rep)
     else:

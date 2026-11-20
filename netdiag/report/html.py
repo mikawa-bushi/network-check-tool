@@ -14,7 +14,7 @@ from typing import List
 from .. import __version__
 from ..core import Status
 from ..i18n import get_language, tr
-from .common import confidence_word, is_not_applicable, status_word
+from .common import confidence_word, status_word
 from .data import hypothesis_runbook
 from .text import device_cells
 
@@ -67,11 +67,9 @@ def _page(title: str, body: str, extra_css: str = "") -> str:
     )
 
 
-def _results_table(results, show_all: bool = True) -> str:
+def _results_table(results) -> str:
     rows = []
     for r in results:
-        if not show_all and is_not_applicable(r):
-            continue
         cls = r.status.value
         rows.append(
             f"<tr class='{cls}'><td class='st'>{_esc(r.status.symbol)}</td><td>{_esc(r.layer)}</td>"
@@ -114,7 +112,7 @@ def _hypothesis_html(subject: str, h, index: int) -> str:
     )
 
 
-def render_check_html(report, show_all: bool = True) -> str:
+def render_check_html(report) -> str:
     """A full :class:`netdiag.runner.CheckReport` as a standalone page."""
     status = report.status
     when = time.strftime("%Y-%m-%d %H:%M:%S", time.localtime(report.started_at))
@@ -201,7 +199,7 @@ def render_check_html(report, show_all: bool = True) -> str:
 
     if report.host_checked:
         parts.append(f"<h2>{tr('このPCのネットワーク', 'This PC')}</h2>")
-        parts.append(_results_table(report.host.results, show_all=show_all))
+        parts.append(_results_table(report.host.results))
     parts.append(
         f"<p class='foot'>{tr('測定条件', 'Settings')}: {_esc(settings)} — "
         + tr(
