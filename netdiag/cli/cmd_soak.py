@@ -5,7 +5,6 @@ from __future__ import annotations
 import math
 import signal
 import sys
-import threading
 import time
 from contextlib import contextmanager
 from pathlib import Path
@@ -352,7 +351,6 @@ def soak(
             bucket=bucket,
             min_lost=min_lost,
             on_event=on_event,
-            stop=threading.Event(),
         )
         measured.append(True)
         if fmt == "json":

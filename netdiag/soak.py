@@ -45,6 +45,11 @@ CLOCK_STEP_NOTE_S = 2.0
 EventFn = Callable[[str, Dict[str, Any]], None]
 Span = Tuple[float, float]
 
+
+def _ignore_event(kind: str, data: Dict[str, Any]) -> None:
+    pass
+
+
 # Steady clocks that keep counting while the PC sleeps: CLOCK_BOOTTIME on
 # Linux (its CLOCK_MONOTONIC stops), CLOCK_MONOTONIC on macOS.
 _STEADY_CLOCK = getattr(time, "CLOCK_BOOTTIME", time.CLOCK_MONOTONIC)
@@ -407,7 +412,7 @@ class SoakRecorder:
         tracks: List[DeviceTrack],
         timeout: float,
         min_lost: int = MIN_LOST_FOR_OUTAGE,
-        on_event: Optional[EventFn] = None,
+        on_event: EventFn = _ignore_event,
         clock: Optional[SoakClock] = None,
         interval: float = 0.0,
     ) -> None:
@@ -449,8 +454,7 @@ class SoakRecorder:
                 if error:
                     track.error = error
                 for kind, outage in track.add(ts, rtt, self.min_lost):
-                    if self.on_event is not None:
-                        self.on_event(kind, {"outage": outage})
+                    self.on_event(kind, {"outage": outage})
 
     def flush(self, until: float = math.inf) -> None:
         """Process everything sent up to *until*; drop what was sent later."""
@@ -1148,32 +1152,30 @@ def _pinger_failure(outcome: Dict[str, Any]) -> str:
 
 def run_soak(
     devices: List[Device],
-    duration: Optional[float],
+    duration: float,
     interval: float = 0.2,
     timeout: float = 1.0,
     bucket: float = DEFAULT_BUCKET,
     min_lost: int = MIN_LOST_FOR_OUTAGE,
-    on_event: Optional[EventFn] = None,
-    stop: Optional[threading.Event] = None,
+    on_event: EventFn = _ignore_event,
     tick: float = 0.25,
 ) -> SoakReport:
-    """Measure until *duration* elapses or *stop* is set (Ctrl-C sets it)."""
+    """Measure until *duration* elapses or Ctrl-C."""
     import platform
 
     from . import netinfo
     from .measure import ping_stream
     from .measure.icmp import addresses_for
 
-    stop = stop or threading.Event()
+    stop = threading.Event()
     clock = SoakClock()
     addr = addresses_for(d.host for d in devices)
     addrs = list(dict.fromkeys(a for a in addr.values() if a))
     gap_s = gap_threshold(interval, timeout, len(addrs))
     tracks = [DeviceTrack(d, addr[d.host], bucket, gap_s) for d in devices]
-    if on_event is not None:
-        for t in tracks:
-            if not t.address:
-                on_event("not_measured", {"track": t})
+    for t in tracks:
+        if not t.address:
+            on_event("not_measured", {"track": t})
     rec = SoakRecorder(
         tracks,
         timeout=timeout,
@@ -1187,7 +1189,7 @@ def run_soak(
     counters = netinfo.link_stats()
     nic_events: List[NicEvent] = []
     started = clock.now()
-    deadline = started + duration if duration is not None else math.inf
+    deadline = started + duration
     outcome: Dict[str, Any] = {}
 
     def ping() -> None:
@@ -1223,10 +1225,9 @@ def run_soak(
                 # minutes ending there are complete.
                 for t in tracks:
                     closed = t.close_until(watermark)
-                    if closed and on_event is not None:
+                    if closed:
                         on_event("bucket", {"track": t, "buckets": closed})
-                if on_event is not None:
-                    on_event("tick", {"ts": now, "nic": events})
+                on_event("tick", {"ts": now, "nic": events})
                 next_tick += bucket
                 if next_tick <= now:  # woke from a stall: one tick, not a backlog
                     next_tick = now + bucket
@@ -1238,7 +1239,7 @@ def run_soak(
     stopped_early = None
     if addrs and not interrupted and not pinger.is_alive() and stopped_at < deadline:
         stopped_early = _pinger_failure(outcome)
-    if addrs and on_event is not None:
+    if addrs:
         on_event("stopping", {"interrupted": interrupted, "reason": stopped_early})
     stop.set()
     if addrs:
@@ -1265,7 +1266,7 @@ def run_soak(
         hostname=platform.node(),
         interrupted=interrupted,
         stopped_early=stopped_early,
-        planned_end=deadline if duration is not None else None,
+        planned_end=deadline,
         clock_step_s=clock.step(),
     )
 
