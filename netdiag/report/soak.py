@@ -49,6 +49,11 @@ def _cell_text(seconds: float) -> str:
     return tr(f"{seconds:g}秒", f"{seconds:g} s")
 
 
+def cell_clock(bucket_s: float) -> str:
+    """Clock format for cell starts, with seconds unless cells are whole minutes."""
+    return "%H:%M" if bucket_s % 60 == 0 else "%H:%M:%S"
+
+
 def _span(rep: SoakReport) -> str:
     end = _when(rep.finished_at) if rep.multi_day else rep.at(rep.finished_at)
     return f"{_when(rep.started_at)} 〜 {end}"
@@ -260,7 +265,7 @@ def csv_rows(track: DeviceTrack, buckets: List[Bucket]) -> str:
     """CSV lines for some closed minutes of one device (for progressive files)."""
     buf = io.StringIO()
     w = csv.writer(buf, lineterminator="\r\n")
-    stamp = "%Y-%m-%d %H:%M" if track.bucket_s % 60 == 0 else "%Y-%m-%d %H:%M:%S"
+    stamp = "%Y-%m-%d " + cell_clock(track.bucket_s)
     for b in buckets:
         row = {
             **b.to_dict(),
@@ -332,7 +337,7 @@ def _heatmap(rep: SoakReport) -> str:
     n = max(0, math.ceil((rep.finished_at - first) / size))
     starts = sorted(
         {first + i * size for i in range(n)}
-        | {b.start for t in rep.tracks for b in t.buckets.values()}
+        | {s for t in rep.tracks for s in t.buckets}
     )
     if not starts:
         return ""
@@ -343,7 +348,7 @@ def _heatmap(rep: SoakReport) -> str:
         f'<svg class="heat" viewBox="0 0 {width_px} {height_px}" width="{width_px}" '
         f'height="{height_px}" role="img" aria-label="{html.escape(_heat_title(rep))}">'
     ]
-    clock = "%H:%M:%S" if rep.bucket_s % 60 else "%H:%M"
+    clock = cell_clock(rep.bucket_s)
     if rep.multi_day:
         clock = "%m/%d " + clock
     step = max(1, len(starts) // 8)
@@ -358,8 +363,7 @@ def _heatmap(rep: SoakReport) -> str:
         out.append(
             f'<text x="0" y="{y + 13}" class="lbl">{html.escape(truncate(t.name, 22))}</text>'
         )
-        by_start: Dict[float, Bucket] = {b.start: b for b in t.buckets.values()}
-        cells = [(s, by_start.get(s)) for s in starts]
+        cells = [(s, t.buckets.get(s)) for s in starts]
         # One rect per run of same-colour minutes: an overnight run of healthy
         # minutes stays one element instead of hundreds.
         i = 0

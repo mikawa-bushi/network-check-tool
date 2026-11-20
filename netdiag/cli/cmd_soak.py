@@ -5,7 +5,6 @@ from __future__ import annotations
 import math
 import signal
 import sys
-import threading
 import time
 from contextlib import contextmanager
 from pathlib import Path
@@ -192,6 +191,7 @@ def soak(
     from ..core import Status
     from ..report.common import Style
     from ..report.soak import (
+        cell_clock,
         csv_header,
         csv_rows,
         render_soak_csv,
@@ -231,15 +231,13 @@ def soak(
         # Written as the minutes complete, so a long run that is cut short (power,
         # crash) still leaves data; rewritten in full at the end.
         Path(progressive).write_text(csv_header(), encoding="utf-8-sig", newline="")
-    clock_fmt = "%H:%M" if bucket % 60 == 0 else "%H:%M:%S"
+    clock_fmt = cell_clock(bucket)
 
     def say(line: str) -> None:
         if not quiet:
             click.echo(line, err=True)
 
-    closed: List = []
-
-    def append_csv() -> None:
+    def append_csv(closed) -> None:
         nonlocal progressive
         try:
             with open(progressive, "a", encoding="utf-8", newline="") as fh:
@@ -279,18 +277,16 @@ def soak(
                     f" {t.name} ({t.device.host}) is not measured: name resolution failed",
                 )
             )
-        elif kind == "bucket":
-            closed.append((data["track"], data["buckets"]))
         elif kind == "tick":
+            closed = data["closed"]
             if progressive and closed:
-                append_csv()
+                append_csv(closed)
             by_start: Dict[float, List[str]] = {}
             for track, buckets in closed:
                 for b in buckets:
                     lossy = by_start.setdefault(b.start, [])
                     if b.lost:
                         lossy.append(f"{track.name} {b.loss_pct:.1f}%")
-            closed.clear()
             for start in sorted(by_start):  # report only cells that are complete
                 lossy = by_start[start]
                 stamp = time.strftime(clock_fmt, time.localtime(start))
@@ -352,7 +348,6 @@ def soak(
             bucket=bucket,
             min_lost=min_lost,
             on_event=on_event,
-            stop=threading.Event(),
         )
         measured.append(True)
         if fmt == "json":

@@ -19,7 +19,6 @@ from .stats import (
     RttSummary,
     loss_upper_bound_pct,
     percentile,
-    samples_for_loss_bound,
     summarize,
     wilson_interval,
 )
@@ -39,7 +38,6 @@ __all__ = [
     "percentile",
     "wilson_interval",
     "loss_upper_bound_pct",
-    "samples_for_loss_bound",
     "PortCheck",
     "tcp_check",
     "tcp_check_many",

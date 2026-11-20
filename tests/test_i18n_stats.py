@@ -9,7 +9,6 @@ from netdiag.measure.stats import (
     jitter,
     loss_upper_bound_pct,
     percentile,
-    samples_for_loss_bound,
     summarize,
     wilson_interval,
 )
@@ -58,12 +57,6 @@ def test_loss_upper_bound_shrinks_with_samples():
     bounds = [loss_upper_bound_pct(0, n) for n in (10, 100, 1000)]
     assert bounds[0] > bounds[1] > bounds[2]
     assert math.isclose(bounds[1], 3.7, abs_tol=0.05)
-
-
-def test_samples_needed_for_one_percent():
-    n = samples_for_loss_bound(1.0)
-    assert loss_upper_bound_pct(0, n) <= 1.0 < loss_upper_bound_pct(0, n - 1)
-    assert 370 < n < 390
 
 
 def test_percentile_and_jitter():

@@ -26,17 +26,7 @@ LOOKUP_TIMEOUT = 2.0  # seconds a host name lookup may take (LLMNR fallback is s
 
 _AddrInfo = Tuple[Any, ...]  # one socket.getaddrinfo() entry
 
-_UNREACHABLE = {
-    getattr(errno, name)
-    for name in (
-        "EHOSTUNREACH",
-        "ENETUNREACH",
-        "EHOSTDOWN",
-        "WSAEHOSTUNREACH",
-        "WSAENETUNREACH",
-    )
-    if hasattr(errno, name)
-} | {10065, 10051}
+_UNREACHABLE = {errno.EHOSTUNREACH, errno.ENETUNREACH, errno.EHOSTDOWN}
 
 
 @dataclass
@@ -78,8 +68,7 @@ def _classify(exc: BaseException) -> str:
     if isinstance(exc, socket.gaierror):
         return "name resolution failed"
     if isinstance(exc, OSError):
-        code = getattr(exc, "winerror", None) or exc.errno
-        if code in _UNREACHABLE:
+        if exc.errno in _UNREACHABLE:
             return "unreachable"
         return exc.strerror or str(exc)
     return str(exc)
