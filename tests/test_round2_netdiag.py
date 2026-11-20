@@ -15,7 +15,7 @@ from netdiag.cli import check, scenario
 from netdiag.core import CheckResult, Probe, Status
 from netdiag.core.probe import _REGISTRY
 from netdiag.diagnosis import Engine
-from netdiag.diagnosis.rules import _runbook, runbook_steps
+from netdiag.diagnosis.rules import advice_for, runbook_steps
 
 
 @pytest.fixture
@@ -101,7 +101,7 @@ def test_runbook_uses_plugin_probe_attrs(isolated_registry):
 
     isolated_registry["widget"] = _Plugin
     assert runbook_steps("widget") == ["restart the widget", "check widget logs"]
-    assert _runbook("widget")["means"] == "the widget service is down"
+    assert advice_for(None, cause="widget")[0] == "the widget service is down"
 
 
 def test_runbook_falls_back_to_manual_commands(isolated_registry):
@@ -118,7 +118,7 @@ def test_runbook_falls_back_to_manual_commands(isolated_registry):
     isolated_registry["gizmo"] = _Plugin
     # No explicit runbook/means -> fall back to manual_commands / why.
     assert runbook_steps("gizmo") == ["gizmoctl status"]
-    assert _runbook("gizmo")["means"] == "checks the gizmo"
+    assert advice_for(None, cause="gizmo")[0] == "checks the gizmo"
 
 
 def test_runbook_builtin_unchanged_and_unknown_empty():

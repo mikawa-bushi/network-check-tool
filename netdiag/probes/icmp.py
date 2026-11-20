@@ -6,22 +6,11 @@ expected to reach the internet; ``icmp`` is the ad-hoc single-target ping.
 
 from __future__ import annotations
 
-from typing import Optional, Tuple
-
 from ..core import CheckResult, Context, Probe, register
 from ..i18n import Text, tr
 from ..measure import PingStats
 from ..measure import ping as _ping
 from ._common import classify_latency, ping_settings, ping_summary
-
-
-def ping(
-    host: str, count: int = 4, timeout: float = 2.0, family: Optional[int] = None
-) -> Tuple[Optional[float], float, str]:
-    """Compatibility wrapper: ``(avg_rtt_ms or None, loss_pct, raw_output)``."""
-    st = _ping(host, count=count, timeout=timeout, family=family)
-    avg = st.rtt.avg if st.rtt else None
-    return avg, st.loss_pct, st.raw or ping_summary(st)
 
 
 def result_from_ping(

@@ -1,4 +1,3 @@
-from netdiag import netinfo
 from netdiag.core import Context
 from netdiag.measure import PingStats
 from netdiag.netinfo.model import KIND_ETHERNET, Address, HostNetwork, Interface, Route
@@ -24,15 +23,14 @@ def _ctx(routes):
     return Context({"_netinfo": HostNetwork(interfaces=NICS, routes=routes)})
 
 
-def test_default_gateway_is_the_lowest_metric_first_listed_on_a_tie(monkeypatch):
+def test_default_gateway_is_the_lowest_metric_first_listed_on_a_tie():
     for routes, expected in (
         (ROUTES, "192.168.1.1"),
         (ROUTES[:1], "10.0.0.1"),
         ([], None),
     ):
-        hn = HostNetwork(interfaces=NICS, routes=routes)
-        monkeypatch.setattr(netinfo, "snapshot", lambda max_age=5.0, hn=hn: hn)
-        assert gateway.default_gateway() == expected
+        best = HostNetwork(interfaces=NICS, routes=routes).preferred_default_route()
+        assert (best.gateway if best else None) == expected
 
 
 def test_gateway_probe_pings_the_preferred_gateway(monkeypatch):
