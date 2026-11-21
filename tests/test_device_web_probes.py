@@ -202,13 +202,20 @@ def certs(tmp_path_factory):
         d, "req", "-x509", *key, "-keyout", "ca.key", "-out", "ca.crt", "-subj",
         "/CN=netdiag test CA", "-addext", "basicConstraints=critical,CA:TRUE",
         "-addext", "keyUsage=critical,keyCertSign",
+        "-addext", "subjectKeyIdentifier=hash",
     )  # fmt: skip
     (d / "ca.cnf").write_text(
         "[ca]\ndefault_ca=d\n[d]\ndatabase=index.txt\nnew_certs_dir=.\n"
         "serial=serial\ndefault_md=sha256\npolicy=p\nunique_subject=no\n"
         "[p]\ncommonName=supplied\n"
     )
-    (d / "san.ext").write_text("subjectAltName=IP:127.0.0.1\n")
+    # Python 3.13+ verifies with X509_STRICT, which rejects a leaf without an
+    # authority key identifier. Not every openssl CLI adds one by default.
+    (d / "san.ext").write_text(
+        "subjectAltName=IP:127.0.0.1\n"
+        "subjectKeyIdentifier=hash\n"
+        "authorityKeyIdentifier=keyid,issuer\n"
+    )
     (d / "index.txt").write_text("")
     (d / "serial").write_text("01\n")
     for name, start, end in (
